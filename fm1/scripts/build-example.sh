@@ -6,9 +6,9 @@ package=fm1
 case "$example" in
     blink|display) set -- ;;
     tone) set -- --features audio ;;
-    rticx-blink) package=fm1-rticx; set -- ;;
+    rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
     rticx-tone) package=fm1-rticx; set -- --features audio ;;
-    *) echo "usage: $0 [blink|display|tone|rticx-blink|rticx-tone]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|display|tone|rticx-blink|rticx-controls|rticx-tone]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"

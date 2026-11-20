@@ -9,20 +9,25 @@ interrupt bindings. Both run without an allocator.
 ## Examples
 
 With the [firmware toolchain environment](../fm1/README.md#build-and-flash)
-set, run either command from the workspace root.
+set, run the example builds from the workspace root.
 
 ```sh
 ./fm1/scripts/build-example.sh rticx-blink
 ./fm1/scripts/build-example.sh rticx-tone
+./fm1/scripts/build-example.sh rticx-controls
 ```
 
 | Firmware | Tasks and controls |
 | --- | --- |
 | [rticx-blink](examples/rticx-blink.rs) | TIMER5 wakes two periodic async tasks. One toggles the PLAY LED every 500 ms. The other samples the button every 10 ms. Hold PLAY for two seconds to return to download mode. |
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
+| [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs while a lower-priority task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 
-The packages are written to `target/firmware/`. Both have been exercised in
-the FM-1 emulator. Download both `.fwsc` files from the `fm1-rticx-firmware`
+The controls display shows MASTER, signed counts for all encoders, a press count
+for each button, and the last piano key (1–27). Green text means held, cyan means
+previously pressed, and an asterisk marks an enabled lamp.
+
+The packages are written to `target/firmware/`. Download the `.fwsc` files from the `fm1-rticx-firmware`
 artifact on a successful [fm1-rticx workflow run][ci].
 
 ## Application setup

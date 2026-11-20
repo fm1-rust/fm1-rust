@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: MIT-0
 //! FM-1 keys and LEDs share an active-low column selector (two 74HC595s).
 //! [`Play`] handles both transport LED colors and the PLAY/STOP switch.
-//! Consume it with [`Play::into_matrix`] to scan the rest of the panel.
+//! Use [`Play::into_controls`] for debounced buttons, piano keys, encoder
+//! detents, the MASTER pot and LEDs, or [`Play::into_matrix`] for raw GPIO rows.
+
+mod controls;
+mod state;
+pub use controls::{Button, Controls, Encoder};
+pub use state::{Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan, Switch};
 
 use crate::{Token, registers::*, time::wait_cycles};
 use core::convert::Infallible;
@@ -36,7 +42,12 @@ impl Column {
         }
     }
     const fn word(self) -> u16 {
-        !(1u16 << self.0)
+        let octave = match self.0 {
+            0 => 1 << 11,
+            1 => 1 << 12,
+            _ => 0,
+        };
+        !(1u16 << self.0 | octave)
     }
 }
 
@@ -123,6 +134,11 @@ impl Play {
             select(Column::PLAY);
         }
         Matrix(self.token)
+    }
+    /// Acquire the multiplexed inputs, both transport LED channels and the MASTER ADC.
+    #[must_use]
+    pub fn into_controls(self) -> Controls {
+        Controls::new(self.into_matrix())
     }
 }
 
@@ -240,13 +256,16 @@ impl Matrix {
     pub fn sample(&mut self) -> u8 {
         let a = read(PA + OUT) & LED_A;
         let h = read(PH + OUT) & LED_H;
-        clear(PA + OUT, LED_A);
-        clear(PH + OUT, LED_H);
-        wait_cycles(240);
-        let rows = closed_rows(read(PA + IN), read(PB + IN));
+        let rows = self.sample_and_blank();
         set(PA + OUT, a);
         set(PH + OUT, h);
         rows
+    }
+    fn sample_and_blank(&mut self) -> u8 {
+        clear(PA + OUT, LED_A);
+        clear(PH + OUT, LED_H);
+        wait_cycles(240);
+        closed_rows(read(PA + IN), read(PB + IN))
     }
 }
 fn closed_rows(a: u32, b: u32) -> u8 {
@@ -259,7 +278,9 @@ mod tests {
     #[test]
     fn panel_wiring() {
         assert_eq!(Column::PLAY.word(), 0xfbff);
-        for c in 0..Column::COUNT {
+        assert_eq!(Column(0).word(), 0xf7fe);
+        assert_eq!(Column(1).word(), 0xeffd);
+        for c in 2..Column::COUNT {
             assert_eq!(!Column::new(c).expect("populated column").word(), 1 << c);
         }
         assert!(Column::new(11).is_none());

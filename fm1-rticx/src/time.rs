@@ -57,9 +57,14 @@ impl TimerQueueBackend for Clock {
 #[derive(Debug)]
 pub struct Timer5(Timers);
 impl Timer5 {
-    /// Acknowledge one TIMER5 tick and wake the tasks whose deadlines have passed.
+    /// Acknowledge TIMER5 and wake tasks on each 10 ms clock tick. A faster panel
+    /// interrupt can therefore share TIMER5 with the normal async delay queue.
     pub fn on_interrupt(&mut self) {
+        let previous = self.0.ticks();
         self.0.on_interrupt();
+        if self.0.ticks() == previous {
+            return;
+        }
         // SAFETY: the queue is initialized by start. The unique handle serializes
         // servicing it, and the application binds this call to TIMER5.
         unsafe { QUEUE.on_monotonic_interrupt() };

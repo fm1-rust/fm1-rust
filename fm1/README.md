@@ -29,6 +29,7 @@ entry path.
 | Handle | Interface |
 | --- | --- |
 | `board.panel` | Borrow the PLAY/STOP indicator as an `OutputPin` or `StatefulOutputPin`. Its `set_color` method selects amber (default) or green. Sampling the active-low button briefly blanks the indicator and restores its color and on/off state. |
+| `board.panel.into_controls()` | Scan 14 panel buttons, 27 piano keys and their indicators, seven encoders, both PLAY/STOP LED channels, and the 10-bit MASTER potentiometer. |
 | `board.panel.into_matrix()` | Select one of 11 columns, sample six switch rows or drive the four LED rows. The application controls scan timing and debounce. |
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. Use `wrapping_sub` for elapsed time. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels from RAM or flash using SPI1 DMA. |
@@ -39,6 +40,39 @@ Audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
 of 24 MHz / 544. Submit a prepared block with `try_write`. A long blocking
 LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a boundary crossed during the copy.
+
+## Panel controls
+
+Pass a desired `Leds` value to `Controls::scan` every 100 µs. Each completed
+11-column sweep yields an owned `Scan`. Use `is_down` for held switches,
+`pressed` and `released` for edges, or iterate over `events()` to dispatch
+changes. Process every completed scan when counting presses or encoder motion.
+
+```rust
+use fm1::panel::{Button, Controls, Encoder, Leds, PlayLedState};
+
+fn scan_column(controls: &mut Controls, leds: &mut Leds, cutoff: &mut i32) {
+    let Some(scan) = controls.scan(leds) else { return };
+    *cutoff = cutoff.saturating_add(i32::from(scan.encoder_delta(Encoder::Knob1)));
+    if scan.pressed(Button::Rec) {
+        leds.toggle(Button::Rec);
+    }
+    if scan.pressed(Button::Play) {
+        leds.set_play(PlayLedState::Both);
+    }
+}
+```
+
+`Scan::master()` returns an optional absolute ADC reading. `level.raw()` spans
+0–1023. Encoder deltas count complete detents, positive clockwise. For a digital piano
+key, pass an index in `0..=26` to `PianoKey::new`, counting from the left. A button or key and
+its LED are independent, so a lamp can stay lit after release. The transport LED
+has four states (`Off`, `Green`, `Red`, `Both`). `Red` addresses the same warm
+STOP channel as `PlayColor::Amber` on the fixed PLAY handle.
+
+With RTICX, start the clock with `Clock::start(board.timers.with_panel_scan_rate())`.
+Call the returned timer's `on_interrupt()` and the panel's `scan(&leds)` on every
+TIMER5 interrupt. Async deadlines retain their 10 ms unit.
 
 ## Build and flash
 
@@ -133,7 +167,9 @@ startup assembly, linker layout and pi32v2 target also come from that work,
 licensed under MIT-0.
 
 The panel matrix and headphone switch wiring follow [felucca-bsp][felucca].
-The green PLAY indicator uses the position measured by [Araminta][play-green].
+The scanner follows the MPL-2.0 [Felucca inputs and ADC][panel-driver] and the
+physical control names in [fm1-base][panel-labels]. The green PLAY indicator
+uses the position measured by [Araminta][play-green].
 The optional audio module ports its MPL-2.0 driver by Leo Kuroshita
 (Hügelton Instruments) and Kerem Kilic (Ellic Studio). Repository integration
 is MIT-licensed.
@@ -150,3 +186,6 @@ is MIT-licensed.
 [flasher]: https://github.com/jvitkauskas/m-flasher/blob/main/docs/usage.md
 [felucca]: https://github.com/hugelton/felucca-bsp/tree/2a5af3dfc8bccb92e37d48a3e7e0bf9a5827e51f/boards/fm1
 [play-green]: https://github.com/Wulgaren/Araminta/blob/62911ec19b1010b16d2ab508e91eed08775386e6/firmware/src/ui_input.c#L29-L30
+
+[panel-driver]: https://github.com/hugelton/felucca-bsp/tree/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1
+[panel-labels]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/device/panel.c
