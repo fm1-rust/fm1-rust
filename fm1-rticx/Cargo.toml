@@ -12,6 +12,11 @@ categories = ["embedded", "hardware-support", "no-std"]
 audio = ["fm1/audio"]
 
 [[example]]
+name = "rticx-piano"
+required-features = ["audio"]
+test = true
+
+[[example]]
 name = "rticx-tone"
 required-features = ["audio"]
 

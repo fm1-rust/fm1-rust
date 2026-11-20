@@ -15,6 +15,7 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh rticx-blink
 ./fm1/scripts/build-example.sh rticx-tone
 ./fm1/scripts/build-example.sh rticx-controls
+./fm1/scripts/build-example.sh rticx-piano
 ```
 
 | Firmware | Tasks and controls |
@@ -22,10 +23,17 @@ set, run the example builds from the workspace root.
 | [rticx-blink](examples/rticx-blink.rs) | TIMER5 wakes two periodic async tasks. One toggles the PLAY LED every 500 ms. The other samples the button every 10 ms. Hold PLAY for two seconds to return to download mode. |
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
 | [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs while a lower-priority task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
 
 The controls display shows MASTER, signed counts for all encoders, a press count
 for each button, and the last piano key (1–27). Green text means held, cyan means
 previously pressed, and an asterisk marks an enabled lamp.
+
+On the piano display, held notes are green and notes played since boot stay
+cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent
+note name and MIDI number on screen. A red `LATE` records a DMA boundary
+crossed during an audio refill. The piano uses digital key events at fixed
+velocity and produces stereo audio locally.
 
 The packages are written to `target/firmware/`. Download the `.fwsc` files from the `fm1-rticx-firmware`
 artifact on a successful [fm1-rticx workflow run][ci].
