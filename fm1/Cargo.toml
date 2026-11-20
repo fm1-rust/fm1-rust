@@ -1,10 +1,12 @@
 [package]
 name = "fm1"
-version = "0.0.0"
-edition = "2024"
 description = "Board support for the M-VAVE FM-1 using embedded-hal"
+version = "0.1.0"
+edition = "2024"
 license = "MIT"
 repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["embedded-hal", "pi32v2"]
+categories = ["embedded", "hardware-support", "no-std"]
 
 [features]
 audio = []
