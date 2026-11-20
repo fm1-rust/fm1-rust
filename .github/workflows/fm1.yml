@@ -7,6 +7,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - '.cargo/**'
+      - .github/scripts/build-llvm.sh
       - .github/scripts/build-rustc.sh
       - .github/workflows/fm1.yml
   push:
@@ -48,13 +49,39 @@ jobs:
           persist-credentials: false
       - name: Restore the patched compiler
         id: rustc
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/pi32v2-rustc
-          key: pi32v2-rustc-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-rustc.sh', '.ci/pi32v2-isa/examples/fm1-blink-rust/rustc/*.patch') }}
+          key: pi32v2-rustc-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-llvm.sh', '.github/scripts/build-rustc.sh', '.ci/pi32v2-isa/examples/fm1-blink-rust/rustc/*.patch') }}
+      - name: Restore host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true'
+        id: host-llvm
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: pi32v2-host-llvm-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-llvm.sh') }}
+      - name: Build host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true' && steps.host-llvm.outputs.cache-hit != 'true'
+        id: build-llvm
+        run: .github/scripts/build-llvm.sh "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Save host LLVM
+        if: steps.build-llvm.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: ${{ steps.host-llvm.outputs.cache-primary-key }}
       - name: Build the patched compiler
         if: steps.rustc.outputs.cache-hit != 'true'
-        run: .github/scripts/build-rustc.sh "$RUNNER_TEMP/pi32v2-rustc"
+        run: .github/scripts/build-rustc.sh "$RUNNER_TEMP/pi32v2-rustc" "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Check the patched compiler
+        run: |
+          "$RUNNER_TEMP/pi32v2-rustc/bin/rustc" -vV
+      - name: Save the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: ${{ steps.rustc.outputs.cache-primary-key }}
       - name: Install the pi32v2 assembler, linker and runtime
         id: llvm
         uses: jvitkauskas/pi32v2-isa/.github/actions/setup-pi32v2@701a76faf103d1889d9bdf67987b872899c27257
@@ -65,7 +92,6 @@ jobs:
           RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
           PI32V2_BIN: ${{ steps.llvm.outputs.path }}/bin
         run: |
-          "$RUSTC" -vV
           for example in fm1/examples/*.rs; do
             name=$(basename "$example" .rs)
             ./fm1/scripts/build-example.sh "$name"
