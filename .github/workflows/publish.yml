@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'fm1/v*'
+      - 'fm1-rticx/v*'
+      - 'rticx-pi32v2/v*'
 
 permissions: {}
 

@@ -12,10 +12,14 @@ mod registers;
 mod test_board;
 pub mod time;
 use core::marker::PhantomData;
+#[cfg(fm1)]
+use core::sync::atomic::{AtomicBool, Ordering};
 use embedded_hal::digital::{ErrorType, InputPin};
 
+#[cfg(fm1)]
+static TAKEN: AtomicBool = AtomicBool::new(false);
+
 /// A private token keeps peripheral access on the core which acquired it.
-/// The interrupt handler only touches TIMER5 and the atomic tick counter.
 #[derive(Debug)]
 struct Token(PhantomData<*mut ()>);
 impl Token {
@@ -41,6 +45,25 @@ pub struct Board {
 }
 
 impl Board {
+    /// Acquire the CPU0 peripherals once under an external interrupt runtime.
+    ///
+    /// Starts the two timers and leaves the interrupt controller to the runtime.
+    /// Bind TIMER5 and call [`time::Timers::on_interrupt`] to maintain the 100 Hz
+    /// tick count. Returns `None` on other cores, on a host, or after acquisition.
+    #[must_use]
+    pub fn take() -> Option<Self> {
+        #[cfg(fm1)]
+        {
+            unsafe extern "C" {
+                fn fm1_core_id() -> u32;
+            }
+            if unsafe { fm1_core_id() } == 0 && !TAKEN.swap(true, Ordering::Relaxed) {
+                return Some(Self::init());
+            }
+        }
+        None
+    }
+
     /// Called once by the runtime at the bootloader entry point.
     ///
     /// # Safety
@@ -50,6 +73,14 @@ impl Board {
     #[doc(hidden)]
     #[must_use]
     pub unsafe fn from_reset() -> Self {
+        #[cfg(fm1)]
+        TAKEN.store(true, Ordering::Relaxed);
+        let board = Self::init();
+        time::install_tick_interrupt();
+        board
+    }
+
+    fn init() -> Self {
         let panel = panel::Play::init();
         let timers = time::Timers::start();
         Self {
