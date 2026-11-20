@@ -55,11 +55,7 @@ impl Screen {
     }
 
     pub(super) fn clear(lcd: &mut Display) -> Result<(), Error> {
-        static BLACK: [u8; 240 * 4 * 2] = [0; 240 * 4 * 2];
-        for y in (0..240).step_by(4) {
-            lcd.write_rect(0, y, 240, 4, &BLACK)?;
-        }
-        Ok(())
+        lcd.fill_rect(0, 0, 240, 240, 0)
     }
 
     pub(super) fn text(&mut self, x: usize, y: usize, bytes: &[u8], ink: Ink) {

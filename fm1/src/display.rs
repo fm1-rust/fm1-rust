@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Julius Vitkauskas
 // SPDX-License-Identifier: MIT-0
-//! The 240 × 240 ST7789 on SPI1. Transfers block and accept RGB565 bytes in
-//! wire order (most significant byte first). Frames can live in flash.
+//! The 240 × 240 ST7789 on SPI1. RGB565 bytes are sent most significant byte first.
+//! DMA uses a private SRAM strip, so pixels may come from RAM or flash.
 
 use crate::{
     Token,
@@ -25,14 +25,28 @@ unsafe extern "C" {
     fn fm1_spi1_dma(bytes: *const u8, len: u32);
 }
 
+/// SPI1 clock relative to the peripheral (LSB) clock inherited from the bootloader.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SpiClock {
+    /// LSB / 5, the original BSP setting.
+    #[default]
+    Div5 = 4,
+    /// Full LSB clock, as used by DUB-1 for pixel transfers.
+    Div1 = 0,
+}
+
 /// Exclusive SPI1 and display pins before ST7789 initialization.
 #[derive(Debug)]
 pub struct DisplayPort(pub(crate) Token);
-/// An initialized panel.
+/// An initialized panel. Dropping it waits for pending DMA. Use [`Display::flush`]
+/// to observe a transfer error before releasing the handle.
 #[derive(Debug)]
 pub struct Display {
     _port: DisplayPort,
     failed: bool,
+    visible: bool,
+    pending_since: Option<u32>,
 }
 
 /// Display validation and transport errors.
@@ -50,15 +64,25 @@ impl DisplayPort {
     /// # Errors
     /// Returns [`Error::Timeout`] if SPI1 fails to complete an initialization command.
     pub fn init(self) -> Result<Display, Error> {
+        self.init_with_clock(SpiClock::default())
+    }
+
+    /// Wake the panel at the original clock, then select the drawing clock.
+    ///
+    /// # Errors
+    /// Returns [`Error::Timeout`] if an initialization command stalls.
+    pub fn init_with_clock(self, clock: SpiClock) -> Result<Display, Error> {
         set(0x51020, 0x10);
         set(PC + OUT, CS);
         clear(PC + OUT, DC | (1 << 9) | (1 << 10));
         clear(PC + DIR, CS | DC | (1 << 9) | (1 << 10));
         write(CON, 0x4021);
-        write(CON + 4, 4);
+        write(CON + 4, SpiClock::Div5 as u32);
         let mut lcd = Display {
             _port: self,
             failed: false,
+            visible: false,
+            pending_since: None,
         };
         wait_cycles(100 * 24_000);
         lcd.command(0x01)?;
@@ -69,6 +93,7 @@ impl DisplayPort {
         lcd.command_data(0x36, &[0])?; // RGB, origin at top left
         lcd.command(0x21)?; // IPS inversion
         lcd.command(0x13)?; // normal mode
+        write(CON + 4, clock as u32);
         Ok(lcd)
     }
 }
@@ -81,10 +106,6 @@ impl Display {
     /// # Errors
     /// Returns [`Error::InvalidRegion`] for an out-of-bounds rectangle or a
     /// mismatched buffer length, and [`Error::Timeout`] on a stalled transfer.
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "Validation bounds both nonempty ranges to 0..240."
-    )]
     pub fn write_rect(
         &mut self,
         x: u16,
@@ -93,22 +114,143 @@ impl Display {
         height: u16,
         pixels: &[u8],
     ) -> Result<(), Error> {
-        if self.failed {
-            return Err(Error::Timeout);
-        }
-        validate(x, y, width, height, pixels.len())?;
+        self.write_rect_buffered(x, y, width, height, pixels)?;
         if pixels.is_empty() {
             return Ok(());
         }
-        let window = |start: u16, len: u16| {
+        self.flush()
+    }
+
+    /// Write a rectangle, leaving its last DMA transfer in progress. All input bytes
+    /// have been copied on return. Render into the caller's buffer while SPI1 sends
+    /// the staged pixels. The next write waits before reusing the DMA buffer.
+    /// Call [`Self::flush`] to wait for the last pixels and reveal the first image.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::write_rect`]. A pending transfer can
+    /// also report a timeout on the next write or flush.
+    pub fn write_rect_buffered(
+        &mut self,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        pixels: &[u8],
+    ) -> Result<(), Error> {
+        let bytes = self.region_bytes(x, y, width, height)?;
+        if bytes != pixels.len() {
+            return Err(Error::InvalidRegion);
+        }
+        if bytes != 0 {
+            self.window(x, y, width, height)?;
+            for chunk in pixels.chunks(CHUNK) {
+                self.wait_dma()?;
+                self.staging()[..chunk.len()].copy_from_slice(chunk);
+                self.start_dma(chunk.len());
+            }
+        }
+        Ok(())
+    }
+
+    /// Fill one panel window with a native RGB565 color. Only one strip is
+    /// prepared in RAM, then replayed by DMA as often as needed.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidRegion`] for an out-of-bounds window and
+    /// [`Error::Timeout`] if SPI1 stalls.
+    pub fn fill_rect(
+        &mut self,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        rgb565: u16,
+    ) -> Result<(), Error> {
+        let bytes = self.region_bytes(x, y, width, height)?;
+        if bytes == 0 {
+            return Ok(());
+        }
+        self.window(x, y, width, height)?;
+        self.staging()[..bytes.min(CHUNK)]
+            .as_chunks_mut::<2>()
+            .0
+            .fill(rgb565.to_be_bytes());
+        let mut remaining = bytes;
+        while remaining != 0 {
+            self.wait_dma()?;
+            let count = remaining.min(CHUNK);
+            self.start_dma(count);
+            remaining = remaining.saturating_sub(count);
+        }
+        self.flush()
+    }
+
+    /// Finish the last buffered rectangle. The first completed rectangle turns on the panel.
+    ///
+    /// # Errors
+    /// Returns [`Error::Timeout`] if SPI1 stalls or a previous transfer failed.
+    pub fn flush(&mut self) -> Result<(), Error> {
+        if self.failed {
+            return Err(Error::Timeout);
+        }
+        if self.pending_since.is_some() {
+            self.wait_dma()?;
+            if !self.visible {
+                self.command(0x29)?;
+                self.visible = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn region_bytes(&self, x: u16, y: u16, width: u16, height: u16) -> Result<usize, Error> {
+        if self.failed {
+            return Err(Error::Timeout);
+        }
+        region_bytes(x, y, width, height)
+    }
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "Both nonempty axes were validated against SIZE."
+    )]
+    fn window(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<(), Error> {
+        self.flush()?;
+        let endpoints = |start: u16, len: u16| {
             let [a, b] = start.to_be_bytes();
             let [c, d] = (start + len - 1).to_be_bytes();
             [a, b, c, d]
         };
-        self.command_data(0x2a, &window(x, width))?;
-        self.command_data(0x2b, &window(y, height))?;
-        self.command_data(0x2c, pixels)?;
-        self.command(0x29)
+        self.command_data(0x2a, &endpoints(x, width))?;
+        self.command_data(0x2b, &endpoints(y, height))?;
+        self.command(0x2c)
+    }
+
+    fn staging(&mut self) -> &mut [u8; CHUNK] {
+        debug_assert!(!self.failed && self.pending_since.is_none());
+        // SAFETY: the unique Display owns this permanent SRAM allocation. Callers
+        // complete any preceding transfer and stop on timeout before borrowing it.
+        let buffer = unsafe { &raw mut DMA_BUFFER.0 };
+        unsafe { &mut *buffer }
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "All callers pass 1..=CHUNK bytes."
+    )]
+    fn start_dma(&mut self, len: usize) {
+        debug_assert!((1..=CHUNK).contains(&len));
+        self.begin(true);
+        self.pending_since = Some(cycles());
+        // SAFETY: DMA reads only initialized bytes from the single Display's static SRAM.
+        unsafe { fm1_spi1_dma((&raw const DMA_BUFFER.0).cast(), len as u32) };
+    }
+
+    fn wait_dma(&mut self) -> Result<(), Error> {
+        if let Some(start) = self.pending_since.take() {
+            self.finish(start)?;
+        }
+        Ok(())
     }
 
     fn begin(&mut self, data: bool) {
@@ -116,8 +258,7 @@ impl Display {
         clear(PC + OUT, CS);
         set(CON, ACK);
     }
-    fn finish(&mut self) -> Result<(), Error> {
-        let start = cycles();
+    fn finish(&mut self, start: u32) -> Result<(), Error> {
         while read(CON) & DONE == 0 {
             if cycles().wrapping_sub(start) >= 50 * 24_000 {
                 clear(CON, 1);
@@ -133,44 +274,31 @@ impl Display {
     fn command(&mut self, command: u8) -> Result<(), Error> {
         self.begin(false);
         write(CON + 8, u32::from(command));
-        self.finish()
+        self.finish(cycles())
     }
     fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Error> {
         self.command(command)?;
-        for chunk in data.chunks(CHUNK) {
-            // SAFETY: the single Display owns SPI1 and this static SRAM buffer.
-            // A completed transfer releases it. A timeout permanently faults
-            // the handle, so neither the hardware nor an error path can race a
-            // later copy. The buffer remains allocated even if Display is dropped.
-            let buffer = unsafe { (&raw mut DMA_BUFFER.0).cast::<u8>() };
-            unsafe { core::ptr::copy_nonoverlapping(chunk.as_ptr(), buffer, chunk.len()) };
-            self.begin(true);
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "A chunk contains at most 3,840 bytes."
-            )]
-            unsafe {
-                fm1_spi1_dma(buffer, chunk.len() as u32)
-            };
-            self.finish()?;
-        }
-        Ok(())
+        // Initialization arguments and window endpoints always fit in one strip.
+        self.staging()[..data.len()].copy_from_slice(data);
+        self.start_dma(data.len());
+        self.wait_dma()
     }
 }
+impl Drop for Display {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
+}
+
 #[allow(
     clippy::arithmetic_side_effects,
     reason = "Short-circuit bounds checks limit each dimension to 240 before multiplication."
 )]
-fn validate(x: u16, y: u16, w: u16, h: u16, bytes: usize) -> Result<(), Error> {
-    if x > SIZE
-        || y > SIZE
-        || w > SIZE - x
-        || h > SIZE - y
-        || bytes != usize::from(w) * usize::from(h) * 2
-    {
+fn region_bytes(x: u16, y: u16, w: u16, h: u16) -> Result<usize, Error> {
+    if x > SIZE || y > SIZE || w > SIZE - x || h > SIZE - y {
         return Err(Error::InvalidRegion);
     }
-    Ok(())
+    Ok(usize::from(w) * usize::from(h) * 2)
 }
 
 #[cfg(test)]
@@ -178,17 +306,11 @@ mod tests {
     use super::*;
     #[test]
     fn bounds_checked_before_io() {
-        assert_eq!(validate(0, 0, 240, 240, 115200), Ok(()));
-        assert_eq!(validate(239, 239, 1, 1, 2), Ok(()));
-        assert_eq!(validate(240, 240, 0, 0, 0), Ok(()));
-        for (x, y, w, h, n) in [
-            (239, 239, 2, 1, 4),
-            (0, 0, 1, 1, 1),
-            (0, 0, 1, 1, 3),
-            (65535, 1, 2, 1, 4),
-            (0, 0, 65535, 65535, 0),
-        ] {
-            assert_eq!(validate(x, y, w, h, n), Err(Error::InvalidRegion));
+        assert_eq!(region_bytes(0, 0, 240, 240), Ok(115200));
+        assert_eq!(region_bytes(239, 239, 1, 1), Ok(2));
+        assert_eq!(region_bytes(240, 240, 0, 0), Ok(0));
+        for (x, y, w, h) in [(239, 239, 2, 1), (65535, 1, 2, 1), (0, 0, 65535, 65535)] {
+            assert_eq!(region_bytes(x, y, w, h), Err(Error::InvalidRegion));
         }
     }
 }

@@ -13,6 +13,7 @@ struct Chip {
     ticks: u32,
     spi_done: bool,
     dma_stuck: bool,
+    dma: Option<(*const u8, usize)>,
     transfers: Vec<(bool, Vec<u8>)>,
     shifted: u16,
     latched: Vec<u16>,
@@ -37,7 +38,17 @@ pub(crate) fn read(addr: usize) -> u32 {
             chip.ticks = chip.ticks.wrapping_add(24_000);
             chip.ticks
         }
-        0x11d00 => chip.regs[&addr] | (u32::from(chip.spi_done) << 15),
+        0x11d00 => {
+            if !chip.dma_stuck
+                && let Some((ptr, len)) = chip.dma.take()
+            {
+                // The DMA reads the driver's permanent SRAM only when the model completes it.
+                let bytes = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+                chip.transfers.push((true, bytes));
+                chip.spi_done = true;
+            }
+            chip.regs[&addr] | (u32::from(chip.spi_done) << 15)
+        }
         _ => chip.regs.get(&addr).copied().unwrap_or_default(),
     })
 }
@@ -80,12 +91,11 @@ extern "C" fn fm1_timer5_isr() {
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn fm1_spi1_dma(p: *const u8, n: u32) {
-    // The library owns this static buffer and publishes exactly n initialized bytes.
-    let bytes = unsafe { core::slice::from_raw_parts(p, n as usize) }.to_vec();
     CHIP.with_borrow_mut(|chip| {
         assert_eq!(chip.regs[&(PC + OUT)] & 0x180, 0x100); // CS low, DC high
-        chip.transfers.push((true, bytes));
-        chip.spi_done = !chip.dma_stuck;
+        assert_ne!(n, 0);
+        assert!(chip.dma.replace((p, n as usize)).is_none());
+        chip.spi_done = false;
     })
 }
 
@@ -183,11 +193,46 @@ fn blink_and_display_use_the_board_api() {
             ]
         );
     });
-    CHIP.with_borrow_mut(|chip| chip.dma_stuck = true);
+    let before = CHIP.with_borrow(|c| c.transfers.len());
     assert_eq!(
-        lcd.write_rect(0, 0, 1, 1, &[0, 0]),
-        Err(display::Error::Timeout)
+        lcd.write_rect_buffered(0, 0, 1, 1, &[0]),
+        Err(display::Error::InvalidRegion)
     );
+    lcd.fill_rect(240, 240, 0, 0, 0).expect("empty fill");
+    CHIP.with_borrow(|c| assert_eq!(c.transfers.len(), before));
+
+    let mut pixel = [0x12, 0x34];
+    lcd.write_rect_buffered(1, 1, 1, 1, &pixel)
+        .expect("stage the caller's pixel");
+    pixel.fill(0);
+    CHIP.with_borrow(|c| assert!(c.dma.is_some()));
+    lcd.fill_rect(0, 0, 239, 9, 0xabcd)
+        .expect("finish old DMA and repeat a strip");
+    CHIP.with_borrow(|c| {
+        let data: Vec<_> = c.transfers[before..]
+            .iter()
+            .filter(|(d, _)| *d)
+            .map(|(_, v)| v.as_slice())
+            .collect();
+        assert_eq!(data[2], [0x12, 0x34]);
+        assert_eq!(data[5].len(), 3840);
+        assert_eq!(data[6].len(), 239 * 9 * 2 - 3840);
+        for chunk in &data[5..] {
+            assert!(chunk.as_chunks::<2>().0.iter().all(|p| *p == [0xab, 0xcd]));
+        }
+        assert_eq!(
+            c.transfers
+                .iter()
+                .filter(|(d, v)| !d && v == &[0x29])
+                .count(),
+            1
+        );
+    });
+
+    lcd.write_rect_buffered(0, 0, 1, 1, &pixel)
+        .expect("launch without waiting");
+    CHIP.with_borrow_mut(|chip| chip.dma_stuck = true);
+    assert_eq!(lcd.flush(), Err(display::Error::Timeout));
     assert_eq!(read(0x11d00) & 1, 0);
     assert_ne!(read(PC + OUT) & (1 << 7), 0);
     let transfers = CHIP.with_borrow(|chip| chip.transfers.len());
