@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // AC791N ALNK0 initialization ported from felucca-bsp/boards/fm1/fm1_audio.h.
-//! Polled stereo I²S output on PC0, PC1, PC2 and PC6. The DMA cycles through
+//! Stereo I²S output on PC0, PC1, PC2 and PC6. The DMA cycles through
 //! two fixed SRAM halves. Service it about every 5.8 ms to keep both filled.
+
+use core::marker::PhantomData;
 
 use crate::{
     Token,
@@ -101,6 +103,20 @@ impl AudioPort {
     /// Returns [`StartError::Busy`] if DMA is running, or [`StartError::Clock`]
     /// if the PLL settings differ from those used by the FM-1.
     pub fn start(&mut self) -> Result<Stream<'_>, StartError> {
+        self.start_dma()?;
+        Ok(Stream { _port: PhantomData })
+    }
+
+    /// Consume the port and start a stream which a task can own for its lifetime.
+    ///
+    /// # Errors
+    /// Returns the same clock and busy errors as [`Self::start`].
+    pub fn into_stream(mut self) -> Result<Stream<'static>, StartError> {
+        self.start_dma()?;
+        Ok(Stream { _port: PhantomData })
+    }
+
+    fn start_dma(&mut self) -> Result<(), StartError> {
         if read16(CON0) & RUN != 0 {
             return Err(StartError::Busy);
         }
@@ -109,7 +125,7 @@ impl AudioPort {
         {
             return Err(StartError::Clock);
         }
-        // Polled operation. TIMER5, the BSP's only ISR, never accesses ALNK0 or port C.
+        // The port exclusively owns ALNK0 and its DMA storage.
         let dma = (&raw mut DMA).cast::<i32>();
         for i in 0..BLOCK_FRAMES * 4 {
             // SAFETY: DMA is stopped and this port exclusively owns the static array.
@@ -139,7 +155,7 @@ impl AudioPort {
         write16(CON0, 0x180 | RUN);
         wait_cycles(5 * 24_000);
         pin(DATA, true);
-        Ok(Stream { _port: self })
+        Ok(())
     }
 }
 
@@ -147,7 +163,7 @@ impl AudioPort {
 /// Missed refill deadlines can repeat old samples.
 #[derive(Debug)]
 pub struct Stream<'a> {
-    _port: &'a mut AudioPort,
+    _port: PhantomData<&'a mut AudioPort>,
 }
 
 /// Whether DMA accepted a block and whether it crossed a half-buffer boundary during the copy.
@@ -164,7 +180,13 @@ pub enum Refill {
 impl Stream<'_> {
     /// Try to submit one pre-rendered block. Never hands out references to DMA-owned memory.
     pub fn try_write(&mut self, input: &Block) -> Refill {
-        if pending() & 0x80 == 0 {
+        let status = pending();
+        // Clear any auxiliary channel flags sharing the ALNK0 interrupt line.
+        let auxiliary = (status >> 4) & 7;
+        if auxiliary != 0 {
+            write8(STATUS, auxiliary);
+        }
+        if status & 0x80 == 0 {
             return Refill::WouldBlock;
         }
         let start = cycles();

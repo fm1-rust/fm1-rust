@@ -1,0 +1,112 @@
+name: pi32v2 firmware
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: Workspace package containing the FM-1 firmware examples
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_TAG: pi32v2-23.1.5-5
+      LLVM_TOOLS_SHA256: a20e257b840eb6b212761bfa93a7f3804502940d0035d62790da3d42fefa31e3
+      PI32V2_ISA: ${{ github.workspace }}/.ci/pi32v2-isa
+      RUSTUP_TOOLCHAIN: 1.100.0
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - name: Check out the Rust patch and firmware packager
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          repository: jvitkauskas/pi32v2-isa
+          ref: 701a76faf103d1889d9bdf67987b872899c27257
+          path: .ci/pi32v2-isa
+          persist-credentials: false
+      - name: Restore the patched compiler
+        id: rustc
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: pi32v2-rustc-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-llvm.sh', '.github/scripts/build-rustc.sh', '.ci/pi32v2-isa/examples/fm1-blink-rust/rustc/*.patch') }}
+      - name: Restore host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true'
+        id: host-llvm
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: pi32v2-host-llvm-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-llvm.sh') }}
+      - name: Build host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true' && steps.host-llvm.outputs.cache-hit != 'true'
+        id: build-llvm
+        run: .github/scripts/build-llvm.sh "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Save host LLVM
+        if: steps.build-llvm.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: ${{ steps.host-llvm.outputs.cache-primary-key }}
+      - name: Build the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        run: .github/scripts/build-rustc.sh "$RUNNER_TEMP/pi32v2-rustc" "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Check the patched compiler
+        run: |
+          "$RUNNER_TEMP/pi32v2-rustc/bin/rustc" -vV
+      - name: Save the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: ${{ steps.rustc.outputs.cache-primary-key }}
+      - name: Cache the pi32v2 LLVM tools archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-llvm.tar.xz
+          key: pi32v2-llvm-${{ env.LLVM_TOOLS_SHA256 }}
+      - name: Install the pi32v2 assembler, linker and runtime
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [[ ! -f pi32v2-llvm.tar.xz ]]; then
+            asset="pi32v2-llvm-${LLVM_TAG#pi32v2-}-linux-x64.tar.xz"
+            curl -fsSL --retry 3 -o pi32v2-llvm.tar.xz \
+              "https://github.com/jvitkauskas/pi32v2-llvm/releases/download/$LLVM_TAG/$asset"
+          fi
+          echo "$LLVM_TOOLS_SHA256  pi32v2-llvm.tar.xz" | sha256sum --check
+          mkdir -p pi32v2-llvm
+          tar -xf pi32v2-llvm.tar.xz --strip-components=1 -C pi32v2-llvm
+          echo "$RUNNER_TEMP/pi32v2-llvm/bin" >> "$GITHUB_PATH"
+      # fm1-rticx depends on unpublished workspace crates.
+      - name: Verify the crate archive for pi32v2
+        if: inputs.package == 'fm1'
+        env:
+          RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
+          RUSTC_BOOTSTRAP: 1
+          PI32V2_BIN: ${{ runner.temp }}/pi32v2-llvm/bin
+        run: |
+          cargo package --locked --package fm1 --all-features \
+            --target "$GITHUB_WORKSPACE/fm1/targets/pi32v2-none.json" \
+            -Zjson-target-spec -Zbuild-std=core,compiler_builtins \
+            -Zbuild-std-features=compiler-builtins-mem
+      - name: Build and package the firmware examples
+        env:
+          PACKAGE: ${{ inputs.package }}
+          RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
+          PI32V2_BIN: ${{ runner.temp }}/pi32v2-llvm/bin
+        run: |
+          for example in "$PACKAGE"/examples/*.rs; do
+            name=$(basename "$example" .rs)
+            ./fm1/scripts/build-example.sh "$name"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.package }}-firmware
+          path: target/firmware/*.fwsc
+          if-no-files-found: error

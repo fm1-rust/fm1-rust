@@ -25,6 +25,10 @@ unsafe extern "C" {
 #[cfg(any(fm1, test))]
 #[cfg_attr(fm1, unsafe(no_mangle))]
 pub(crate) extern "C" fn rust_timer5_tick() {
+    tick();
+}
+
+fn tick() {
     crate::registers::set(T5_CON, 0x4000);
     TICKS.store(TICKS.load(Relaxed).wrapping_add(1), Relaxed);
 }
@@ -43,27 +47,17 @@ impl Timers {
         write(T4_CON + 8, u32::MAX);
         write(T4_CNT, 0);
         write(T4_CON, 0x4009);
-        // crt0 left global interrupts masked. Initialize the controller once,
-        // before user code can install other handlers.
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "There are 32 aligned interrupt configuration words."
-        )]
-        for i in 0..32 {
-            write(ICFG_WORDS + 4 * i, 0);
-        }
-        write(0x01ee_f1a4, 0xff);
-        write(
-            0x01c7_fe00 + 4 * SOURCE,
-            crate::registers::bus_address(fm1_timer5_isr as *const ()),
-        );
-        write(ICFG_WORDS + 4 * (SOURCE / 8), 3 << (4 * (SOURCE % 8)));
         write(T5_CON, 0x4000);
         write(T5_CON + 4, 0);
         write(T5_CON + 8, Self::CRYSTAL_HZ / 4 / Self::TICK_HZ - 1);
         write(T5_CON, 0x4019);
-        unsafe { fm1_set_icfg(0x300) };
         Self(Token::new())
+    }
+
+    /// Acknowledge TIMER5 and count one tick. Call once per TIMER5 interrupt
+    /// when the application owns the vector.
+    pub fn on_interrupt(&mut self) {
+        tick();
     }
 
     /// Free-running 24 MHz count. Use `wrapping_sub` across rollover.
@@ -74,9 +68,35 @@ impl Timers {
     /// Wrapping interrupt count, in 10 ms units.
     #[must_use]
     pub fn ticks(&self) -> u32 {
-        TICKS.load(Relaxed)
+        ticks()
     }
 }
+
+/// Read the wrapping 100 Hz tick count from any task on CPU0.
+#[must_use]
+pub fn ticks() -> u32 {
+    TICKS.load(Relaxed)
+}
+
+pub(crate) fn install_tick_interrupt() {
+    // crt0 left global interrupts masked. Initialize the controller once,
+    // before user code can install other handlers.
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "There are 32 aligned interrupt configuration words."
+    )]
+    for i in 0..32 {
+        write(ICFG_WORDS + 4 * i, 0);
+    }
+    write(0x01ee_f1a4, 0xff);
+    write(
+        0x01c7_fe00 + 4 * SOURCE,
+        crate::registers::bus_address(fm1_timer5_isr as *const ()),
+    );
+    write(ICFG_WORDS + 4 * (SOURCE / 8), 3 << (4 * (SOURCE % 8)));
+    unsafe { fm1_set_icfg(0x300) };
+}
+
 pub(crate) fn cycles() -> u32 {
     read(T4_CNT)
 }

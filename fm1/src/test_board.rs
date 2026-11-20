@@ -16,6 +16,7 @@ struct Chip {
     transfers: Vec<(bool, Vec<u8>)>,
     shifted: u16,
     latched: Vec<u16>,
+    last_key_sample: Option<(u16, u32)>,
 }
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
 
@@ -24,7 +25,9 @@ pub(crate) fn read(addr: usize) -> u32 {
         addr if addr == PA + IN => {
             // The PLAY switch can only pull PA6 low when its LED drive is blank.
             let raw = chip.regs.get(&addr).copied().unwrap_or(0);
-            if chip.regs.get(&(PA + OUT)).copied().unwrap_or(0) & (1 << 10) != 0 {
+            let drive = chip.regs.get(&(PA + OUT)).copied().unwrap_or(0);
+            chip.last_key_sample = chip.latched.last().map(|&column| (column, drive));
+            if drive & (1 << 10) != 0 {
                 raw | (1 << 6)
             } else {
                 raw
@@ -84,6 +87,34 @@ unsafe extern "C" fn fm1_spi1_dma(p: *const u8, n: u32) {
         chip.transfers.push((true, bytes));
         chip.spi_done = !chip.dma_stuck;
     })
+}
+
+#[test]
+fn green_play_indicator_restores_its_column_after_sampling() {
+    use panel::PlayColor::{Amber, Green};
+
+    const LED_LINES: u32 = (1 << 9) | (1 << 10);
+    let mut panel = panel::Play::init();
+    panel.led().set_color(Green);
+    assert!(panel.led().is_set_low().unwrap());
+    panel.led().set_high().unwrap();
+    write(PA + IN, !(1 << 6));
+    assert!(panel.button().is_pressed());
+    CHIP.with_borrow(|chip| {
+        let (column, drive) = chip.last_key_sample.expect("PLAY was sampled");
+        assert_eq!(column, 0xfbff); // switch on column 10
+        assert_eq!(drive & LED_LINES, 0);
+        assert_eq!(chip.latched.last(), Some(&0xfeff)); // green on column 8
+    });
+    assert_eq!(read(PA + OUT) & LED_LINES, 1 << 9);
+
+    panel.led().set_color(Amber);
+    assert_eq!(read(PA + OUT) & LED_LINES, 1 << 10);
+    CHIP.with_borrow(|chip| assert_eq!(chip.latched.last(), Some(&0xfbff)));
+    panel.led().set_color(Green);
+    let _matrix = panel.into_matrix();
+    assert_eq!(read(PA + OUT) & LED_LINES, 0);
+    CHIP.with_borrow(|chip| assert_eq!(chip.latched.last(), Some(&0xfbff)));
 }
 
 #[test]

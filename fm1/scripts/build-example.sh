@@ -2,10 +2,13 @@
 # Build and package a BSP example without connecting to a device.
 set -eu
 example=${1:-blink}
+package=fm1
 case "$example" in
     blink|display) set -- ;;
     tone) set -- --features audio ;;
-    *) echo "usage: $0 [blink|display|tone]" >&2; exit 2 ;;
+    rticx-blink) package=fm1-rticx; set -- ;;
+    rticx-tone) package=fm1-rticx; set -- --features audio ;;
+    *) echo "usage: $0 [blink|display|tone|rticx-blink|rticx-tone]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"
@@ -21,7 +24,7 @@ test -f "$packager" || { echo "Cannot find $packager" >&2; exit 1; }
 export PI32V2_BIN RUSTC_BOOTSTRAP=1
 export CARGO_TARGET_PI32V2_NONE_LINKER="$PI32V2_BIN/ld.lld"
 export RUSTFLAGS="-C link-arg=-Tfm1.ld"
-cargo build --locked --manifest-path "$root/Cargo.toml" --profile firmware --example "$example" \
+cargo build --locked -p "$package" --manifest-path "$root/../Cargo.toml" --profile firmware --example "$example" \
     --target "$root/targets/pi32v2-none.json" --target-dir "$target" \
     -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec "$@"
 elf="$target/pi32v2-none/firmware/examples/$example"

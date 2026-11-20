@@ -1,0 +1,329 @@
+//! Code generation for the single-core AC791N RTICX distribution.
+use proc_macro::TokenStream;
+use proc_macro2::{Ident, TokenStream as Tokens};
+use quote::{format_ident, quote};
+use rticx_async_pass::{AsyncPass, AsyncPassBackend};
+use rticx_core::{
+    Analysis, App, AppArgs, CorePassBackend, RticMacroBuilder, RticTask, SubAnalysis, SubApp,
+    parse_utils::RticAttr,
+};
+use rticx_sw_pass::SwPassBackend;
+use syn::{
+    Attribute, Expr, ImplItemFn, ItemFn, Path, parse_macro_input, parse_quote, visit_mut::VisitMut,
+};
+
+// The runtime can also be re-exported by the board crate.
+#[derive(Clone)]
+struct Cpu0(Path);
+
+fn is_software(name: &Ident) -> bool {
+    matches!(
+        name.to_string().as_bytes(),
+        [b'S', b'O', b'F', b'T', b'0'..=b'7']
+    )
+}
+
+fn validate_args(args: &Tokens) -> syn::Result<()> {
+    let mut args = RticAttr::parse_from_tokens(args.clone(), format_ident!("app"))?;
+    if args.take_u32("cores")?.unwrap_or(1) != 1 {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "this distribution runs on CPU0 only",
+        ));
+    }
+    let mut dispatchers = std::collections::HashSet::new();
+    for irq in args.take_ident_array("dispatchers")?.unwrap_or_default() {
+        if !dispatchers.insert(irq.clone()) {
+            return Err(syn::Error::new(irq.span(), "duplicate software dispatcher"));
+        }
+        if !is_software(&irq) {
+            return Err(syn::Error::new(
+                irq.span(),
+                "use a software interrupt (SOFT0..SOFT7) as a dispatcher",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Declare a CPU0 application with hardware tasks and async software tasks.
+#[proc_macro_attribute]
+pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
+    expand(args.into(), input, Cpu0(parse_quote!(::rticx_pi32v2)))
+}
+
+/// Declare an FM-1 application, supplying its board and interrupt controller.
+#[proc_macro_attribute]
+pub fn fm1_app(args: TokenStream, input: TokenStream) -> TokenStream {
+    let args = Tokens::from(args);
+    expand(
+        quote!(device = ::fm1_rticx::bsp, #args),
+        input,
+        Cpu0(parse_quote!(::fm1_rticx::rticx)),
+    )
+}
+
+fn validate_cores(module: &syn::ItemMod) -> syn::Result<()> {
+    let Some((_, items)) = &module.content else {
+        return Ok(());
+    };
+    for item in items {
+        let attrs = match item {
+            syn::Item::Fn(f) => &f.attrs,
+            syn::Item::Struct(s) => &s.attrs,
+            _ => continue,
+        };
+        for attr in attrs {
+            if let Some(name) = attr.path().get_ident()
+                && matches!(
+                    name.to_string().as_str(),
+                    "task" | "async_task" | "idle" | "shared" | "init" | "post_init"
+                )
+                && RticAttr::parse_from_attr(attr)?
+                    .take_u32("core")?
+                    .unwrap_or(0)
+                    != 0
+            {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "this distribution runs on CPU0 only",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expand(args: Tokens, input: TokenStream, cpu: Cpu0) -> TokenStream {
+    let parsed = input.clone();
+    let module = parse_macro_input!(parsed as syn::ItemMod);
+    if let Err(err) = validate_args(&args).and_then(|()| validate_cores(&module)) {
+        return err.to_compile_error().into();
+    }
+    let mut builder = RticMacroBuilder::new(cpu.clone());
+    builder.bind_pre_core_pass(AsyncPass::new(cpu));
+    builder.build_rtic_macro(args.into(), input)
+}
+
+// RTICX emits Rust functions. Assembly calls the entry and handlers through
+// the C ABI. Mark them unsafe so application code cannot re-enter a live task.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn __interrupt(_: TokenStream, item: TokenStream) -> TokenStream {
+    let mut f = parse_macro_input!(item as ItemFn);
+    f.sig.unsafety = Some(parse_quote!(unsafe));
+    f.sig.abi = Some(parse_quote!(extern "C"));
+    quote!(#f).into()
+}
+
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn __entry(_: TokenStream, item: TokenStream) -> TokenStream {
+    let mut f = parse_macro_input!(item as ItemFn);
+    f.sig.unsafety = Some(parse_quote!(unsafe));
+    f.sig.abi = Some(parse_quote!(extern "C"));
+    // rticx-async-pass 0.2.1 emits a separate inner block for each slot.
+    // Keep its local in the scope of the non-returning entry so IRQs can
+    // keep using the address and LLVM cannot reuse it for another slot.
+    let mut entry = vec![parse_quote!(unsafe { __rticx_backend::export::reset() };)];
+    for stmt in f.block.stmts {
+        if let syn::Stmt::Expr(Expr::Block(block), None) = &stmt
+            && let [
+                syn::Stmt::Local(slot),
+                syn::Stmt::Expr(Expr::MethodCall(store), _),
+            ] = block.block.stmts.as_slice()
+            && matches!(&slot.pat, syn::Pat::Ident(pat) if pat.ident == "__s")
+            && store.method == "store"
+        {
+            entry.extend(block.block.stmts.iter().cloned());
+        } else {
+            entry.push(stmt);
+        }
+    }
+    f.block.stmts = entry;
+    quote!(#f).into()
+}
+
+impl CorePassBackend for Cpu0 {
+    fn entry_name(&self, _: u32) -> Ident {
+        format_ident!("main")
+    }
+
+    fn entry_attrs(&self) -> Vec<Attribute> {
+        vec![parse_quote!(#[__rticx_backend::__entry])]
+    }
+    fn task_attrs(&self, _: Ident) -> Vec<Attribute> {
+        vec![parse_quote!(#[__rticx_backend::__interrupt])]
+    }
+
+    fn post_init(&self, _: &AppArgs, _: &SubApp, analysis: &SubAnalysis) -> Option<Tokens> {
+        let install = analysis.used_irqs.iter().map(|irq| {
+            let name = &irq.name;
+            let vector = format_ident!("__rticx_irq_{name}");
+            let priority = irq.priority;
+            quote! {
+                unsafe extern "C" { fn #vector(); }
+                unsafe { __rticx_backend::export::install(__rticx_backend::Interrupt::#name, #priority, #vector); }
+            }
+        });
+        Some(quote!(#(#install)*))
+    }
+
+    fn generate_global_definitions(
+        &self,
+        _: &AppArgs,
+        _: &SubApp,
+        analysis: &SubAnalysis,
+    ) -> Option<Tokens> {
+        let entries = analysis.used_irqs.iter().map(|irq| {
+            let name = &irq.name;
+            let priority = irq.priority;
+            quote!((__rticx_backend::Interrupt::#name, #priority))
+        });
+        let runtime = &self.0;
+        Some(quote! {
+            use #runtime as __rticx_backend;
+            const __RTICX_IRQS: &[(__rticx_backend::Interrupt, u16)] = &[#(#entries),*];
+        })
+    }
+
+    fn generate_resource_proxy_lock_impl(
+        &self,
+        _: &AppArgs,
+        app: &SubApp,
+        mut lock: ImplItemFn,
+    ) -> ImplItemFn {
+        let shared = app
+            .shared
+            .as_ref()
+            .expect("RTICX resource proxy requires shared storage");
+        let mut projection = RawProjection {
+            storage: shared.name_uppercase(),
+            ty: &shared.strct.ident,
+            replaced: false,
+        };
+        projection.visit_block_mut(&mut lock.block);
+        if !projection.replaced {
+            lock.block = parse_quote!({
+                compile_error!("unexpected RTICX resource projection");
+            });
+            return lock;
+        }
+        lock.block.stmts.push(parse_quote!({
+            const MASK: __rticx_backend::export::SourceMask =
+                __rticx_backend::export::SourceMask::through(__RTICX_IRQS, CEILING);
+            static BORROW: __rticx_backend::export::BorrowFlag =
+                __rticx_backend::export::BorrowFlag::FREE;
+            let _ = task_priority;
+            unsafe {
+                __rticx_backend::export::with_ceiling(&MASK, &BORROW, || f(&mut *resource_ptr))
+            }
+        }));
+        lock
+    }
+
+    fn wrap_task_execution(&self, task: &RticTask, call: Tokens) -> Option<Tokens> {
+        let name = task.args.binds.as_ref()?;
+        is_software(name).then(|| {
+            quote! {
+                __rticx_backend::export::acknowledge(__rticx_backend::Interrupt::#name);
+                #call
+            }
+        })
+    }
+
+    fn populate_idle_loop(&self) -> Option<Tokens> {
+        Some(quote!(unsafe { __rticx_backend::export::__rticx_idle() };))
+    }
+    fn generate_enable_global_interrupts(&self) -> Option<Tokens> {
+        Some(quote!(unsafe { __rticx_backend::export::enable() };))
+    }
+    fn generate_interrupt_free_fn(&self, mut f: ItemFn) -> ItemFn {
+        f.block = parse_quote!({ __rticx_backend::export::critical_section::with(|_| f()) });
+        f
+    }
+
+    fn pre_codegen_validation(&self, app: &App, _: &Analysis) -> syn::Result<()> {
+        for task in &app.sub_apps[0].tasks {
+            if let Some(irq) = &task.args.binds
+                && !(1..=8).contains(&task.args.priority)
+            {
+                return Err(syn::Error::new(
+                    irq.span(),
+                    "interrupt priority must be 1..=8",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+// The core pass supplies the field projection in the lock body. Make a raw
+// pointer directly to the field. Borrowing the entire Shared struct here
+// would alias an unrelated field held by a preempted task.
+struct RawProjection<'a> {
+    storage: Ident,
+    ty: &'a Ident,
+    replaced: bool,
+}
+impl VisitMut for RawProjection<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let Expr::Reference(r) = expr
+            && let Expr::Field(field) = r.expr.as_ref()
+            && let Expr::MethodCall(base) = field.base.as_ref()
+            && base.method == "assume_init_mut"
+            && let Expr::Path(storage) = base.receiver.as_ref()
+            && storage.path.is_ident(&self.storage)
+        {
+            let Self { storage, ty, .. } = self;
+            let field = &field.member;
+            *expr = parse_quote!(&raw mut (*(&raw mut #storage).cast::<#ty>()).#field);
+            self.replaced = true;
+        } else {
+            syn::visit_mut::visit_expr_mut(self, expr);
+        }
+    }
+}
+
+impl SwPassBackend for Cpu0 {
+    fn queue_path(&self) -> Path {
+        parse_quote!(__rticx_backend::export::Queue)
+    }
+    fn custom_interrupt_path(&self, _: u32) -> Option<Path> {
+        Some(parse_quote!(__rticx_backend::Interrupt))
+    }
+    fn generate_local_pend_fn(&self, _: u32, mut f: ItemFn) -> ItemFn {
+        f.block = parse_quote!({
+            __rticx_backend::export::pend(irq_nbr);
+        });
+        f
+    }
+    fn generate_cross_pend_fn(&self, _: u32, _: ItemFn) -> Option<ItemFn> {
+        None
+    }
+}
+impl AsyncPassBackend for Cpu0 {
+    fn async_runtime_path(&self) -> Path {
+        parse_quote!(__rticx_backend::asynchronous)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unsupported_controller_bindings() {
+        assert!(validate_args(&quote!(cores = 2)).is_err());
+        assert!(validate_args(&quote!(dispatchers = [TIMER5])).is_err());
+        assert!(validate_args(&quote!(dispatchers = [SOFT1, SOFT1])).is_err());
+        assert!(validate_args(&quote!(dispatchers = [SOFT0, SOFT7])).is_ok());
+        let app = parse_quote!(
+            mod app {
+                #[task(core = 1, binds = ALNK0)]
+                struct Audio;
+            }
+        );
+        assert!(validate_cores(&app).is_err());
+    }
+}

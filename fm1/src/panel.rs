@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Julius Vitkauskas
 // SPDX-License-Identifier: MIT-0
 //! FM-1 keys and LEDs share an active-low column selector (two 74HC595s).
-//! The default mode keeps PLAY selected. Consume it with [`Play::into_matrix`]
-//! to scan other columns. Only one column can be lit or sampled at a time.
+//! [`Play`] handles both transport LED colors and the PLAY/STOP switch.
+//! Consume it with [`Play::into_matrix`] to scan the rest of the panel.
 
 use crate::{Token, registers::*, time::wait_cycles};
 use core::convert::Infallible;
@@ -13,8 +13,9 @@ const BACKLIGHT: u32 = 1 << 2;
 const CLOCK: u32 = 1 << 3;
 const DATA: u32 = 1 << 4;
 const PLAY_INPUT: u32 = 1 << 6;
-const PLAY_LED: u32 = 1 << 10;
-const LED_A: u32 = (1 << 9) | PLAY_LED;
+const PLAY_AMBER: u32 = 1 << 10;
+const PLAY_GREEN: u32 = 1 << 9;
+const LED_A: u32 = PLAY_GREEN | PLAY_AMBER;
 const LED_H: u32 = (1 << 6) | (1 << 9);
 
 /// A physical shift-register column.
@@ -23,7 +24,7 @@ pub struct Column(u8);
 impl Column {
     /// Number of populated columns.
     pub const COUNT: u8 = 11;
-    /// Column shared by the PLAY button and LED.
+    /// Column shared by the PLAY/STOP switch and its amber LED.
     pub const PLAY: Self = Self(10);
     /// Accept an index in `0..11`.
     #[must_use]
@@ -60,25 +61,56 @@ fn drive_leds(port: usize, mask: u32) {
     set(port + HD, mask);
 }
 
-/// Fixed PLAY column with mutually exclusive LED and button access.
+/// The two LED positions under the PLAY/STOP button.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayColor {
+    /// STOP indicator on PA10, column 10. This is the default.
+    Amber,
+    /// PLAY indicator on PA9, column 8.
+    Green,
+}
+
+impl PlayColor {
+    const fn column(self) -> Column {
+        match self {
+            Self::Amber => Column::PLAY,
+            Self::Green => Column(8),
+        }
+    }
+
+    const fn line(self) -> u32 {
+        match self {
+            Self::Amber => PLAY_AMBER,
+            Self::Green => PLAY_GREEN,
+        }
+    }
+}
+
+/// Mutually exclusive access to the PLAY/STOP switch and its indicator.
 #[derive(Debug)]
-pub struct Play(Token);
+pub struct Play {
+    token: Token,
+    color: PlayColor,
+}
 impl Play {
     pub(crate) fn init() -> Self {
         // PA2 low is required for key reads, including in LED-only firmware.
         outputs(PA, LATCH | CLOCK | DATA | BACKLIGHT);
-        drive_leds(PA, PLAY_LED);
+        drive_leds(PA, LED_A);
         pull_up_inputs(PA, PLAY_INPUT);
         select(Column::PLAY);
-        Self(Token::new())
+        Self {
+            token: Token::new(),
+            color: PlayColor::Amber,
+        }
     }
     /// Borrow the active-high PLAY LED.
     pub fn led(&mut self) -> PlayLed<'_> {
-        PlayLed { _panel: self }
+        PlayLed { panel: self }
     }
     /// Borrow the active-low PLAY button.
     pub fn button(&mut self) -> PlayButton<'_> {
-        PlayButton { _panel: self }
+        PlayButton { panel: self }
     }
     /// Enable all four LED lines and six input rows. Initially selects PLAY with all LEDs off.
     #[must_use]
@@ -87,31 +119,47 @@ impl Play {
         drive_leds(PH, LED_H);
         pull_up_inputs(PA, 1 | (0x0f << 5));
         pull_up_inputs(PB, 1 << 7);
-        Matrix(self.0)
+        if self.color == PlayColor::Green {
+            select(Column::PLAY);
+        }
+        Matrix(self.token)
     }
 }
 
 /// Active-high `embedded-hal` output. The LED remains in its last state when dropped.
 #[derive(Debug)]
 pub struct PlayLed<'a> {
-    _panel: &'a mut Play,
+    panel: &'a mut Play,
+}
+impl PlayLed<'_> {
+    /// Select a color while preserving the on/off state.
+    pub fn set_color(&mut self, color: PlayColor) {
+        if self.panel.color != color {
+            let old_line = self.panel.color.line();
+            let on = read(PA + OUT) & old_line != 0;
+            clear(PA + OUT, old_line);
+            select(color.column());
+            level(PA + OUT, color.line(), on);
+            self.panel.color = color;
+        }
+    }
 }
 impl ErrorType for PlayLed<'_> {
     type Error = Infallible;
 }
 impl OutputPin for PlayLed<'_> {
     fn set_low(&mut self) -> Result<(), Infallible> {
-        clear(PA + OUT, PLAY_LED);
+        clear(PA + OUT, self.panel.color.line());
         Ok(())
     }
     fn set_high(&mut self) -> Result<(), Infallible> {
-        set(PA + OUT, PLAY_LED);
+        set(PA + OUT, self.panel.color.line());
         Ok(())
     }
 }
 impl StatefulOutputPin for PlayLed<'_> {
     fn is_set_high(&mut self) -> Result<bool, Infallible> {
-        Ok(read(PA + OUT) & PLAY_LED != 0)
+        Ok(read(PA + OUT) & self.panel.color.line() != 0)
     }
     fn is_set_low(&mut self) -> Result<bool, Infallible> {
         Ok(!self.is_set_high()?)
@@ -121,15 +169,23 @@ impl StatefulOutputPin for PlayLed<'_> {
 /// Active-low `embedded-hal` input. Sampling briefly blanks the LED and restores it.
 #[derive(Debug)]
 pub struct PlayButton<'a> {
-    _panel: &'a mut Play,
+    panel: &'a mut Play,
 }
 impl PlayButton<'_> {
     /// Read the raw contact after the line settles. Debounce in the application.
     pub fn is_pressed(&mut self) -> bool {
-        let led = read(PA + OUT) & PLAY_LED;
-        clear(PA + OUT, PLAY_LED);
+        let column = self.panel.color.column();
+        let line = self.panel.color.line();
+        let led = read(PA + OUT) & line;
+        clear(PA + OUT, line);
+        if column != Column::PLAY {
+            select(Column::PLAY);
+        }
         wait_cycles(240); // 10 us @ 24 MHz
         let down = read(PA + IN) & PLAY_INPUT == 0;
+        if column != Column::PLAY {
+            select(column);
+        }
         set(PA + OUT, led);
         down
     }
@@ -173,7 +229,7 @@ impl Matrix {
     pub fn set_led(&mut self, row: LedRow, on: bool) {
         let (port, mask) = match row {
             LedRow::Pa5 => (PA, 1 << 9),
-            LedRow::Pa6 => (PA, PLAY_LED),
+            LedRow::Pa6 => (PA, PLAY_AMBER),
             LedRow::Pa7 => (PH, 1 << 6),
             LedRow::Pa8 => (PH, 1 << 9),
         };

@@ -1,0 +1,22 @@
+[package]
+name = "rticx-pi32v2-macro"
+version = "0.0.0"
+edition = "2024"
+description = "RTICX application macro for pi32v2"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "visit-mut"] }
+# Entry and resource generation adapt the shapes emitted by these releases.
+rticx-async-pass = "=0.2.1"
+rticx-core = "=0.2.0"
+rticx-sw-pass = "0.2"
+
+[lints]
+workspace = true

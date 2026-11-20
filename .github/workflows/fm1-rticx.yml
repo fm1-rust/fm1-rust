@@ -1,0 +1,41 @@
+name: fm1-rticx
+
+on:
+  pull_request:
+    paths: &fm1-rticx-paths
+      - 'fm1-rticx/**'
+      - 'fm1/**'
+      - 'rticx-pi32v2/**'
+      - Cargo.toml
+      - Cargo.lock
+      - '.cargo/**'
+      - .github/scripts/build-llvm.sh
+      - .github/scripts/build-rustc.sh
+      - .github/workflows/fm1-rticx.yml
+      - .github/workflows/pi32v2-firmware.yml
+  push:
+    branches: [main]
+    paths: *fm1-rticx-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: cargo +stable test -p fm1-rticx --all-features --locked
+
+  firmware:
+    uses: ./.github/workflows/pi32v2-firmware.yml
+    with:
+      package: fm1-rticx

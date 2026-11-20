@@ -17,6 +17,11 @@ return to USB download mode on a physical FM-1.
 All three behaviors have been observed on an FM-1 running M-Bootloader
 `2.4-395E6CC`. Start with the [firmware build and flashing instructions](fm1/README.md#build-and-flash).
 
+For interrupt-driven applications, [`fm1-rticx`](fm1-rticx/) adds priority-based
+hardware and async tasks, shared resources and a 100 Hz clock. Its examples
+schedule the PLAY LED and button independently, and refill audio DMA while
+repainting the LCD.
+
 For development on a host, run `cargo test --workspace --all-features` with a
 standard Rust toolchain. Building firmware uses the community pi32v2 toolchain.
 

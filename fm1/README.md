@@ -18,16 +18,22 @@ fn app(mut board: Board) -> ! {
 }
 ```
 
+With an external runtime, acquire the peripherals once with `Board::take()`
+in its CPU0 initializer. This starts the timers and leaves interrupt setup to
+the caller. Bind TIMER5 and call `board.timers.on_interrupt()` in its handler
+to maintain the tick count. [The FM-1 RTICX crate](../fm1-rticx/) uses this
+entry path.
+
 ## Board peripherals
 
 | Handle | Interface |
 | --- | --- |
-| `board.panel` | Borrow the PLAY LED as an `OutputPin` or `StatefulOutputPin`, or the active-low PLAY button as an `InputPin`. Sampling the button briefly blanks the LED and restores its state. |
+| `board.panel` | Borrow the PLAY/STOP indicator as an `OutputPin` or `StatefulOutputPin`. Its `set_color` method selects amber (default) or green. Sampling the active-low button briefly blanks the indicator and restores its color and on/off state. |
 | `board.panel.into_matrix()` | Select one of 11 columns, sample six switch rows or drive the four LED rows. The application controls scan timing and debounce. |
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. Use `wrapping_sub` for elapsed time. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels from RAM or flash using SPI1 DMA. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
-| `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Dropping the stream stops DMA. |
+| `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
 Audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
 of 24 MHz / 544. Submit a prepared block with `try_write`. A long blocking
@@ -127,6 +133,7 @@ startup assembly, linker layout and pi32v2 target also come from that work,
 licensed under MIT-0.
 
 The panel matrix and headphone switch wiring follow [felucca-bsp][felucca].
+The green PLAY indicator uses the position measured by [Araminta][play-green].
 The optional audio module ports its MPL-2.0 driver by Leo Kuroshita
 (Hügelton Instruments) and Kerem Kilic (Ellic Studio). Repository integration
 is MIT-licensed.
@@ -142,3 +149,4 @@ is MIT-licensed.
 [isa]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257
 [flasher]: https://github.com/jvitkauskas/m-flasher/blob/main/docs/usage.md
 [felucca]: https://github.com/hugelton/felucca-bsp/tree/2a5af3dfc8bccb92e37d48a3e7e0bf9a5827e51f/boards/fm1
+[play-green]: https://github.com/Wulgaren/Araminta/blob/62911ec19b1010b16d2ab508e91eed08775386e6/firmware/src/ui_input.c#L29-L30

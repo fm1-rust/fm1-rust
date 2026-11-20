@@ -1,0 +1,34 @@
+name: rticx-pi32v2
+
+on:
+  pull_request:
+    paths: &rticx-pi32v2-paths
+      - 'rticx-pi32v2/**'
+      - Cargo.toml
+      - Cargo.lock
+      - '.cargo/**'
+      - .github/workflows/rticx-pi32v2.yml
+  push:
+    branches: [main]
+    paths: *rticx-pi32v2-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+# fm1-rticx.yml covers target assembly and linking when this backend changes.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: cargo +stable test -p rticx-pi32v2 -p rticx-pi32v2-macro --all-features --locked
+      - name: Check that optimized executor slots have distinct addresses
+        run: cargo +stable test -p rticx-pi32v2-macro --release --test slots --locked

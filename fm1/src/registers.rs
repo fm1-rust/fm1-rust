@@ -29,10 +29,23 @@ pub(crate) fn write(addr: usize, value: u32) {
     unsafe { core::ptr::write_volatile(addr as *mut u32, value) }
 }
 pub(crate) fn set(addr: usize, mask: u32) {
-    write(addr, read(addr) | mask);
+    modify(addr, 0, mask);
 }
 pub(crate) fn clear(addr: usize, mask: u32) {
-    write(addr, read(addr) & !mask);
+    modify(addr, mask, 0);
+}
+// Drivers for disjoint pins may still update the same port register from
+// different interrupt priorities.
+fn modify(addr: usize, clear: u32, set: u32) {
+    #[cfg(fm1)]
+    {
+        unsafe extern "C" {
+            fn fm1_modify(reg: *mut u32, clear: u32, set: u32);
+        }
+        unsafe { fm1_modify(addr as *mut u32, clear, set) };
+    }
+    #[cfg(not(fm1))]
+    write(addr, (read(addr) & !clear) | set);
 }
 pub(crate) fn level(addr: usize, mask: u32, high: bool) {
     if high {
