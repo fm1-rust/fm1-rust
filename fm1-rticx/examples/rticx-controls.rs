@@ -4,7 +4,7 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(target_os = "none")]
-#[path = "rticx-controls/screen.rs"]
+#[path = "common/screen.rs"]
 mod screen;
 
 #[cfg(target_os = "none")]
