@@ -6,6 +6,7 @@ on:
       - 'fm1-rticx/**'
       - 'fm1/**'
       - 'rticx-pi32v2/**'
+      - 'rticx-pi32v2-macro/**'
       - Cargo.toml
       - Cargo.lock
       - '.cargo/**'
