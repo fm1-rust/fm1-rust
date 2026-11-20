@@ -7,6 +7,9 @@ on:
         description: Workspace package containing the FM-1 firmware examples
         type: string
         required: true
+      archive:
+        description: Tagged crate to verify against its registry dependencies
+        type: string
 
 permissions:
   contents: read
@@ -83,15 +86,16 @@ jobs:
           mkdir -p pi32v2-llvm
           tar -xf pi32v2-llvm.tar.xz --strip-components=1 -C pi32v2-llvm
           echo "$RUNNER_TEMP/pi32v2-llvm/bin" >> "$GITHUB_PATH"
-      # fm1-rticx depends on unpublished workspace crates.
-      - name: Verify the crate archive for pi32v2
-        if: inputs.package == 'fm1'
+      # RTICX path dependencies can be unpublished during pull requests.
+      - name: Verify the crate archive with the firmware toolchain
+        if: inputs.archive != '' || inputs.package == 'fm1'
         env:
+          ARCHIVE: ${{ inputs.archive || inputs.package }}
           RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
           RUSTC_BOOTSTRAP: 1
           PI32V2_BIN: ${{ runner.temp }}/pi32v2-llvm/bin
         run: |
-          cargo package --locked --package fm1 --all-features \
+          cargo package --locked --package "$ARCHIVE" --all-features \
             --target "$GITHUB_WORKSPACE/fm1/targets/pi32v2-none.json" \
             -Zjson-target-spec -Zbuild-std=core,compiler_builtins \
             -Zbuild-std-features=compiler-builtins-mem
