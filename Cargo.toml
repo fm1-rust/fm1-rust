@@ -29,3 +29,10 @@ trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 unused_lifetimes = "warn"
 unused_qualifications = "warn"
+
+[profile.firmware]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

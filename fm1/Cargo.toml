@@ -2,7 +2,19 @@
 name = "fm1"
 version = "0.0.0"
 edition = "2024"
-description = "Pure Rust support package for the M-VAVE FM-1 built on embeded-hal"
+description = "Board support for the M-VAVE FM-1 using embedded-hal"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+
+[features]
+audio = []
+
+[[example]]
+name = "tone"
+required-features = ["audio"]
+
+[dependencies]
+embedded-hal = "1"
 
 [lints]
 workspace = true
