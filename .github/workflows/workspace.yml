@@ -43,6 +43,30 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  semver-checks:
+    runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: 1.100.0
+      # v0.51.0 skips proc-macro crates. This revision includes upstream PR #1753.
+      SEMVER_CHECKS_REV: 54303a8456298c66b22d3cbabee7ffd85ea76a1e
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: checker
+        with:
+          path: ~/.cargo/bin/cargo-semver-checks
+          key: cargo-semver-checks-ubuntu-24.04-${{ runner.arch }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ env.SEMVER_CHECKS_REV }}
+      - name: Install cargo-semver-checks
+        if: steps.checker.outputs.cache-hit != 'true'
+        run: |
+          cargo install --locked --git https://github.com/obi1kenobi/cargo-semver-checks \
+            --rev "$SEMVER_CHECKS_REV" cargo-semver-checks
+      # fm1-rticx has no release on crates.io to compare against yet.
+      - run: cargo semver-checks --workspace --exclude fm1-rticx --all-features
+
   typos:
     runs-on: ubuntu-latest
     steps:
