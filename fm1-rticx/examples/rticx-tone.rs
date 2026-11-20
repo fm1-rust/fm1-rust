@@ -13,7 +13,7 @@ mod app {
         bsp::{
             Board,
             audio::{BLOCK_FRAMES, Block, Refill, Stream},
-            display::{Display, SIZE},
+            display::{Display, SIZE, SpiClock},
             embedded_hal::digital::OutputPin,
             panel::{Play, PlayColor},
             time::Timers,
@@ -45,7 +45,7 @@ mod app {
     #[init]
     fn init() -> (Shared, TaskInits) {
         let board = Board::take().expect("CPU0 board");
-        let display = board.display.init().expect("LCD");
+        let display = board.display.init_with_clock(SpiClock::Div1).expect("LCD");
         let mut panel = board.panel;
         panel.led().set_color(PlayColor::Green);
         let Ok(()) = panel.led().set_high();
@@ -158,30 +158,23 @@ mod app {
         type SpawnInput = ();
 
         async fn exec(&mut self, (): ()) {
-            const ROWS: u16 = 8;
-            const PIXELS: usize = SIZE as usize * ROWS as usize;
-            static GREEN: [[u8; 2]; PIXELS] = [0x07e0u16.to_be_bytes(); PIXELS];
-            static RED: [[u8; 2]; PIXELS] = [0xf800u16.to_be_bytes(); PIXELS];
-            static MAGENTA: [[u8; 2]; PIXELS] = [0xf81fu16.to_be_bytes(); PIXELS];
-
+            const MARKER: u16 = 8;
             let mut shown = None;
             loop {
-                let state = self.shared().transport.lock(|t| (t.playing, t.late));
-                if shown != Some(state) {
-                    let (playing, late) = state;
-                    let background = if playing { &GREEN } else { &RED };
-                    for y in (0..SIZE).step_by(usize::from(ROWS)) {
-                        let strip = if late && y == SIZE - ROWS {
-                            &MAGENTA
-                        } else {
-                            background
-                        };
-                        self.display
-                            .write_rect(0, y, SIZE, ROWS, strip.as_flattened())
-                            .expect("SPI DMA");
-                    }
-                    shown = Some(state);
+                let (playing, late) = self.shared().transport.lock(|t| (t.playing, t.late));
+                if shown.map(|(old, _)| old) != Some(playing) {
+                    let height = if late { SIZE - MARKER } else { SIZE };
+                    let color = if playing { 0x07e0 } else { 0xf800 };
+                    self.display
+                        .fill_rect(0, 0, SIZE, height, color)
+                        .expect("LCD fill");
                 }
+                if late && !shown.is_some_and(|(_, marked)| marked) {
+                    self.display
+                        .fill_rect(0, SIZE - MARKER, SIZE, MARKER, 0xf81f)
+                        .expect("late marker");
+                }
+                shown = Some((playing, late));
                 self.updates
                     .recv()
                     .await

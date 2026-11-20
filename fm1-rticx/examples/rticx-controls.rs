@@ -14,7 +14,7 @@ mod app {
     use fm1_rticx::{
         bsp::{
             Board,
-            display::Display,
+            display::{Display, SpiClock},
             enter_download_mode,
             panel::{
                 Button, Controls, Encoder, Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan,
@@ -155,7 +155,7 @@ mod app {
     #[init]
     fn init() -> (Shared, TaskInits) {
         let board = Board::take().expect("CPU0 board");
-        let display = board.display.init().expect("LCD");
+        let display = board.display.init_with_clock(SpiClock::Div1).expect("LCD");
         let view = View::default();
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         (

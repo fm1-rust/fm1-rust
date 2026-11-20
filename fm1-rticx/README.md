@@ -16,6 +16,7 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh rticx-tone
 ./fm1/scripts/build-example.sh rticx-controls
 ./fm1/scripts/build-example.sh rticx-piano
+./fm1/scripts/build-example.sh rticx-waveform
 ```
 
 | Firmware | Tasks and controls |
@@ -24,6 +25,14 @@ set, run the example builds from the workspace root.
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
 | [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs while a lower-priority task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-waveform](examples/rticx-waveform.rs) | Play a monophonic oscillator and see the samples sent to the DAC. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
+
+The waveform starts on A4. The graph shows 224 consecutive left-channel samples
+(about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
+trace. Audio runs at priority 3, panel scanning at 2 and drawing at 1. The
+renderer replaces changed tiles and prepares the next strip while SPI1 sends
+the previous one. A red LATE indicator records an audio DMA refill that crossed
+a buffer boundary.
 
 The controls display shows MASTER, signed counts for all encoders, a press count
 for each button, and the last piano key (1–27). Green text means held, cyan means

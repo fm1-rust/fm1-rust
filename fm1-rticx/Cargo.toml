@@ -20,6 +20,11 @@ test = true
 name = "rticx-tone"
 required-features = ["audio"]
 
+[[example]]
+name = "rticx-waveform"
+required-features = ["audio"]
+test = true
+
 [dependencies]
 fm1 = { version = "0.1.1", path = "../fm1" }
 rtic-time = "3"

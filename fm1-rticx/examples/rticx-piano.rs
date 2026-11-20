@@ -3,6 +3,9 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
+#[cfg(any(target_os = "none", test))]
+#[path = "common/pitch.rs"]
+mod pitch;
 #[cfg(target_os = "none")]
 #[path = "common/screen.rs"]
 mod screen;
@@ -14,14 +17,15 @@ mod synth;
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
     use crate::{
+        pitch::{midi_note, note_name},
         screen::{Ink, Screen},
-        synth::{Synth, midi_note, note_name},
+        synth::Synth,
     };
     use fm1_rticx::{
         bsp::{
             Board,
             audio::{BLOCK_FRAMES, Block, Refill, Stream},
-            display::DisplayPort,
+            display::{DisplayPort, SpiClock},
             enter_download_mode,
             panel::{Button, Controls, Event, Leds, MasterLevel, PianoKey, Scan, Switch},
             time::{Timers, ticks},
@@ -59,7 +63,7 @@ mod app {
 
         fn draw(&self, screen: &mut Screen) {
             if let Some(key) = self.last {
-                screen.text(5, 2, &note_name(key), Ink::White);
+                screen.text(5, 2, &note_name(midi_note(key)), Ink::White);
                 screen.number(16, 2, 2, u32::from(midi_note(key)), None, Ink::White);
             }
             screen.number(5, 3, 2, self.held.count_ones(), None, Ink::Green);
@@ -74,7 +78,7 @@ mod app {
                     Ink::Muted
                 };
                 let i = usize::from(key.index());
-                screen.text((i % 5) * 4, 5 + i / 5, &note_name(key), ink);
+                screen.text((i % 5) * 4, 5 + i / 5, &note_name(midi_note(key)), ink);
             }
             if let Some(level) = self.master {
                 screen.number(7, 12, 4, u32::from(level.raw()), None, Ink::Amber);
@@ -187,7 +191,9 @@ mod app {
         async fn exec(&mut self, (): ()) {
             // The keyboard and audio can run while the LCD wakes up.
             let Some(port) = self.port.take() else { return };
-            let Ok(mut display) = port.init() else { return };
+            let Ok(mut display) = port.init_with_clock(SpiClock::Div1) else {
+                return;
+            };
             let mut screen = Screen::new();
             if Screen::clear(&mut display).is_err() {
                 return;

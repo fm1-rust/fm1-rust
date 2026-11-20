@@ -1,55 +1,10 @@
 use fm1_rticx::bsp::{
-    audio::{BLOCK_FRAMES, Block, FRAME_RATE},
+    audio::{BLOCK_FRAMES, Block},
     panel::{MasterLevel, PianoKey},
 };
 
-#[allow(
-    clippy::arithmetic_side_effects,
-    reason = "Physical key indices are 0..=26."
-)]
-pub(super) fn midi_note(key: PianoKey) -> u8 {
-    // Middle C is 60. The physical keyboard starts on the F below it.
-    53 + key.index()
-}
-
-#[allow(
-    clippy::arithmetic_side_effects,
-    reason = "MIDI notes 53..=79 give octave digits 3..=5."
-)]
-pub(super) fn note_name(key: PianoKey) -> [u8; 3] {
-    const NAMES: [[u8; 2]; 12] = [
-        *b"C ", *b"C#", *b"D ", *b"D#", *b"E ", *b"F ", *b"F#", *b"G ", *b"G#", *b"A ", *b"A#",
-        *b"B ",
-    ];
-    let note = midi_note(key);
-    let [letter, accidental] = NAMES[usize::from(note % 12)];
-    let octave = b'0' + (note / 12 - 1);
-    if accidental == b'#' {
-        [letter, accidental, octave]
-    } else {
-        [letter, octave, b' ']
-    }
-}
-
-// Equal-tempered F3 through G5 at A4 = 440 Hz. Compute the table at compile
-// time for the BSP's actual frame rate. The audio interrupt only uses integers.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "Every rounded phase increment is positive and fits in u32."
-)]
-const STEPS: [u32; PianoKey::COUNT as usize] = {
-    let mut steps = [0; PianoKey::COUNT as usize];
-    let mut step =
-        174.614_115_716_502 * 4_294_967_296.0 * FRAME_RATE.1 as f64 / FRAME_RATE.0 as f64;
-    let mut i = 0;
-    while i < steps.len() {
-        steps[i] = (step + 0.5) as u32;
-        step *= 1.059_463_094_359_295_3; // 2^(1/12)
-        i += 1;
-    }
-    steps
-};
+// Equal-tempered F3 through G5 at A4 = 440 Hz.
+const STEPS: [u32; PianoKey::COUNT as usize] = crate::pitch::phase_steps(174.614_115_716_502);
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Synth {
@@ -100,6 +55,8 @@ impl Synth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pitch::{midi_note, note_name};
+    use fm1_rticx::bsp::audio::FRAME_RATE;
 
     #[test]
     fn note_labels_and_concert_pitch_agree() {
@@ -112,7 +69,7 @@ mod tests {
         ] {
             let key = PianoKey::new(index).expect("physical key");
             assert_eq!(midi_note(key), number);
-            assert_eq!(note_name(key), name);
+            assert_eq!(note_name(number), name);
         }
         let a4 = f64::from(STEPS[16]) * f64::from(FRAME_RATE.0)
             / (4_294_967_296.0 * f64::from(FRAME_RATE.1));
