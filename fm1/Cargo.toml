@@ -5,7 +5,7 @@ version = "0.1.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/fm1-rust/fm1-rust"
-keywords = ["embedded-hal", "pi32v2"]
+keywords = ["embedded-hal", "fm1", "pi32v2"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [features]
