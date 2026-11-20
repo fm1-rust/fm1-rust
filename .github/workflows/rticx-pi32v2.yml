@@ -4,6 +4,7 @@ on:
   pull_request:
     paths: &rticx-pi32v2-paths
       - 'rticx-pi32v2/**'
+      - 'rticx-pi32v2-macro/**'
       - Cargo.toml
       - Cargo.lock
       - '.cargo/**'
