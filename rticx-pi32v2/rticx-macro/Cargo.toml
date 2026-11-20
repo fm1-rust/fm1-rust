@@ -1,10 +1,12 @@
 [package]
 name = "rticx-pi32v2-macro"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "RTICX application macro for pi32v2"
 license = "MIT"
 repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["fm1", "pi32v2", "rticx"]
+categories = ["embedded", "hardware-support", "no-std"]
 
 [lib]
 proc-macro = true
