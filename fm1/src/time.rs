@@ -4,6 +4,7 @@
 
 use crate::{
     Token,
+    panel::Controls,
     registers::{read, write},
 };
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
@@ -15,6 +16,9 @@ pub(crate) const T5_CON: usize = 0x10900;
 const ICFG_WORDS: usize = 0x01ee_f100;
 const SOURCE: usize = 63;
 static TICKS: AtomicU32 = AtomicU32::new(0);
+// Zero selects the ordinary 100 Hz interrupt. Otherwise count down scan interrupts.
+static SUBTICKS: AtomicU32 = AtomicU32::new(0);
+const SCANS_PER_TICK: u32 = Controls::SCAN_HZ / Timers::TICK_HZ;
 
 unsafe extern "C" {
     fn fm1_timer5_isr();
@@ -30,6 +34,14 @@ pub(crate) extern "C" fn rust_timer5_tick() {
 
 fn tick() {
     crate::registers::set(T5_CON, 0x4000);
+    match SUBTICKS.load(Relaxed) {
+        0 => {}
+        1 => SUBTICKS.store(SCANS_PER_TICK, Relaxed),
+        n => {
+            SUBTICKS.store(n.wrapping_sub(1), Relaxed);
+            return;
+        }
+    }
     TICKS.store(TICKS.load(Relaxed).wrapping_add(1), Relaxed);
 }
 
@@ -39,7 +51,7 @@ pub struct Timers(Token);
 impl Timers {
     /// TIMER4 crystal counts per second.
     pub const CRYSTAL_HZ: u32 = 24_000_000;
-    /// TIMER5 interrupts per second.
+    /// Logical clock ticks per second, including in panel scan mode.
     pub const TICK_HZ: u32 = 100;
 
     pub(crate) fn start() -> Self {
@@ -47,6 +59,7 @@ impl Timers {
         write(T4_CON + 8, u32::MAX);
         write(T4_CNT, 0);
         write(T4_CON, 0x4009);
+        SUBTICKS.store(0, Relaxed);
         write(T5_CON, 0x4000);
         write(T5_CON + 4, 0);
         write(T5_CON + 8, Self::CRYSTAL_HZ / 4 / Self::TICK_HZ - 1);
@@ -54,10 +67,22 @@ impl Timers {
         Self(Token::new())
     }
 
-    /// Acknowledge TIMER5 and count one tick. Call once per TIMER5 interrupt
+    /// Acknowledge TIMER5 and advance the 100 Hz clock when due. Call once per interrupt
     /// when the application owns the vector.
     pub fn on_interrupt(&mut self) {
         tick();
+    }
+
+    /// Configure TIMER5 to interrupt once per panel column (100 µs). Call during
+    /// setup while the TIMER5 vector is masked. The public clock keeps its 10 ms unit.
+    #[must_use]
+    pub fn with_panel_scan_rate(self) -> Self {
+        write(T5_CON, 0x4000);
+        write(T5_CON + 4, 0);
+        write(T5_CON + 8, Self::CRYSTAL_HZ / 4 / Controls::SCAN_HZ - 1);
+        SUBTICKS.store(SCANS_PER_TICK, Relaxed);
+        write(T5_CON, 0x4019);
+        self
     }
 
     /// Free-running 24 MHz count. Use `wrapping_sub` across rollover.
