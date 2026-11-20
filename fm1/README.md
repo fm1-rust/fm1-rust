@@ -52,19 +52,19 @@ Firmware builds have been tested on x86-64 Linux with Cargo 1.100.0, Python
 | [pi32v2-isa][isa], which supplies the FM-1 packager | `701a76f` |
 
 Follow [the upstream compiler build instructions][compiler-build] to build
-Rust against LLVM with the host and PI32V2 backends. From the workspace root,
-set these paths for your installation and build the LED example.
+Rust against LLVM with the host and PI32V2 backends. Set these paths for your
+installation.
 
 ```sh
 export RUSTC=/path/to/pi32v2-rust/build/host/stage1/bin/rustc
 export PI32V2_BIN=/path/to/pi32v2-llvm/bin
 export PI32V2_ISA=/path/to/pi32v2-isa
-./fm1/scripts/build-example.sh blink
 ```
 
-The result is `target/firmware/blink.fwsc`, alongside its ELF and raw
-application binary. Use `display` to build the RGB test card or `tone` for
-the audio test. The script enables the `audio` feature for `tone`.
+From the `fm1-rust` workspace root, `./fm1/scripts/build-example.sh blink`
+writes `target/firmware/blink.fwsc` alongside its ELF and raw application
+binary. Use `display` to build the RGB test card or `tone` for the audio test.
+The script enables the `audio` feature for `tone`.
 
 1. On an FM-1 with M-Bootloader installed, hold **REC** while powering on to
    enter USB download mode. Connect the device with a USB data cable.
@@ -77,28 +77,44 @@ the audio test. The script enables the `audio` feature for `tone`.
 
 ## Use from another crate
 
-For a firmware project alongside an `fm1-rust` checkout, add the path
-dependency to the application's `Cargo.toml`.
+Add `fm1 = "0.1.0"` under `[dependencies]` in your application's
+`Cargo.toml`, or create a new binary crate with the [published BSP][crate].
 
-```toml
-[dependencies]
-fm1 = { path = "../fm1-rust/fm1" }
+```sh
+cargo new --bin my-app
+cd my-app
+cargo add fm1@0.1.0
 ```
 
-Use [the complete blink example][blink-example] for the entry point and panic
-handler. Set the three environment variables above, then run the following
-from your application directory, replacing `my-app` with your binary name.
+Keep the target specification in the application root so Cargo can load it
+before building dependencies. The [blink example][blink-example] shows how
+to use `fm1::entry!` and supply a panic handler in `src/main.rs`.
+
+```sh
+release=https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1/v0.1.0/fm1
+curl -fsSLo pi32v2-none.json "$release/targets/pi32v2-none.json"
+# For a new project, replace Cargo's generated main.rs with the blink example.
+curl -fsSLo src/main.rs "$release/examples/blink.rs"
+```
+
+You can type-check the example on the host with `cargo check`. To build
+firmware, set `RUSTC`, `PI32V2_BIN` and `PI32V2_ISA` as shown in
+[Build and flash](#build-and-flash). The `fm1` build script supplies the
+startup code and linker script.
 
 ```sh
 export RUSTC_BOOTSTRAP=1
 export CARGO_TARGET_PI32V2_NONE_LINKER="$PI32V2_BIN/ld.lld"
 export RUSTFLAGS="-C link-arg=-Tfm1.ld"
-cargo build --release --target ../fm1-rust/fm1/targets/pi32v2-none.json \
+cargo build --release --target ./pi32v2-none.json \
   -Zjson-target-spec -Zbuild-std=core,compiler_builtins \
   -Zbuild-std-features=compiler-builtins-mem
 python3 "$PI32V2_ISA/tools/hwtest/fm1app.py" my-app.fwsc \
   --from-elf target/pi32v2-none/release/my-app
 ```
+
+For a different binary name, replace `my-app` in the packaging command.
+Select the resulting `.fwsc` file in [M-Flasher][flasher].
 
 ## License
 
@@ -117,7 +133,8 @@ is MIT-licensed.
 
 [blink-origin]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust
 [c-blink]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink
-[blink-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/examples/blink.rs
+[blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.0/fm1/examples/blink.rs
+[crate]: https://crates.io/crates/fm1/0.1.0
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
 [compiler-build]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust/README.md#the-patched-rustc
 [rust-fork]: https://github.com/jvitkauskas/pi32v2-rust/tree/3ee95ae1dfc454a3eca42af41db34e356d8ff658
