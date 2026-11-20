@@ -36,6 +36,12 @@ LCD transfer can miss the refill deadline and cause old samples to repeat.
 
 ## Build and flash
 
+The [`fm1` workflow][ci] runs host tests and builds every firmware example
+when the crate or its build inputs change. Download the `fm1-firmware` artifact
+from a successful run for the flashable `.fwsc` packages. CI builds the
+patched compiler on a cache miss and uses the upstream pi32v2 LLVM release
+for the assembler, linker and runtime.
+
 Firmware builds have been tested on x86-64 Linux with Cargo 1.100.0, Python
 3.11+ and the following toolchain. Host tests use stable Rust.
 
@@ -112,6 +118,7 @@ is MIT-licensed.
 [blink-origin]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust
 [c-blink]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink
 [blink-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/examples/blink.rs
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
 [compiler-build]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust/README.md#the-patched-rustc
 [rust-fork]: https://github.com/jvitkauskas/pi32v2-rust/tree/3ee95ae1dfc454a3eca42af41db34e356d8ff658
 [llvm-tools]: https://github.com/jvitkauskas/pi32v2-llvm/releases/tag/pi32v2-23.1.5-5
