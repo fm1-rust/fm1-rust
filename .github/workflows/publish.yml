@@ -2,9 +2,12 @@ name: Publish to crates.io
 
 on:
   push:
+    # Publish a new crate once before configuring its trusted publisher.
+    # The backend needs the macro. fm1-rticx needs both the backend and the BSP.
     tags:
       - 'fm1/v*'
       - 'fm1-rticx/v*'
+      - 'rticx-pi32v2-macro/v*'
       - 'rticx-pi32v2/v*'
 
 permissions: {}
@@ -20,12 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      package: ${{ steps.verify.outputs.package }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
         with:
           persist-credentials: false
 
       - name: Verify the tagged workspace package
+        id: verify
         shell: bash
         run: |
           package=$(cargo metadata --no-deps --format-version 1 |
@@ -33,18 +39,23 @@ jobs:
               first(.packages[] | select("\(.name)/v\(.version)" == $tag) | .name)
                 // error("no workspace package matches tag \($tag)")
             ')
+          cargo test --locked --all-features --package "$package"
           cargo publish --dry-run --locked --registry crates-io --package "$package"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
 
   firmware:
     name: Check FM-1 firmware
     needs: verify
     permissions:
       contents: read
-    uses: ./.github/workflows/fm1.yml
+    uses: ./.github/workflows/pi32v2-firmware.yml
+    with:
+      package: ${{ needs.verify.outputs.package == 'fm1' && 'fm1' || 'fm1-rticx' }}
+      archive: ${{ needs.verify.outputs.package }}
 
   publish:
     name: Publish package
-    needs: firmware
+    needs: [verify, firmware]
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -62,5 +73,5 @@ jobs:
       - name: Publish the tagged package
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        # The host and pi32v2 jobs already built the package at this commit.
-        run: cargo publish --locked --no-verify --registry crates-io --package "${GITHUB_REF_NAME%%/*}"
+          PACKAGE: ${{ needs.verify.outputs.package }}
+        run: cargo publish --locked --no-verify --registry crates-io --package "$PACKAGE"
