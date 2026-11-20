@@ -1,0 +1,77 @@
+name: fm1
+
+on:
+  pull_request:
+    paths: &fm1-paths
+      - 'fm1/**'
+      - Cargo.toml
+      - Cargo.lock
+      - '.cargo/**'
+      - .github/scripts/build-rustc.sh
+      - .github/workflows/fm1.yml
+  push:
+    branches: [main]
+    paths: *fm1-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p fm1 --all-features --locked
+
+  firmware:
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_TAG: pi32v2-23.1.5-5
+      PI32V2_ISA: ${{ github.workspace }}/.ci/pi32v2-isa
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.0
+      - name: Check out the Rust patch and firmware packager
+        uses: actions/checkout@v7
+        with:
+          repository: jvitkauskas/pi32v2-isa
+          ref: 701a76faf103d1889d9bdf67987b872899c27257
+          path: .ci/pi32v2-isa
+          persist-credentials: false
+      - name: Restore the patched compiler
+        id: rustc
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: pi32v2-rustc-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('.github/scripts/build-rustc.sh', '.ci/pi32v2-isa/examples/fm1-blink-rust/rustc/*.patch') }}
+      - name: Build the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        run: .github/scripts/build-rustc.sh "$RUNNER_TEMP/pi32v2-rustc"
+      - name: Install the pi32v2 assembler, linker and runtime
+        id: llvm
+        uses: jvitkauskas/pi32v2-isa/.github/actions/setup-pi32v2@701a76faf103d1889d9bdf67987b872899c27257
+        with:
+          version: ${{ env.LLVM_TAG }}
+      - name: Build and package the firmware examples
+        env:
+          RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
+          PI32V2_BIN: ${{ steps.llvm.outputs.path }}/bin
+        run: |
+          "$RUSTC" -vV
+          for example in fm1/examples/*.rs; do
+            name=$(basename "$example" .rs)
+            ./fm1/scripts/build-example.sh "$name"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fm1-firmware
+          path: target/firmware/*.fwsc
+          if-no-files-found: error
