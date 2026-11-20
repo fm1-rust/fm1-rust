@@ -1,0 +1,8 @@
+[package]
+name = "fm1"
+version = "0.0.0"
+edition = "2024"
+description = "Pure Rust support package for the M-VAVE FM-1 built on embeded-hal"
+
+[lints]
+workspace = true
