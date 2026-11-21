@@ -59,7 +59,8 @@ The waveform starts on A4. The graph shows 224 consecutive left-channel samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
 trace. Audio runs at priority 3, panel scanning at 2 and drawing at 1. The
 renderer replaces changed tiles and prepares the next strip while SPI1 sends
-the previous one.
+the previous one. When the strip is still in flight, the renderer awaits the
+SPI1 completion interrupt at priority 1. TIMER5 supplies its stall timeout.
 
 The controls display shows MASTER, signed counts for all encoders, a press count
 for each button, and the last piano key (1–27). Green text means held, cyan means

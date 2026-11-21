@@ -28,7 +28,7 @@ mod app {
     use fm1_rticx::{
         bsp::{
             Board,
-            display::{DisplayPort, SIZE, SpiClock},
+            display::{DisplayPort, SIZE, SpiClock, on_spi1_interrupt},
             enter_download_mode,
             panel::{Button, Controls, Encoder, Event, Leds, PlayLedState, Switch},
             time::{Timers, cycles, ticks},
@@ -37,6 +37,7 @@ mod app {
             channel::{Receiver, Sender},
             make_channel,
         },
+        time::{Clock, Timer5},
     };
 
     #[shared]
@@ -59,6 +60,8 @@ mod app {
         let board = Board::take().expect("CPU0 board");
         let voice = Voice::default();
         let (ready, updates) = make_channel!((), 1);
+        let timers = Clock::start(board.timers.with_panel_scan_rate());
+        let delay = timers.clock();
         let mut leds = Leds::default();
         leds.set_play(PlayLedState::Green);
         (
@@ -79,7 +82,7 @@ mod app {
                     capture: Capture::new(),
                 },
                 panel: Panel {
-                    timers: board.timers.with_panel_scan_rate(),
+                    timers,
                     controls: board.panel.into_controls(),
                     timing: PanelTiming::default(),
                     leds,
@@ -89,6 +92,7 @@ mod app {
                 draw: Draw {
                     port: Some(board.display),
                     updates,
+                    delay,
                 },
             },
         )
@@ -101,7 +105,7 @@ mod app {
 
     #[task(binds = TIMER5, priority = 2, shared = [voice, frame])]
     struct Panel {
-        timers: Timers,
+        timers: Timer5,
         controls: Controls,
         timing: PanelTiming,
         leds: Leds,
@@ -210,10 +214,19 @@ mod app {
         }
     }
 
+    #[task(binds = SPI1, priority = 1, init = generated)]
+    struct SpiDone;
+    impl RticTask for SpiDone {
+        fn exec(&mut self) {
+            on_spi1_interrupt();
+        }
+    }
+
     #[async_task(priority = 1, shared = [frame])]
     struct Draw {
         port: Option<DisplayPort>,
         updates: Receiver<'static, (), 1>,
+        delay: Clock,
     }
     impl RticAsyncTask for Draw {
         type SpawnInput = ();
@@ -261,7 +274,10 @@ mod app {
                     text.text(9, 0, b"LATE", palette::RED);
                 }
                 text.paint(&mut lcd).expect("LCD labels");
-                scope.paint(&mut lcd, &trace).expect("LCD trace");
+                scope
+                    .paint_async(&mut lcd, &trace, &mut self.delay)
+                    .await
+                    .expect("LCD trace");
             }
         }
     }

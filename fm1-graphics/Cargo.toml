@@ -8,6 +8,9 @@ repository = "https://github.com/fm1-rust/fm1-rust"
 keywords = ["fm1", "graphics", "rgb565"]
 categories = ["embedded", "graphics", "no-std"]
 
+[features]
+async-display = ["fm1/async-display"]
+
 [dependencies]
 embedded-graphics-core = "0.4"
 fm1 = { path = "../fm1" }

@@ -36,7 +36,7 @@ pub(crate) fn clear(addr: usize, mask: u32) {
 }
 // Drivers for disjoint pins may still update the same port register from
 // different interrupt priorities.
-fn modify(addr: usize, clear: u32, set: u32) {
+pub(crate) fn modify(addr: usize, clear: u32, set: u32) {
     #[cfg(fm1)]
     {
         unsafe extern "C" {

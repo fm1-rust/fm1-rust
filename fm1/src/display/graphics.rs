@@ -110,7 +110,7 @@ impl Interface for SpiInterface {
                 len += 1;
             }
             if len != 0 {
-                self.0.start_dma(len);
+                self.0.start_dma(len, false);
                 self.0.wait_dma()?;
             }
             if len < CHUNK {

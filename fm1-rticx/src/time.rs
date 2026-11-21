@@ -38,6 +38,8 @@ impl TimerQueueBasedMonotonic for Clock {
     type Duration = Duration;
 }
 
+rtic_time::impl_embedded_hal_async_delay_fugit!(Clock);
+
 impl TimerQueueBackend for Clock {
     type Ticks = u32;
 
@@ -59,6 +61,12 @@ impl TimerQueueBackend for Clock {
 #[derive(Debug)]
 pub struct Timer5(Timers);
 impl Timer5 {
+    /// Obtain a delay provider for peripherals using `embedded-hal-async`.
+    #[must_use]
+    pub fn clock(&self) -> Clock {
+        Clock(())
+    }
+
     /// Acknowledge TIMER5 and wake tasks on each 10 ms clock tick. A faster panel
     /// interrupt can therefore share TIMER5 with the normal async delay queue.
     pub fn on_interrupt(&mut self) {

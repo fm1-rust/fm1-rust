@@ -30,6 +30,10 @@ per column and repaints the tiles touched by the old and new traces. The
 application chooses how it samples or triggers its audio. Drawing can run
 at a lower priority than audio.
 
+With the `async-display` feature and the BSP's SPI1 handler bound, call
+`scope.paint_async(lcd, trace, delay).await?` to yield while a strip is in
+flight. The next strip is still prepared while the previous one is on the wire.
+
 The text grid begins clean on an assumed black screen. Clear the LCD once at
 startup or call `invalidate()` to paint the entire grid. Invalidate a widget
 after another view draws over its area. The waveform's first paint covers

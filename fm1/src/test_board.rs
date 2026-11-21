@@ -14,6 +14,8 @@ struct Chip {
     usb_reply: Option<u8>,
     spi_done: bool,
     dma_stuck: bool,
+    #[cfg(feature = "async-display")]
+    hold_irq_dma: bool,
     dma: Option<(*const u8, usize)>,
     transfers: Vec<(bool, Vec<u8>)>,
     shifted: u16,
@@ -23,6 +25,9 @@ struct Chip {
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
 // The registers are thread-local, but the real driver's DMA strip is shared.
 static DISPLAY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature = "async-display")]
+mod async_display;
 
 #[cfg(feature = "embedded-graphics")]
 mod graphics;
@@ -120,6 +125,10 @@ unsafe extern "C" fn fm1_spi1_dma(p: *const u8, n: u32) {
         assert_ne!(n, 0);
         assert!(chip.dma.replace((p, n as usize)).is_none());
         chip.spi_done = false;
+        #[cfg(feature = "async-display")]
+        if chip.hold_irq_dma && chip.regs[&0x11d00] & (1 << 13) != 0 {
+            chip.dma_stuck = true;
+        }
     })
 }
 

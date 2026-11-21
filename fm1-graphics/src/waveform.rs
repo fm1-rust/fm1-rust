@@ -6,6 +6,28 @@ const TILE_W: usize = 16;
 const TILE_H: usize = 8;
 const MAX_BANDS: usize = (SIZE as usize).div_ceil(TILE_H);
 
+struct TileRun {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    background: [[Rgb565; 2]; TILE_H],
+}
+
+struct Strip<'a> {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    pixels: &'a [u8],
+}
+
+impl Strip<'_> {
+    fn write(&self, lcd: &mut Display) -> Result<(), Error> {
+        lcd.write_rect_buffered(self.x, self.y, self.width, self.height, self.pixels)
+    }
+}
+
 /// Colors and grid spacing for an oscilloscope trace.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct WaveformStyle {
@@ -103,20 +125,42 @@ impl<const W: usize, const H: usize> Waveform<W, H> {
         if self.last.as_ref() == Some(trace) {
             return Ok(());
         }
-        let result = self
-            .paint_tiles(trace, |x, y, w, h, pixels| {
-                lcd.write_rect_buffered(x, y, w, h, pixels)
-            })
-            .and_then(|()| lcd.flush());
-        self.last = result.is_ok().then_some(*trace);
-        result
+        for run in self.dirty_runs(trace) {
+            self.render(trace, run).write(lcd)?;
+        }
+        lcd.flush()?;
+        self.last = Some(*trace);
+        Ok(())
     }
 
-    fn paint_tiles<E>(
+    /// Paint the same dirty tiles as [`Self::paint`], yielding while SPI1 sends
+    /// the previous strip. Bind the BSP's SPI1 handler and supply an async timer.
+    /// A cancelled paint causes the next paint to redraw the whole plot.
+    ///
+    /// # Errors
+    /// Returns the BSP transfer error.
+    #[cfg(feature = "async-display")]
+    pub async fn paint_async(
         &mut self,
+        lcd: &mut Display,
         trace: &[u8; W],
-        mut write: impl FnMut(u16, u16, u16, u16, &[u8]) -> Result<(), E>,
-    ) -> Result<(), E> {
+        delay: &mut impl fm1::embedded_hal_async::delay::DelayNs,
+    ) -> Result<(), Error> {
+        if self.last.as_ref() == Some(trace) {
+            return Ok(());
+        }
+        let mut lcd = lcd.as_async(delay)?;
+        for run in self.dirty_runs(trace) {
+            let strip = self.render(trace, run);
+            lcd.write_rect_buffered(strip.x, strip.y, strip.width, strip.height, strip.pixels)
+                .await?;
+        }
+        lcd.flush().await?;
+        self.last = Some(*trace);
+        Ok(())
+    }
+
+    fn dirty_runs(&mut self, trace: &[u8; W]) -> impl Iterator<Item = TileRun> + use<W, H> {
         let mut dirty = [0u16; MAX_BANDS];
         let bands = &mut dirty[..H.div_ceil(TILE_H)];
         if let Some(last) = &self.last {
@@ -135,57 +179,70 @@ impl<const W: usize, const H: usize> Waveform<W, H> {
             bands.fill((1 << W.div_ceil(TILE_W)) - 1);
         }
 
+        // Commit the new trace only after all strips have reached the LCD.
+        self.last = None;
         let style = self.style;
-        for (row, &dirty) in bands.iter().enumerate() {
-            if dirty == 0 {
-                continue;
-            }
-            let mut mask = dirty;
-            let y0 = row * TILE_H;
-            let height = TILE_H.min(H - y0);
-            // Compute the grid once per band. The inner pixel loop only selects colors.
-            let backgrounds: [[Rgb565; 2]; TILE_H] = core::array::from_fn(|dy| {
-                let y = y0 + dy;
-                if y == H / 2 {
-                    [style.center; 2]
-                } else if style.grid_y != 0 && y.is_multiple_of(usize::from(style.grid_y)) {
-                    [style.grid; 2]
-                } else {
-                    [style.background, style.grid]
-                }
-            });
-            while mask != 0 {
-                let first = mask.trailing_zeros() as usize;
-                let run = (mask >> first).trailing_ones() as usize;
-                let x0 = first * TILE_W;
-                let width = (run * TILE_W).min(W - x0);
-                let pixels = &mut self.pixels.as_flattened_mut()[..width * height];
-                for dx in 0..width {
-                    let x = x0 + dx;
-                    let (top, bottom) = Self::segment(trace, x);
-                    let vertical_grid =
-                        style.grid_x != 0 && x.is_multiple_of(usize::from(style.grid_x));
-                    for dy in 0..height {
-                        let y = y0 + dy;
-                        let color = if (top..=bottom).contains(&y) {
-                            style.trace
-                        } else {
-                            backgrounds[dy][usize::from(vertical_grid)]
-                        };
-                        pixels[dy * width + dx] = color.to_be_bytes();
+        dirty
+            .into_iter()
+            .enumerate()
+            .filter(|(_, mask)| *mask != 0)
+            .flat_map(move |(row, mut mask)| {
+                let y0 = row * TILE_H;
+                let height = TILE_H.min(H - y0);
+                // Compute the grid once per band. The inner pixel loop only selects colors.
+                let backgrounds: [[Rgb565; 2]; TILE_H] = core::array::from_fn(|dy| {
+                    let y = y0 + dy;
+                    if y == H / 2 {
+                        [style.center; 2]
+                    } else if style.grid_y != 0 && y.is_multiple_of(usize::from(style.grid_y)) {
+                        [style.grid; 2]
+                    } else {
+                        [style.background, style.grid]
                     }
-                }
-                write(
-                    self.x + x0 as u16,
-                    self.y + y0 as u16,
-                    width as u16,
-                    height as u16,
-                    pixels.as_flattened(),
-                )?;
-                mask &= !(((1 << run) - 1) << first);
+                });
+                core::iter::from_fn(move || {
+                    if mask == 0 {
+                        return None;
+                    }
+                    let first = mask.trailing_zeros() as usize;
+                    let run = (mask >> first).trailing_ones() as usize;
+                    let x0 = first * TILE_W;
+                    let width = (run * TILE_W).min(W - x0);
+                    mask &= !(((1 << run) - 1) << first);
+                    Some(TileRun {
+                        x: x0,
+                        y: y0,
+                        width,
+                        height,
+                        background: backgrounds,
+                    })
+                })
+            })
+    }
+
+    fn render(&mut self, trace: &[u8; W], run: TileRun) -> Strip<'_> {
+        let pixels = &mut self.pixels.as_flattened_mut()[..run.width * run.height];
+        for dx in 0..run.width {
+            let x = run.x + dx;
+            let (top, bottom) = Self::segment(trace, x);
+            let vertical_grid =
+                self.style.grid_x != 0 && x.is_multiple_of(usize::from(self.style.grid_x));
+            for dy in 0..run.height {
+                let color = if (top..=bottom).contains(&(run.y + dy)) {
+                    self.style.trace
+                } else {
+                    run.background[dy][usize::from(vertical_grid)]
+                };
+                pixels[dy * run.width + dx] = color.to_be_bytes();
             }
         }
-        Ok(())
+        Strip {
+            x: self.x + run.x as u16,
+            y: self.y + run.y as u16,
+            width: run.width as u16,
+            height: run.height as u16,
+            pixels: pixels.as_flattened(),
+        }
     }
 
     fn segment(trace: &[u8; W], x: usize) -> (usize, usize) {
@@ -198,7 +255,6 @@ impl<const W: usize, const H: usize> Waveform<W, H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::convert::Infallible;
 
     #[test]
     fn bounds_include_partial_tiles_and_the_panel_edge() {
@@ -208,6 +264,22 @@ mod tests {
         assert!(Waveform::<1, 1>::new(u16::MAX, 0).is_none());
         assert!(Waveform::<35, 13>::new(206, 227).is_none());
         assert!(Waveform::<1, 1>::new(239, 239).is_some());
+    }
+
+    #[test]
+    fn interrupted_update_repaints_the_entire_previous_trace() {
+        let mut scope = Waveform::<32, 16>::new(0, 0).expect("plot fits");
+        let previous = [0; 32];
+        scope.last = Some(previous);
+        let mut next = previous;
+        next[31] = 15;
+        assert_eq!(
+            scope.dirty_runs(&next).next().map(|run| run.width),
+            Some(16)
+        );
+        let mut retry = scope.dirty_runs(&previous);
+        assert_eq!(retry.next().map(|run| run.width), Some(32));
+        assert_eq!(retry.next().map(|run| run.width), Some(32));
     }
 
     #[test]
@@ -221,23 +293,27 @@ mod tests {
         let mut frame = [[[0xaa, 0x55]; W]; H];
         for (pass, trace) in [&base, &edge, &base, &base].into_iter().enumerate() {
             let mut windows = 0;
-            scope
-                .paint_tiles(trace, |x, y, w, h, bytes| {
-                    assert_eq!(usize::from(y - 227), windows * 8);
-                    if pass == 0 {
-                        assert_eq!((x, w), (205, 35));
-                    } else {
-                        assert_eq!((x, w), (237, 3));
-                    }
-                    assert_eq!(h, if windows == 0 { 8 } else { 5 });
-                    for (i, pixel) in bytes.as_chunks::<2>().0.iter().enumerate() {
-                        frame[usize::from(y - 227) + i / usize::from(w)]
-                            [usize::from(x - 205) + i % usize::from(w)] = *pixel;
-                    }
-                    windows += 1;
-                    Ok::<_, Infallible>(())
-                })
-                .expect("infallible display");
+            for run in scope.dirty_runs(trace) {
+                let Strip {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    pixels: bytes,
+                } = scope.render(trace, run);
+                assert_eq!(usize::from(y - 227), windows * 8);
+                if pass == 0 {
+                    assert_eq!((x, w), (205, 35));
+                } else {
+                    assert_eq!((x, w), (237, 3));
+                }
+                assert_eq!(h, if windows == 0 { 8 } else { 5 });
+                for (i, pixel) in bytes.as_chunks::<2>().0.iter().enumerate() {
+                    frame[usize::from(y - 227) + i / usize::from(w)]
+                        [usize::from(x - 205) + i % usize::from(w)] = *pixel;
+                }
+                windows += 1;
+            }
             scope.last = Some(*trace);
             assert_eq!(windows, if pass == 3 { 0 } else { 2 });
             for (y, row) in frame.iter().enumerate() {
