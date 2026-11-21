@@ -1,4 +1,4 @@
-# `fm1`: Board Support Package for M-VAVE FM-1
+# `fm1`: Board Support Package for the M-VAVE FM-1
 
 [![crates.io][crate-badge]][crate]
 [![docs.rs][docs-badge]][docs]
