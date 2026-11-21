@@ -22,6 +22,7 @@ static inline u32 irq_save(void) {
 
 void fm1_cli(void) { __asm__ volatile("cli" ::: "memory"); }
 void fm1_csync(void) { __asm__ volatile("csync" ::: "memory"); }
+void fm1_ssync(void) { __asm__ volatile("ssync" ::: "memory"); }
 void fm1_set_icfg(u32 v) { __asm__ volatile("csync\n\ticfg = %0\n\tcsync" :: "r"(v) : "memory"); }
 
 /* Disjoint pins can share a register across interrupt priorities. */

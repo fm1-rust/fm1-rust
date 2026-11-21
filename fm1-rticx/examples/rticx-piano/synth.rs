@@ -9,7 +9,7 @@ const STEPS: [u32; PianoKey::COUNT as usize] = crate::pitch::phase_steps(174.614
 #[derive(Clone, Copy, Default)]
 pub(super) struct Synth {
     phases: [u32; PianoKey::COUNT as usize],
-    held: u32,
+    gains: crate::midi::Velocities,
 }
 
 impl Synth {
@@ -17,33 +17,43 @@ impl Synth {
         clippy::arithmetic_side_effects,
         reason = "One triangle is ±1024. The 256-frame ramp and 27 voices fit in i32, including the scaled MASTER multiplication."
     )]
-    pub(super) fn render(&mut self, held: u32, master: MasterLevel, block: &mut Block) {
+    pub(super) fn render(
+        &mut self,
+        physical: u32,
+        remote: &crate::midi::Velocities,
+        master: MasterLevel,
+        block: &mut Block,
+    ) {
         const { assert!(BLOCK_FRAMES == 256 && PianoKey::COUNT <= 32) };
         block.fill([0; 2]);
         for (i, (&step, phase)) in STEPS.iter().zip(&mut self.phases).enumerate() {
-            let down = held & (1 << i) != 0;
-            let was_down = self.held & (1 << i) != 0;
-            if !down && !was_down {
+            let velocity = if physical & (1 << i) != 0 {
+                127
+            } else {
+                remote[i]
+            };
+            let gain = velocity + (velocity >> 6); // 0..=128
+            let previous = core::mem::replace(&mut self.gains[i], gain);
+            if gain == 0 && previous == 0 {
                 continue;
             }
-            if !was_down {
+            if previous == 0 {
                 *phase = 1 << 30; // Start the triangle at its rising zero crossing.
             }
 
             // Ramp each voice over one block on attack and release. Held
             // voices keep their phase and amplitude when a chord changes.
-            let mut level = if was_down { 256 } else { 0 };
-            let delta = i32::from(down) - i32::from(was_down);
+            let mut level = i32::from(previous) << 8;
+            let delta = i32::from(gain) - i32::from(previous);
             let mut position = *phase;
             for frame in &mut *block {
                 let ramp = (position >> 20).cast_signed();
-                frame[0] += (1024 - (ramp - 2048).abs()) * level;
+                frame[0] += (1024 - (ramp - 2048).abs()) * (level >> 7);
                 position = position.wrapping_add(step);
                 level += delta;
             }
             *phase = position;
         }
-        self.held = held;
         for frame in block {
             // Fixed headroom for all 27 voices at full MASTER, in stereo Q23.
             let sample = ((frame[0] >> 2) * i32::from(master.raw())) >> 8;
@@ -57,6 +67,8 @@ mod tests {
     use super::*;
     use crate::pitch::{midi_note, note_name};
     use fm1_rticx::bsp::audio::FRAME_RATE;
+
+    const SILENT: crate::midi::Velocities = [0; PianoKey::COUNT as usize];
 
     #[test]
     fn note_labels_and_concert_pitch_agree() {
@@ -85,16 +97,16 @@ mod tests {
         let all_keys = (1 << PianoKey::COUNT) - 1;
         let c4 = 1 << 7;
         for keys in [all_keys, all_keys, c4, c4] {
-            chord.render(keys, MasterLevel::MAX, &mut block);
-            solo.render(c4, MasterLevel::MAX, &mut reference);
+            chord.render(keys, &SILENT, MasterLevel::MAX, &mut block);
+            solo.render(c4, &SILENT, MasterLevel::MAX, &mut reference);
             assert!(block.iter().any(|f| f[0] != 0));
             assert!(block.iter().all(|f| f[0] == f[1] && f[0].abs() < (1 << 23)));
         }
         assert_eq!(block, reference);
-        chord.render(0, MasterLevel::MAX, &mut block); // Release ramp.
-        chord.render(0, MasterLevel::MAX, &mut block);
+        chord.render(0, &SILENT, MasterLevel::MAX, &mut block); // Release ramp.
+        chord.render(0, &SILENT, MasterLevel::MAX, &mut block);
         assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
-        chord.render(all_keys, MasterLevel::MIN, &mut block);
+        chord.render(all_keys, &SILENT, MasterLevel::MIN, &mut block);
         assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
     }
 }

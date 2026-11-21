@@ -11,6 +11,7 @@ mod registers;
 #[cfg(test)]
 mod test_board;
 pub mod time;
+pub mod usb_midi;
 use core::marker::PhantomData;
 #[cfg(fm1)]
 use core::sync::atomic::{AtomicBool, Ordering};

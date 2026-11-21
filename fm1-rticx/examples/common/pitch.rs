@@ -1,12 +1,14 @@
 use fm1_rticx::bsp::{audio::FRAME_RATE, panel::PianoKey};
 
+pub(super) const FIRST_NOTE: u8 = 53;
+
 #[allow(
     clippy::arithmetic_side_effects,
     reason = "Physical key indices are 0..=26."
 )]
 pub(super) fn midi_note(key: PianoKey) -> u8 {
     // Middle C is 60. The physical keyboard starts on the F below it.
-    53 + key.index()
+    FIRST_NOTE + key.index()
 }
 
 #[allow(
