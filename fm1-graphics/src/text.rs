@@ -4,8 +4,9 @@ use fm1::display::{Display, Error, SIZE};
 
 const COLS: usize = TextGrid::COLUMNS;
 const ROWS: usize = TextGrid::ROWS;
-const CELL_W: usize = 12;
-const CELL_H: usize = 16;
+const CELL_W: u16 = 12;
+const CELL_H: u16 = 16;
+type CellPixels = [[[u8; 2]; CELL_W as usize]; CELL_H as usize];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Cell {
@@ -35,9 +36,9 @@ impl Default for TextGrid {
 
 impl TextGrid {
     /// Number of character columns on the display.
-    pub const COLUMNS: usize = SIZE as usize / CELL_W;
+    pub const COLUMNS: usize = (SIZE / CELL_W) as usize;
     /// Number of character rows on the display.
-    pub const ROWS: usize = SIZE as usize / CELL_H;
+    pub const ROWS: usize = (SIZE / CELL_H) as usize;
 
     /// Start with a blank, clean grid on a black background.
     #[must_use]
@@ -140,39 +141,72 @@ impl TextGrid {
     ///
     /// # Errors
     /// Returns the BSP transfer error. Dirty cells remain pending for a retry.
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::arithmetic_side_effects,
-        reason = "The 20 by 15 grid fits the 240-pixel panel on both axes."
-    )]
     pub fn paint(&mut self, lcd: &mut Display) -> Result<(), Error> {
         if self.dirty == [0; ROWS] {
             return Ok(());
         }
-        for (y, &dirty) in self.dirty.iter().enumerate() {
-            let mut pending = dirty;
-            while pending != 0 {
-                let x = pending.trailing_zeros() as usize;
-                let cell = self.cells[y][x];
-                let pixels = render(cell, self.background);
-                lcd.write_rect_buffered(
-                    (x * CELL_W) as u16,
-                    (y * CELL_H) as u16,
-                    CELL_W as u16,
-                    CELL_H as u16,
-                    pixels.as_flattened().as_flattened(),
-                )?;
-                pending &= !(1 << x);
-            }
+        for (x, y, cell) in self.dirty_cells() {
+            let pixels = render(cell, self.background);
+            let bytes = pixels.as_flattened().as_flattened();
+            lcd.write_rect_buffered(x, y, CELL_W, CELL_H, bytes)?;
         }
         lcd.flush()?;
         self.dirty.fill(0);
         Ok(())
     }
+
+    /// Paint the same dirty cells as [`Self::paint`], yielding while SPI1 sends
+    /// their pixels. Bind the BSP's SPI1 handler and supply an async timer.
+    /// An error or cancellation leaves all dirty cells pending for the next paint.
+    ///
+    /// # Errors
+    /// Returns the BSP transfer error.
+    #[cfg(feature = "async-display")]
+    pub async fn paint_async(
+        &mut self,
+        lcd: &mut Display,
+        delay: &mut impl fm1::embedded_hal_async::delay::DelayNs,
+    ) -> Result<(), Error> {
+        if self.dirty == [0; ROWS] {
+            return Ok(());
+        }
+        let mut lcd = lcd.as_async(delay)?;
+        for (x, y, cell) in self.dirty_cells() {
+            let pixels = render(cell, self.background);
+            let bytes = pixels.as_flattened().as_flattened();
+            lcd.write_rect_buffered(x, y, CELL_W, CELL_H, bytes).await?;
+        }
+        lcd.flush().await?;
+        self.dirty.fill(0);
+        Ok(())
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::arithmetic_side_effects,
+        reason = "The 20 by 15 grid fits the 240-pixel panel on both axes."
+    )]
+    fn dirty_cells(&self) -> impl Iterator<Item = (u16, u16, Cell)> {
+        self.dirty.iter().enumerate().flat_map(move |(row, &mask)| {
+            let mut pending = mask;
+            core::iter::from_fn(move || {
+                if pending == 0 {
+                    return None;
+                }
+                let col = pending.trailing_zeros() as usize;
+                pending &= !(1 << col);
+                Some((
+                    col as u16 * CELL_W,
+                    row as u16 * CELL_H,
+                    self.cells[row][col],
+                ))
+            })
+        })
+    }
 }
 
-fn render(cell: Cell, background: Rgb565) -> [[[u8; 2]; CELL_W]; CELL_H] {
-    let mut pixels = [[background.to_be_bytes(); CELL_W]; CELL_H];
+fn render(cell: Cell, background: Rgb565) -> CellPixels {
+    let mut pixels = [[background.to_be_bytes(); CELL_W as usize]; CELL_H as usize];
     let ink = cell.ink.to_be_bytes();
     for ([first, second], bits) in pixels.as_chunks_mut::<2>().0.iter_mut().zip(glyph(cell.ch)) {
         for (col, pixels) in first.as_chunks_mut::<2>().0.iter_mut().take(5).enumerate() {
@@ -254,6 +288,18 @@ mod tests {
     }
 
     #[test]
+    fn partial_traversal_leaves_all_dirty_cells_for_retry() {
+        let mut grid = TextGrid::new();
+        grid.text(19, 14, "C", palette::RED);
+        grid.text(7, 2, "B", palette::WHITE);
+        grid.text(1, 2, "A", palette::CYAN);
+
+        let cells = || grid.dirty_cells().map(|(x, y, cell)| (x, y, cell.ch));
+        assert_eq!(cells().next(), Some((12, 32, b'A')));
+        assert!(cells().eq([(12, 32, b'A'), (84, 32, b'B'), (228, 224, b'C')]));
+    }
+
+    #[test]
     fn numeric_fields_pad_clip_and_handle_overflow() {
         let mut grid = TextGrid::new();
         grid.signed_number(0, 0, 3, 0, palette::WHITE);
@@ -285,6 +331,6 @@ mod tests {
         for [top, bottom] in pixels.as_chunks::<2>().0 {
             assert_eq!(top, bottom);
         }
-        assert_eq!(pixels[15], [off; CELL_W]);
+        assert_eq!(pixels[15], [off; CELL_W as usize]);
     }
 }
