@@ -1,0 +1,16 @@
+[package]
+name = "fm1-graphics"
+version = "0.1.0"
+edition = "2024"
+description = "Allocation-free text and waveform rendering for the M-VAVE FM-1"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["fm1", "graphics", "rgb565"]
+categories = ["embedded", "graphics", "no-std"]
+
+[dependencies]
+embedded-graphics-core = "0.4"
+fm1 = { path = "../fm1" }
+
+[lints]
+workspace = true

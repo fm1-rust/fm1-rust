@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "fm1",
+    "fm1-graphics",
     "fm1-rticx",
     "rticx-pi32v2",
     "rticx-pi32v2-macro"

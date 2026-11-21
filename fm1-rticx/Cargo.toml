@@ -33,5 +33,8 @@ rtic-time = "3"
 rticx-pi32v2 = { version = "0.1", path = "../rticx-pi32v2" }
 rticx-pi32v2-macro = { version = "0.1", path = "../rticx-pi32v2-macro" }
 
+[dev-dependencies]
+fm1-graphics = { version = "0.1", path = "../fm1-graphics" }
+
 [lints]
 workspace = true

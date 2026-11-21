@@ -9,12 +9,6 @@
 #[cfg(any(target_os = "none", test))]
 #[path = "common/pitch.rs"]
 mod pitch;
-#[cfg(target_os = "none")]
-#[path = "rticx-waveform/scope.rs"]
-mod scope;
-#[cfg(target_os = "none")]
-#[path = "common/screen.rs"]
-mod screen;
 #[cfg(any(target_os = "none", test))]
 #[path = "rticx-waveform/voice.rs"]
 mod voice;
@@ -22,16 +16,13 @@ mod voice;
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
-    use crate::{
-        scope::Scope,
-        screen::{Ink, Screen},
-        voice::{Capture, Trace, Voice, WIDTH},
-    };
+    use crate::voice::{Capture, HEIGHT, Trace, Voice, WIDTH};
+    use fm1_graphics::{TextGrid, Waveform, palette};
     use fm1_rticx::{
         bsp::{
             Board,
             audio::{BLOCK_FRAMES, Block, Refill, Stream},
-            display::{DisplayPort, SpiClock},
+            display::{DisplayPort, SIZE, SpiClock},
             enter_download_mode,
             panel::{Button, Controls, Encoder, Event, Leds, PlayLedState, Switch},
             time::{Timers, ticks},
@@ -203,42 +194,35 @@ mod app {
                 .expect("one LCD")
                 .init_with_clock(SpiClock::Div1)
                 .expect("LCD");
-            let mut text = Screen::new();
-            let mut scope = Scope::new();
-            Screen::clear(&mut lcd).expect("LCD clear");
-            text.text(0, 2, b"NOTE", Ink::Muted);
-            text.text(10, 2, b"VEL", Ink::Muted);
-            text.text(0, 11, b"PRESETS  WAVEFORM", Ink::Muted);
-            text.text(0, 12, b"MASTER   VELOCITY", Ink::Muted);
-            text.text(0, 13, b"SELECT   TRANS", Ink::Muted);
-            text.text(0, 14, b"OCT-/+ 2S USB", Ink::Muted);
+            let mut text = TextGrid::new();
+            let mut scope = Waveform::<WIDTH, HEIGHT>::new(8, 48).expect("scope fits the LCD");
+            lcd.fill_rect(0, 0, SIZE, SIZE, 0).expect("LCD clear");
+            text.text(0, 2, b"NOTE", palette::MUTED);
+            text.text(10, 2, b"VEL", palette::MUTED);
+            text.text(0, 11, b"PRESETS  WAVEFORM", palette::MUTED);
+            text.text(0, 12, b"MASTER   VELOCITY", palette::MUTED);
+            text.text(0, 13, b"SELECT   TRANS", palette::MUTED);
+            text.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
             loop {
                 self.updates.recv().await.expect("audio owns sender");
                 let (voice, trace, late) = self.shared().frame.lock(|f| (f.voice, f.trace, f.late));
-                text.text(0, 0, voice.wave.label(), Ink::Cyan);
+                text.text(0, 0, voice.wave.label(), palette::CYAN);
                 text.text(
                     16,
                     0,
                     if voice.playing { b"PLAY" } else { b"STOP" },
                     if voice.playing {
-                        Ink::Green
+                        palette::GREEN
                     } else {
-                        Ink::Amber
+                        palette::AMBER
                     },
                 );
-                text.text(5, 2, &crate::pitch::note_name(voice.note()), Ink::White);
-                text.number(14, 2, 3, u32::from(voice.velocity), None, Ink::White);
+                text.text(5, 2, &crate::pitch::note_name(voice.note()), palette::WHITE);
+                text.number(14, 2, 3, u32::from(voice.velocity), palette::WHITE);
                 let shift = voice.transpose;
-                text.number(
-                    16,
-                    13,
-                    3,
-                    u32::from(shift.unsigned_abs()),
-                    Some(if shift < 0 { b'-' } else { b'+' }),
-                    Ink::White,
-                );
+                text.signed_number(16, 13, 3, i32::from(shift), palette::WHITE);
                 if late {
-                    text.text(9, 0, b"LATE", Ink::Red);
+                    text.text(9, 0, b"LATE", palette::RED);
                 }
                 text.paint(&mut lcd).expect("LCD labels");
                 scope.paint(&mut lcd, &trace).expect("LCD trace");

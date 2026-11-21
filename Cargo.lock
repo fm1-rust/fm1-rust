@@ -194,11 +194,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fm1-graphics"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics-core",
+ "fm1",
+]
+
+[[package]]
 name = "fm1-rticx"
 version = "0.0.0"
 dependencies = [
  "critical-section",
  "fm1",
+ "fm1-graphics",
  "rtic-time",
  "rticx-pi32v2",
  "rticx-pi32v2-macro",

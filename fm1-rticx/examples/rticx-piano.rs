@@ -12,9 +12,6 @@ mod midi;
 #[cfg(any(target_os = "none", test))]
 #[path = "common/pitch.rs"]
 mod pitch;
-#[cfg(target_os = "none")]
-#[path = "common/screen.rs"]
-mod screen;
 #[cfg(any(target_os = "none", test))]
 #[path = "rticx-piano/synth.rs"]
 mod synth;
@@ -26,14 +23,14 @@ mod app {
         clock::MidiClock,
         midi::{Notes, Output},
         pitch::{midi_note, note_name},
-        screen::{Ink, Screen},
         synth::Synth,
     };
+    use fm1_graphics::{TextGrid, palette};
     use fm1_rticx::{
         bsp::{
             Board,
             audio::{BLOCK_FRAMES, Block, Refill, Stream},
-            display::{DisplayPort, SpiClock},
+            display::{DisplayPort, SIZE, SpiClock},
             enter_download_mode,
             panel::{
                 Button, Event, Leds, MasterLevel, PianoKey, PianoTouch, PlayLedState, Scan, Switch,
@@ -91,17 +88,21 @@ mod app {
             }
         }
 
-        fn draw(&self, screen: &mut Screen) {
+        fn draw(&self, screen: &mut TextGrid) {
             screen.text(
                 11,
                 0,
                 b"USB",
-                if self.online { Ink::Green } else { Ink::Muted },
+                if self.online {
+                    palette::GREEN
+                } else {
+                    palette::MUTED
+                },
             );
             if let Some(key) = self.last {
-                screen.text(5, 2, &note_name(midi_note(key)), Ink::White);
-                screen.number(16, 2, 2, u32::from(midi_note(key)), None, Ink::White);
-                screen.number(4, 4, 3, u32::from(self.last_velocity), None, Ink::Amber);
+                screen.text(5, 2, &note_name(midi_note(key)), palette::WHITE);
+                screen.number(16, 2, 2, u32::from(midi_note(key)), palette::WHITE);
+                screen.number(4, 4, 3, u32::from(self.last_velocity), palette::AMBER);
                 let i = usize::from(key.index());
                 let bit = 1 << i;
                 let pressure = if self.physical.held & bit != 0 {
@@ -111,21 +112,21 @@ mod app {
                     (self.remote.held & bit != 0).then_some(self.remote.pressures[i])
                 };
                 if let Some(p) = pressure {
-                    screen.number(15, 4, 3, u32::from(p), None, Ink::Cyan);
+                    screen.number(15, 4, 3, u32::from(p), palette::CYAN);
                 } else {
-                    screen.text(15, 4, b" --", Ink::Muted);
+                    screen.text(15, 4, b" --", palette::MUTED);
                 }
             }
-            screen.number(5, 3, 2, self.held().count_ones(), None, Ink::Green);
-            screen.number(15, 3, 2, self.seen.count_ones(), None, Ink::Cyan);
+            screen.number(5, 3, 2, self.held().count_ones(), palette::GREEN);
+            screen.number(15, 3, 2, self.seen.count_ones(), palette::CYAN);
             for key in PianoKey::all() {
                 let bit = 1 << key.index();
                 let ink = if self.held() & bit != 0 {
-                    Ink::Green
+                    palette::GREEN
                 } else if self.seen & bit != 0 {
-                    Ink::Cyan
+                    palette::CYAN
                 } else {
-                    Ink::Muted
+                    palette::MUTED
                 };
                 let i = usize::from(key.index());
                 screen.text((i % 5) * 4, 5 + i / 5, &note_name(midi_note(key)), ink);
@@ -136,22 +137,25 @@ mod app {
                 11,
                 b"CLK120",
                 if self.clock_playing {
-                    Ink::Green
+                    palette::GREEN
                 } else {
-                    Ink::Muted
+                    palette::MUTED
                 },
             );
-            screen.number(10, 11, 8, worst, None, Ink::White);
+            screen.number(10, 11, 8, worst, palette::WHITE);
             screen.number(
                 7,
                 13,
                 10,
                 missed,
-                None,
-                if missed == 0 { Ink::Muted } else { Ink::Red },
+                if missed == 0 {
+                    palette::MUTED
+                } else {
+                    palette::RED
+                },
             );
             if let Some(level) = self.master {
-                screen.number(7, 12, 4, u32::from(level.raw()), None, Ink::Amber);
+                screen.number(7, 12, 4, u32::from(level.raw()), palette::AMBER);
             }
         }
     }
@@ -364,29 +368,29 @@ mod app {
             let Ok(mut display) = port.init_with_clock(SpiClock::Div1) else {
                 return;
             };
-            let mut screen = Screen::new();
-            if Screen::clear(&mut display).is_err() {
+            let mut screen = TextGrid::new();
+            if display.fill_rect(0, 0, SIZE, SIZE, 0).is_err() {
                 return;
             }
-            screen.text(0, 0, b"FM-1 PIANO", Ink::White);
-            screen.text(0, 2, b"LAST --", Ink::Muted);
-            screen.text(10, 2, b"MIDI  --", Ink::Muted);
-            screen.text(0, 3, b"HELD", Ink::Green);
-            screen.text(10, 3, b"SEEN", Ink::Cyan);
-            screen.text(0, 4, b"VEL", Ink::Muted);
-            screen.text(9, 4, b"PRESS", Ink::Muted);
-            screen.text(17, 3, b"/27", Ink::Muted);
-            screen.text(7, 11, b"MAX", Ink::Muted);
-            screen.text(18, 11, b"US", Ink::Muted);
-            screen.text(0, 12, b"MASTER", Ink::White);
-            screen.text(0, 13, b"MISSED", Ink::Muted);
-            screen.text(11, 12, b"/1023", Ink::Muted);
-            screen.text(0, 14, b"OCT-/+ 2S USB", Ink::Muted);
+            screen.text(0, 0, b"FM-1 PIANO", palette::WHITE);
+            screen.text(0, 2, b"LAST --", palette::MUTED);
+            screen.text(10, 2, b"MIDI  --", palette::MUTED);
+            screen.text(0, 3, b"HELD", palette::GREEN);
+            screen.text(10, 3, b"SEEN", palette::CYAN);
+            screen.text(0, 4, b"VEL", palette::MUTED);
+            screen.text(9, 4, b"PRESS", palette::MUTED);
+            screen.text(17, 3, b"/27", palette::MUTED);
+            screen.text(7, 11, b"MAX", palette::MUTED);
+            screen.text(18, 11, b"US", palette::MUTED);
+            screen.text(0, 12, b"MASTER", palette::WHITE);
+            screen.text(0, 13, b"MISSED", palette::MUTED);
+            screen.text(11, 12, b"/1023", palette::MUTED);
+            screen.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
             loop {
                 let keyboard = self.shared().keyboard.lock(|k| *k);
                 keyboard.draw(&mut screen);
                 if self.shared().late.lock(|late| *late) {
-                    screen.text(16, 0, b"LATE", Ink::Red);
+                    screen.text(16, 0, b"LATE", palette::RED);
                 }
                 if screen.paint(&mut display).is_err() {
                     return;
