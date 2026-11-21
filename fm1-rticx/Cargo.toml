@@ -1,12 +1,14 @@
 [package]
 name = "fm1-rticx"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "RTICX application support for the M-VAVE FM-1"
 license = "MIT"
 repository = "https://github.com/fm1-rust/fm1-rust"
 keywords = ["fm1", "pi32v2", "rticx"]
 categories = ["embedded", "hardware-support", "no-std"]
+# The waveform demo uses Git-only dev-dependencies. Cargo strips these when packaging.
+exclude = ["/examples/rticx-waveform.rs", "/examples/rticx-waveform/"]
 
 [dependencies]
 critical-section = "1"
