@@ -17,11 +17,11 @@ mod timing;
 mod voice;
 
 #[cfg(target_os = "none")]
-#[fm1_rticx::app(dispatchers = [SOFT0])]
+#[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
 mod app {
     use crate::{
         timing::{PanelReport, PanelTiming, TimingFooter},
-        voice::{Capture, HEIGHT, Trace, Voice, WIDTH},
+        voice::{Capture, HEIGHT, ScopeBlock, Trace, Voice, WIDTH},
     };
     use fm1_audio::{MasterLevel, Output, Refill, Stats};
     use fm1_graphics::{TextGrid, Waveform, palette};
@@ -44,13 +44,37 @@ mod app {
     struct Shared {
         voice: Voice,
         frame: Frame,
+        audio_report: AudioReport,
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct AudioReport {
+        stats: Stats,
+        scope_drops: u32,
+    }
+
+    impl AudioReport {
+        fn record(
+            &mut self,
+            started: u32,
+            refill_ended: u32,
+            result: Refill,
+            dropped: bool,
+        ) -> bool {
+            if dropped {
+                self.scope_drops = self.scope_drops.saturating_add(1);
+            }
+            let overrun = self.stats.record_with_refill(started, refill_ended, result);
+            // Refresh the counters even if the observer cannot finish a trace.
+            let show = |count: u32| count == 1 || count.is_multiple_of(32);
+            (overrun && show(self.stats.overruns)) || (dropped && show(self.scope_drops))
+        }
     }
 
     #[derive(Debug)]
     pub struct Frame {
         voice: Voice,
         trace: Trace,
-        stats: Stats,
         panel: PanelReport,
         ready: Sender<'static, (), 1>,
     }
@@ -60,6 +84,7 @@ mod app {
         let board = Board::take().expect("CPU0 board");
         let voice = Voice::default();
         let (ready, updates) = make_channel!((), 1);
+        let (tap, blocks) = make_channel!(ScopeBlock, 2);
         let timers = Clock::start(board.timers.with_panel_scan_rate());
         let delay = timers.clock();
         let mut leds = Leds::default();
@@ -67,18 +92,24 @@ mod app {
         (
             Shared {
                 voice,
+                audio_report: AudioReport::default(),
                 frame: Frame {
                     voice,
                     trace: [64; WIDTH],
-                    stats: Stats::default(),
                     panel: PanelReport::default(),
-                    ready,
+                    ready: ready.clone(),
                 },
             },
             TaskInits {
                 audio: Audio {
                     output: Output::start(board.audio).expect("audio clock"),
                     phase: 0,
+                    tap,
+                    gap: false,
+                    redraw: ready,
+                },
+                observe: Observe {
+                    blocks,
                     capture: Capture::new(),
                 },
                 panel: Panel {
@@ -100,10 +131,11 @@ mod app {
 
     #[post_init]
     fn start() {
+        Observe::spawn(()).expect("one audio observer");
         Draw::spawn(()).expect("one scope renderer");
     }
 
-    #[task(binds = TIMER5, priority = 2, shared = [voice, frame])]
+    #[task(binds = TIMER5, priority = 3, shared = [voice, frame])]
     struct Panel {
         timers: Timer5,
         controls: Controls,
@@ -171,11 +203,13 @@ mod app {
         }
     }
 
-    #[task(binds = ALNK0, priority = 3, shared = [voice, frame])]
+    #[task(binds = ALNK0, priority = 4, shared = [voice, audio_report])]
     struct Audio {
         output: Output,
         phase: u32,
-        capture: Capture,
+        tap: Sender<'static, ScopeBlock, 2>,
+        gap: bool,
+        redraw: Sender<'static, (), 1>,
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
@@ -185,32 +219,45 @@ mod app {
                 self.phase = voice.render(self.phase, block);
             });
             let refill_ended = cycles();
-            match result {
+            let dropped = match result {
                 Refill::WouldBlock => return,
-                Refill::Late => {
-                    self.capture.discontinuity();
-                }
+                Refill::Late => false,
+                // Avoid even the sample copy when the observer is behind.
+                Refill::Written if self.tap.is_full() => true,
                 Refill::Written => {
-                    if self.capture.push(self.output.block(), voice) {
-                        let trace = self.capture.trace;
-                        self.shared().frame.lock(|frame| {
-                            frame.voice = voice;
-                            frame.trace = trace;
-                            // A full channel already has one redraw pending. Always keep the latest PCM.
-                            let _ = frame.ready.try_send(());
-                        });
-                    }
+                    let block = ScopeBlock::new(self.output.block(), voice, self.gap);
+                    self.tap.try_send(block).is_err()
+                }
+            };
+            self.gap = dropped || result == Refill::Late;
+            let notify = self
+                .shared()
+                .audio_report
+                .lock(|report| report.record(started, refill_ended, result, dropped));
+            if notify {
+                let _ = self.redraw.try_send(());
+            }
+        }
+    }
+
+    #[async_task(priority = 2, shared = [frame])]
+    struct Observe {
+        blocks: Receiver<'static, ScopeBlock, 2>,
+        capture: Capture,
+    }
+    impl RticAsyncTask for Observe {
+        type SpawnInput = ();
+        async fn exec(&mut self, (): ()) {
+            while let Ok(block) = self.blocks.recv().await {
+                if self.capture.push(&block) {
+                    let trace = self.capture.trace;
+                    self.shared().frame.lock(|frame| {
+                        frame.voice = block.voice;
+                        frame.trace = trace;
+                        let _ = frame.ready.try_send(());
+                    });
                 }
             }
-            self.shared().frame.lock(|f| {
-                // If no traces complete, show the first overrun and refresh at most
-                // once per 32 further overruns (about 11 Hz under continuous loss).
-                if f.stats.record_with_refill(started, refill_ended, result)
-                    && (f.stats.overruns == 1 || f.stats.overruns.is_multiple_of(32))
-                {
-                    let _ = f.ready.try_send(());
-                }
-            });
         }
     }
 
@@ -222,7 +269,7 @@ mod app {
         }
     }
 
-    #[async_task(priority = 1, shared = [frame])]
+    #[async_task(priority = 1, shared = [frame, audio_report])]
     struct Draw {
         port: Option<DisplayPort>,
         updates: Receiver<'static, (), 1>,
@@ -246,10 +293,9 @@ mod app {
             text.text(10, 2, b"VEL", palette::MUTED);
             loop {
                 self.updates.recv().await.expect("frame owns sender");
-                let (voice, trace, stats, panel) = self
-                    .shared()
-                    .frame
-                    .lock(|f| (f.voice, f.trace, f.stats, f.panel));
+                let (voice, trace, panel) =
+                    self.shared().frame.lock(|f| (f.voice, f.trace, f.panel));
+                let report = self.shared().audio_report.lock(|report| *report);
                 text.text(0, 0, voice.wave.label(), palette::CYAN);
                 text.text(
                     16,
@@ -263,14 +309,18 @@ mod app {
                 );
                 text.text(5, 2, &crate::pitch::note_name(voice.note()), palette::WHITE);
                 text.number(14, 2, 3, u32::from(voice.velocity), palette::WHITE);
-                if !footer.draw(&mut text, panel, &stats) {
+                if footer.draw(&mut text, panel, &report.stats) {
+                    text.text(0, 1, b"SCOPE DROP", palette::MUTED);
+                    text.number(10, 1, 10, report.scope_drops, palette::WHITE);
+                } else {
+                    text.text(0, 1, [b' '; TextGrid::COLUMNS], palette::MUTED);
                     text.text(0, 11, b"PRESETS  WAVEFORM", palette::MUTED);
                     text.text(0, 12, b"MASTER   VELOCITY", palette::MUTED);
                     text.text(0, 13, b"SELECT   TRANS", palette::MUTED);
                     text.signed_number(16, 13, 3, i32::from(voice.transpose), palette::WHITE);
                     text.text(0, 14, b"OCT-/+ 2S USB   HOME", palette::MUTED);
                 }
-                if stats.overruns != 0 {
+                if report.stats.overruns != 0 {
                     text.text(9, 0, b"LATE", palette::RED);
                 }
                 text.paint_async(&mut lcd, &mut self.delay)
