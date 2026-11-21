@@ -38,7 +38,7 @@ impl SourceMask {
         for (word, &bits) in self.0.iter().enumerate() {
             if bits != 0 {
                 unsafe {
-                    let reg = config.add(word);
+                    let reg = config.wrapping_add(word);
                     let old = read_volatile(reg);
                     saved.0[word] = old & bits;
                     write_volatile(reg, old & !bits);
@@ -52,7 +52,7 @@ impl SourceMask {
         for (word, bits) in self.0.into_iter().enumerate() {
             if bits != 0 {
                 unsafe {
-                    let reg = config.add(word);
+                    let reg = config.wrapping_add(word);
                     write_volatile(reg, read_volatile(reg) | bits);
                 }
             }
@@ -71,17 +71,16 @@ mod tests {
         let mut bank = [0; WORDS];
         bank[15] = 0x2531; // SOFT3 already disabled
         bank[7] = 0x3000_0000; // TIMER5 in a different word
-        let regs = bank.as_mut_ptr();
         unsafe {
-            let outer = SourceMask::through(&irqs, 1).disable(regs);
+            let outer = SourceMask::through(&irqs, 1).disable(bank.as_mut_ptr());
             assert_eq!(bank[15], 0x2530);
-            let inner = SourceMask::through(&irqs, 2).disable(regs);
+            let inner = SourceMask::through(&irqs, 2).disable(bank.as_mut_ptr());
             assert_eq!(bank[7], 0x2000_0000);
             assert_eq!(bank[15], 0x2520);
             bank[15] |= 0x1_0000; // unrelated source changed during the closure
-            inner.restore(regs);
+            inner.restore(bank.as_mut_ptr());
             assert_eq!(bank[15], 0x1_2530);
-            outer.restore(regs);
+            outer.restore(bank.as_mut_ptr());
         }
         assert_eq!(bank[7], 0x3000_0000);
         assert_eq!(bank[15], 0x1_2531);

@@ -218,22 +218,25 @@ impl CorePassBackend for Cpu0 {
         let mut projection = RawProjection {
             storage: shared.name_uppercase(),
             ty: &shared.strct.ident,
-            replaced: false,
+            member: None,
         };
         projection.visit_block_mut(&mut lock.block);
-        if !projection.replaced {
+        let Some(member) = projection.member else {
             lock.block = parse_quote!({
                 compile_error!("unexpected RTICX resource projection");
             });
             return lock;
-        }
+        };
+        let ty = &shared.strct.ident;
         lock.block.stmts.push(parse_quote!({
             const MASK: __rticx_backend::export::SourceMask = __rticx_source_mask(CEILING);
             static BORROW: __rticx_backend::export::BorrowFlag =
                 __rticx_backend::export::BorrowFlag::FREE;
             let _ = task_priority;
+            let shared_ptr: *mut #ty = resource_ptr;
             unsafe {
-                __rticx_backend::export::with_ceiling(&MASK, &BORROW, || f(&mut *resource_ptr))
+                // Project the field directly so rustc checks packed-field alignment.
+                __rticx_backend::export::with_ceiling(&MASK, &BORROW, || f(&mut (*shared_ptr).#member))
             }
         }));
         lock
@@ -275,13 +278,13 @@ impl CorePassBackend for Cpu0 {
     }
 }
 
-// The core pass supplies the field projection in the lock body. Make a raw
-// pointer directly to the field. Borrowing the entire Shared struct here
+// The core pass supplies the field projection in the lock body. Retain a raw
+// pointer to Shared until the field is locked. Borrowing the whole struct
 // would alias an unrelated field held by a preempted task.
 struct RawProjection<'a> {
     storage: Ident,
     ty: &'a Ident,
-    replaced: bool,
+    member: Option<syn::Member>,
 }
 impl VisitMut for RawProjection<'_> {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
@@ -293,9 +296,8 @@ impl VisitMut for RawProjection<'_> {
             && storage.path.is_ident(&self.storage)
         {
             let Self { storage, ty, .. } = self;
-            let field = &field.member;
-            *expr = parse_quote!(&raw mut (*(&raw mut #storage).cast::<#ty>()).#field);
-            self.replaced = true;
+            self.member = Some(field.member.clone());
+            *expr = parse_quote!((&raw mut #storage).cast::<#ty>());
         } else {
             syn::visit_mut::visit_expr_mut(self, expr);
         }
