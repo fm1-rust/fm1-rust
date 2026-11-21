@@ -45,12 +45,17 @@ startup or call `invalidate()` to paint the entire grid. Invalidate a widget
 after another view draws over its area. The waveform's first paint covers
 its entire rectangle. Place the text you update outside that rectangle.
 
-For proportional layouts, other fonts and general drawing primitives, the
-BSP also exposes `embedded-graphics` through its optional feature.
+For proportional layouts, other fonts and general drawing primitives, enable
+the `embedded-graphics` feature on `fm1`. See the [BSP drawing guide][bsp-graphics].
 
 ## License
 
 Licensed under the [MIT License][mit].
+
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
 
 [crate-badge]: https://img.shields.io/crates/v/fm1-graphics?logo=rust
 [crate]: https://crates.io/crates/fm1-graphics
@@ -58,4 +63,5 @@ Licensed under the [MIT License][mit].
 [docs]: https://docs.rs/fm1-graphics/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml
+[bsp-graphics]: https://docs.rs/fm1/latest/fm1/#drawing-with-embedded-graphics
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-graphics/LICENSE

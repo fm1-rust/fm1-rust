@@ -46,8 +46,15 @@ piano examples display these measurements while HOME is held.
 
 ## License
 
-Licensed under the [MIT License][mit]. This crate enables the BSP’s MPL-2.0
-audio driver. See the [BSP license section][bsp-license] for details.
+Licensed under the [MIT License][mit].
+
+This crate enables the BSP’s MPL-2.0 audio driver. See the
+[BSP license section][bsp-license] for its upstream source.
+
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
 
 [crate-badge]: https://img.shields.io/crates/v/fm1-audio?logo=rust
 [crate]: https://crates.io/crates/fm1-audio

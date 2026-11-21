@@ -5,19 +5,19 @@
 [![Build status][ci-badge]][ci]
 
 Concurrency, interrupt handling, and async support for the M-VAVE FM-1 using
-the [RTICX] realtime framework.
+the [RTICX] real-time framework.
 
 ## About
 
 Write an FM-1 application as interrupt handlers and async Rust tasks on CPU0.
-The crate provides the board entry point, the [FM-1 BSP](../fm1/) as `bsp`,
+The crate provides the board entry point, the [FM-1 BSP][bsp] as `bsp`,
 and a TIMER5 clock for delays and timeouts. The
-[pi32v2 distribution](../rticx-pi32v2/) supplies the RTICX executor and
+[pi32v2 distribution][runtime] supplies the RTICX executor and
 interrupt bindings. Both run without an allocator.
 
 ## Examples
 
-With the [firmware toolchain environment](../fm1/README.md#build-and-flash)
+With the [firmware toolchain environment][build-and-flash]
 set, run the example builds from the workspace root.
 
 ```sh
@@ -29,24 +29,28 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh usb-log
 ```
 
+The script writes the `.fwsc` packages to `target/firmware/`. You can also
+download them from the `fm1-rticx-firmware` artifact on a successful
+[workflow run][ci].
+
 ### Example tour
 
 These screenshots show the examples running in [fm1-emu](https://github.com/joakimeriksson/fm1-emu).
 
 | Screenshot | Example and controls |
 | --- | --- |
-| ![Front panel with the PLAY lamp lit](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-blink.png) | [`rticx-blink`](examples/rticx-blink.rs)<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
-| ![Tone playing with a green LCD above, muted with a red LCD below](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-tone.png) | [`rticx-tone`](examples/rticx-tone.rs)<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
-| ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-controls.png) | [`rticx-controls`](examples/rticx-controls.rs)<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
-| ![Piano display with C4, E4 and G4 held and USB connected](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-piano.png) | [`rticx-piano`](examples/rticx-piano.rs)<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
-| ![Oscilloscope showing an A4 sine wave at the DAC output](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-waveform.png) | [`rticx-waveform`](examples/rticx-waveform.rs)<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
-| ![Host terminal showing ready followed by two play+ and play- pairs](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/usb-log.png) | [`usb-log`](examples/usb-log.rs)<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
+| ![Front panel with the PLAY lamp lit](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-blink.png) | [`rticx-blink`][rticx-blink-example]<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
+| ![Tone playing with a green LCD above, muted with a red LCD below](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-tone.png) | [`rticx-tone`][rticx-tone-example]<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
+| ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-controls.png) | [`rticx-controls`][rticx-controls-example]<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
+| ![Piano display with C4, E4 and G4 held and USB connected](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-piano.png) | [`rticx-piano`][rticx-piano-example]<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
+| ![Oscilloscope showing an A4 sine wave at the DAC output](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-waveform.png) | [`rticx-waveform`][rticx-waveform-example]<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
+| ![Host terminal showing ready followed by two play+ and play- pairs](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/usb-log.png) | [`usb-log`][usb-log-example]<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
 
 To return to download mode, hold **PLAY** for two seconds in Blink, Tone or USB
 Log. In Controls, Piano or Waveform, hold **OCT-** and **OCT+** together for
 two seconds.
 
-The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
+The tone, piano and waveform use [`fm1-audio`][audio] with 128 stereo
 frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
 interrupt overruns its budget or a refill deadline is missed. The piano also
 shows peak audio service time in microseconds (`AUD`) and observed audio
@@ -110,7 +114,7 @@ for each button, and the last piano key (1–27). Green text means held, cyan me
 previously pressed, and an asterisk marks an enabled lamp. Hold HOME for the
 peak TIMER5 handler time (`IRQ US`), peak time from a completed sweep to the
 input task receiving it (`DISPATCH US`), and the number of dropped sweeps
-(`SCAN DROPS`). The [`fm1-controls`](../fm1-controls/) FIFO holds eight sweeps.
+(`SCAN DROPS`). The example’s [`fm1-controls`][controls] FIFO holds eight sweeps.
 Only the display coalesces updates during normal operation. A full input FIFO
 drops the newest sweep. The next accepted one restores held levels, key LEDs
 and MASTER. The diagnostic counts only button presses and encoder detents it
@@ -125,7 +129,7 @@ stereo mix.
 
 ### Read a log over USB
 
-Build `./fm1/scripts/build-example.sh usb-log` and install
+Run `./fm1/scripts/build-example.sh usb-log` and install
 `target/firmware/usb-log.fwsc` with M-Flasher. Connect the USB data cable and
 tap PLAY. Run the reader from the workspace root.
 
@@ -140,7 +144,7 @@ The example leaves the screen dark. Startup logs `ready`, a press logs
 download mode. The reader accepts both `FM-1 USB Log` and `FM-1 MIDI Piano`
 because the examples share a USB identity.
 
-The `usb-log` feature forwards to the [BSP USB log](../fm1/#usb-debug-log).
+The `usb-log` feature forwards to the [BSP USB log][bsp-usb-log].
 The independent `rtt` feature provides `fm1_rticx::rtt::init()`, which
 allocates a 256-byte nonblocking RTT up-channel. This example uses both and
 the host reader communicates entirely over USB-MIDI.
@@ -191,9 +195,6 @@ still play and send notes during synchronization.
 behind. The audio `LATE` indicator continues to report DMA refill overruns.
 USB frame scheduling and host-side latency are outside the `MAX US` measurement.
 
-The packages are written to `target/firmware/`. Download the `.fwsc` files from the `fm1-rticx-firmware`
-artifact on a successful [fm1-rticx workflow run][ci].
-
 ## Application setup
 
 For a firmware project, add the published crate to `Cargo.toml`.
@@ -208,7 +209,7 @@ Annotate the application module with `#[fm1_rticx::app]`. In `#[init]`, call
 `fm1_rticx::bsp::Board::take()` once and move the handles into your tasks
 through `TaskInits`. RTICX enables interrupts after it initializes the tasks
 and vectors. Use `#[post_init]` to spawn the first software tasks. The
-[RTICX blink example](examples/rticx-blink.rs) includes a panic handler and
+[RTICX blink example][rticx-blink-example] includes a panic handler and
 can serve as your `src/main.rs`.
 
 Copy the [pi32v2 target specification][target-spec] to your application root.
@@ -249,11 +250,29 @@ periodic work from its previous deadline to carry phase across counter wrap.
 
 ## License
 
-`fm1-rticx` is licensed under the [MIT License][mit]. Its `audio` feature
-enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
-lists the drivers and their upstream sources.
+Licensed under the [MIT License][mit].
+
+The `audio` feature enables the BSP’s MPL-2.0 audio driver. The
+[BSP license section][bsp-license] lists the drivers and their upstream sources.
+
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
 
 [RTICX]: https://github.com/rticx-rs/rticx
+[bsp]: https://docs.rs/fm1/
+[runtime]: https://docs.rs/rticx-pi32v2/
+[audio]: https://docs.rs/fm1-audio/
+[controls]: https://docs.rs/fm1-controls/
+[build-and-flash]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#build-and-flash
+[bsp-usb-log]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#usb-debug-log
+[rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-blink.rs
+[rticx-tone-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-tone.rs
+[rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-controls.rs
+[rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-piano.rs
+[rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-waveform.rs
+[usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/usb-log.rs
 [standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#use-from-another-crate
 [target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/fm1/targets/pi32v2-none.json
 [crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
