@@ -28,7 +28,8 @@ const IRQ_ENABLE: u32 = 1 << 13;
 const TIMEOUT_CYCLES: u32 = 50 * 24_000;
 const CHUNK: usize = SIZE as usize * 2 * 8;
 
-#[repr(align(4))]
+// Keep the byte array passed to SPI DMA at the four-byte-aligned address.
+#[repr(C, align(4))]
 struct Staging([u8; CHUNK]);
 static mut DMA_BUFFER: Staging = Staging([0; CHUNK]);
 unsafe extern "C" {

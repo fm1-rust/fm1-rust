@@ -40,7 +40,8 @@ const RX_MAX: u8 = 19;
 pub(super) const COUNT: u8 = 22;
 pub(super) const MAX_PACKET: usize = 64;
 
-#[repr(align(4))]
+// The controller receives the wrapper address and the CPU accesses its first field.
+#[repr(C, align(4))]
 struct Buffer<const N: usize>([u8; N]);
 // The AC79 SDK reserves one extra word after every receive buffer.
 static mut CONTROL: Buffer<68> = Buffer([0; 68]);
