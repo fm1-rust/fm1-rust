@@ -5,7 +5,7 @@
 //! Electrical positions follow the Felucca FM-1 board map and the panel names
 //! in fm1-base. Contacts are (column, input bit) in Matrix::sample order.
 
-use super::{Column, LedRow, Leds, MasterLevel, Matrix, Scan, select};
+use super::{Column, LedRow, Leds, MasterLevel, Matrix, PianoKey, Scan, select};
 use crate::{registers::*, time::cycles};
 
 /// Non-keyboard buttons in the board firmware's button-ID order.
@@ -194,7 +194,7 @@ struct Inputs {
     encoders: [Decoder; 7],
 }
 impl Inputs {
-    fn sample(&mut self, columns: &[u8; 11]) -> Scan {
+    fn sample(&mut self, columns: &[u8; 11], piano: Option<&[u8; 11]>) -> Scan {
         let mut scan = Scan::default();
         let prev = self.next.wrapping_sub(1) & 7;
         for (col, &raw) in columns.iter().enumerate() {
@@ -204,7 +204,10 @@ impl Inputs {
             let closed_twice = raw & history[prev];
             history[self.next] = raw;
             let recently_closed = history.iter().fold(0, |bits, sample| bits | sample);
-            let held = (self.held[col] | closed_twice) & recently_closed;
+            let mut held = (self.held[col] | closed_twice) & recently_closed;
+            if let Some(keys) = piano {
+                held = (held & !PianoKey::ROW_MASKS[col]) | keys[col];
+            }
             scan.changed[col] = self.held[col] ^ held;
             self.held[col] = held;
         }
@@ -222,7 +225,7 @@ impl Inputs {
 #[derive(Debug)]
 pub struct Controls {
     matrix: Matrix,
-    column: u8,
+    pub(super) column: u8,
     raw: [u8; 11],
     inputs: Inputs,
     master: Option<MasterLevel>,
@@ -237,7 +240,7 @@ impl Controls {
         clear(PB + PU, PIN);
         clear(PB + PD, PIN);
         matrix.select(Column(0));
-        start_master();
+        start_adc(4, (15 << 12) | 6);
         Self {
             matrix,
             column: 0,
@@ -255,15 +258,28 @@ impl Controls {
     /// Call once per 100 µs. Every eleventh call returns a coherent input snapshot.
     /// A press needs two closed sweeps and a release needs eight open sweeps.
     pub fn scan(&mut self, leds: &Leds) -> Option<Scan> {
-        self.raw[usize::from(self.column)] = self.matrix.sample_and_blank();
+        self.advance();
+        self.light(leds.columns[usize::from(self.column)]);
+        if self.column != 0 {
+            return None;
+        }
+        let master = self.poll_master();
+        Some(self.snapshot(master, None))
+    }
+
+    // Blank and read the current column, then select the next with its lamps still off.
+    pub(super) fn advance(&mut self) -> u8 {
+        let rows = self.matrix.sample_and_blank();
+        self.raw[usize::from(self.column)] = rows;
         self.column = self.column.wrapping_add(1);
-        let complete = self.column == Column::COUNT;
-        if complete {
+        if self.column == Column::COUNT {
             self.column = 0;
         }
-        // Sampling left all LED outputs low. Latch the new column before driving any row.
         select(Column(self.column));
-        let lamps = leds.columns[usize::from(self.column)];
+        rows
+    }
+
+    pub(super) fn light(&mut self, lamps: u8) {
         for (mask, row) in [
             (2, LedRow::Pa5),
             (4, LedRow::Pa6),
@@ -274,30 +290,34 @@ impl Controls {
                 self.matrix.set_led(row, true);
             }
         }
-        if !complete {
-            return None;
-        }
-        let mut scan = self.inputs.sample(&self.raw);
-        let previous = self.master;
-        self.poll_master();
-        scan.master = self.master;
-        scan.master_changed = previous != self.master;
-        Some(scan)
     }
 
-    fn poll_master(&mut self) {
+    pub(super) fn snapshot(
+        &mut self,
+        master: Option<MasterLevel>,
+        piano: Option<&[u8; 11]>,
+    ) -> Scan {
+        let mut scan = self.inputs.sample(&self.raw, piano);
+        scan.master = master;
+        scan.master_changed = master != self.master;
+        self.master = master;
+        scan
+    }
+
+    fn poll_master(&mut self) -> Option<MasterLevel> {
         let now = cycles();
-        if read(ADC_CON) & (1 << 7) != 0 {
-            self.master = Some(MasterLevel::from_adc(read(ADC_CON + 4)));
+        let value = if let Some(raw) = adc_result() {
+            Some(MasterLevel::from_adc(u32::from(raw)))
         } else if now.wrapping_sub(self.conversion_started) >= crate::time::Timers::CRYSTAL_HZ / 100
         {
-            self.master = None;
+            None
         } else {
-            return;
-        }
-        write(ADC_CON, 1 << 6);
-        start_master();
+            return self.master;
+        };
+        stop_adc();
+        start_adc(4, (15 << 12) | 6);
         self.conversion_started = now;
+        value
     }
 }
 
@@ -305,20 +325,26 @@ impl Drop for Controls {
     fn drop(&mut self) {
         // A lit multiplexed row would otherwise remain driven continuously.
         self.matrix.select(Column::PLAY);
-        write(ADC_CON, 1 << 6);
-        write(ADC_CON, 0);
+        stop_adc();
     }
 }
 
-// PB6 is SARADC channel 4. The SDK uses clock divider 6 and start delay 15.
+// One SARADC serves the key rows and MASTER (PB6, channel 4).
 const ADC_CON: usize = 0x13100;
-fn start_master() {
+pub(super) fn adc_result() -> Option<u16> {
+    (read(ADC_CON) & (1 << 7) != 0).then(|| (read(ADC_CON + 4) & 0x3ff) as u16)
+}
+pub(super) fn stop_adc() {
+    write(ADC_CON, 1 << 6);
+    write(ADC_CON, 0);
+}
+pub(super) fn start_adc(channel: u32, timing: u32) {
     write(ADC_CON, 0);
     const WLA_CON0: usize = 0x11900;
     if read(WLA_CON0) & (1 << 14) != 0 {
         clear(WLA_CON0, 1 << 14);
     }
-    write(ADC_CON, (15 << 12) | (4 << 8) | (1 << 6) | (1 << 3) | 6);
+    write(ADC_CON, timing | (channel << 8) | (1 << 6) | (1 << 3));
     set(ADC_CON, 1 << 4);
     set(ADC_CON, 1 << 6);
 }
@@ -363,8 +389,8 @@ mod tests {
         let piano = PianoKey::new(0).expect("lowest key");
         rows[3] = 16;
         rows[7] = 6; // HOME + REC
-        assert_eq!(inputs.sample(&rows).events().count(), 0);
-        let scan = inputs.sample(&rows);
+        assert_eq!(inputs.sample(&rows, None).events().count(), 0);
+        let scan = inputs.sample(&rows, None);
         let events = [
             Event::Pressed(Button::Home.into()),
             Event::Pressed(Button::Rec.into()),
@@ -373,16 +399,16 @@ mod tests {
         assert!(scan.pressed(Button::Home) && scan.is_down(piano));
         assert!(scan.events().eq(events));
         assert!(scan.events().eq(events));
-        assert_eq!(inputs.sample(&rows).events().count(), 0);
+        assert_eq!(inputs.sample(&rows, None).events().count(), 0);
         rows[7] = 2;
-        inputs.sample(&rows);
+        inputs.sample(&rows, None);
         rows[7] = 6;
-        inputs.sample(&rows);
+        inputs.sample(&rows, None);
         rows[7] = 2;
         for _ in 0..7 {
-            assert!(inputs.sample(&rows).is_down(Button::Rec));
+            assert!(inputs.sample(&rows, None).is_down(Button::Rec));
         }
-        let scan = inputs.sample(&rows);
+        let scan = inputs.sample(&rows, None);
         assert!(scan.released(Button::Rec) && scan.is_down(Button::Home));
         assert!(
             scan.events()

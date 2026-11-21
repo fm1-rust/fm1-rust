@@ -19,19 +19,14 @@ impl Synth {
     )]
     pub(super) fn render(
         &mut self,
-        physical: u32,
-        remote: &crate::midi::Velocities,
+        levels: &crate::midi::Velocities,
         master: MasterLevel,
         block: &mut Block,
     ) {
         const { assert!(BLOCK_FRAMES == 256 && PianoKey::COUNT <= 32) };
         block.fill([0; 2]);
         for (i, (&step, phase)) in STEPS.iter().zip(&mut self.phases).enumerate() {
-            let velocity = if physical & (1 << i) != 0 {
-                127
-            } else {
-                remote[i]
-            };
+            let velocity = levels[i];
             let gain = velocity + (velocity >> 6); // 0..=128
             let previous = core::mem::replace(&mut self.gains[i], gain);
             if gain == 0 && previous == 0 {
@@ -94,19 +89,20 @@ mod tests {
         let mut solo = Synth::default();
         let mut block = [[0; 2]; BLOCK_FRAMES];
         let mut reference = block;
-        let all_keys = (1 << PianoKey::COUNT) - 1;
-        let c4 = 1 << 7;
+        let all_keys = [127; PianoKey::COUNT as usize];
+        let mut c4 = SILENT;
+        c4[7] = 127;
         for keys in [all_keys, all_keys, c4, c4] {
-            chord.render(keys, &SILENT, MasterLevel::MAX, &mut block);
-            solo.render(c4, &SILENT, MasterLevel::MAX, &mut reference);
+            chord.render(&keys, MasterLevel::MAX, &mut block);
+            solo.render(&c4, MasterLevel::MAX, &mut reference);
             assert!(block.iter().any(|f| f[0] != 0));
             assert!(block.iter().all(|f| f[0] == f[1] && f[0].abs() < (1 << 23)));
         }
         assert_eq!(block, reference);
-        chord.render(0, &SILENT, MasterLevel::MAX, &mut block); // Release ramp.
-        chord.render(0, &SILENT, MasterLevel::MAX, &mut block);
+        chord.render(&SILENT, MasterLevel::MAX, &mut block); // Release ramp.
+        chord.render(&SILENT, MasterLevel::MAX, &mut block);
         assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
-        chord.render(all_keys, &SILENT, MasterLevel::MIN, &mut block);
+        chord.render(&all_keys, MasterLevel::MIN, &mut block);
         assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
     }
 }

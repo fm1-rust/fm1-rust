@@ -12,6 +12,8 @@ impl PianoKey {
     /// Number of keys on the FM-1.
     pub const COUNT: u8 = 27;
 
+    pub(super) const PRESSURE_KEYS: usize = 20;
+
     /// A zero-based physical key index, independent of transpose and octave settings.
     #[must_use]
     pub const fn new(index: u8) -> Option<Self> {
@@ -33,38 +35,66 @@ impl PianoKey {
         (0..Self::COUNT).map(Self)
     }
 
-    fn position(self) -> (usize, u8) {
-        const PINS: [(u8, u8); 27] = [
-            (3, 4),
-            (2, 4),
-            (5, 4),
-            (4, 4),
-            (7, 4),
-            (6, 4),
-            (8, 4),
-            (9, 4),
-            (10, 4),
-            (0, 3),
-            (1, 3),
-            (2, 3),
-            (3, 3),
-            (4, 3),
-            (5, 3),
-            (6, 3),
-            (7, 3),
-            (8, 3),
-            (9, 3),
-            (10, 3),
-            (0, 2),
-            (1, 2),
-            (2, 2),
-            (3, 2),
-            (4, 2),
-            (6, 2),
-            (5, 2),
-        ];
-        let (column, row) = PINS[usize::from(self.0)];
-        (usize::from(column), row)
+    const PINS: [(usize, u8); Self::COUNT as usize] = [
+        (3, 4),
+        (2, 4),
+        (5, 4),
+        (4, 4),
+        (7, 4),
+        (6, 4),
+        (8, 4),
+        (9, 4),
+        (10, 4),
+        (0, 3),
+        (1, 3),
+        (2, 3),
+        (3, 3),
+        (4, 3),
+        (5, 3),
+        (6, 3),
+        (7, 3),
+        (8, 3),
+        (9, 3),
+        (10, 3),
+        (0, 2),
+        (1, 2),
+        (2, 2),
+        (3, 2),
+        (4, 2),
+        (6, 2),
+        (5, 2),
+    ];
+
+    pub(super) fn position(self) -> (usize, u8) {
+        Self::PINS[usize::from(self.0)]
+    }
+
+    // Invert the same board map for the ADC scan, which visits one row and column at a time.
+    pub(super) const BY_ROW: [[Option<Self>; 11]; 3] = {
+        let mut rows = [[None; 11]; 3];
+        let mut i = 0;
+        while i < Self::COUNT {
+            let (column, row) = Self::PINS[i as usize];
+            rows[(row - 2) as usize][column] = Some(Self(i));
+            i += 1;
+        }
+        rows
+    };
+    pub(super) const ROW_MASKS: [u8; 11] = {
+        let mut masks = [0; 11];
+        let mut i = 0;
+        while i < Self::PINS.len() {
+            let (column, row) = Self::PINS[i];
+            masks[column] |= 1 << row;
+            i += 1;
+        }
+        masks
+    };
+
+    /// Whether this key has an ADC row for polyphonic aftertouch (F3 through C5).
+    #[must_use]
+    pub const fn supports_pressure(self) -> bool {
+        (self.0 as usize) < Self::PRESSURE_KEYS
     }
 }
 

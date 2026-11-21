@@ -24,7 +24,7 @@ mod synth;
 mod app {
     use crate::{
         clock::MidiClock,
-        midi::{Output, RemoteNotes},
+        midi::{Notes, Output},
         pitch::{midi_note, note_name},
         screen::{Ink, Screen},
         synth::Synth,
@@ -36,7 +36,8 @@ mod app {
             display::{DisplayPort, SpiClock},
             enter_download_mode,
             panel::{
-                Button, Controls, Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan, Switch,
+                Button, Event, Leds, MasterLevel, PianoKey, PianoTouch, PlayLedState, Scan, Switch,
+                TouchControls,
             },
             time::{Timers, ticks},
             usb_midi::{Identity, MidiDevice, PacketBuffer},
@@ -46,31 +47,37 @@ mod app {
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Keyboard {
-        physical: u32,
-        remote: RemoteNotes,
+        physical: Notes,
+        remote: Notes,
         online: bool,
         clock_playing: bool,
         clock_stats: (u32, u32),
         seen: u32,
         last: Option<PianoKey>,
+        last_velocity: u8,
         master: Option<MasterLevel>,
     }
 
     impl Keyboard {
         fn held(&self) -> u32 {
-            self.physical | self.remote.held
+            self.physical.held | self.remote.held
         }
 
-        fn update(&mut self, scan: &Scan) {
+        fn update(&mut self, scan: &Scan, touch: &PianoTouch) {
             for event in scan.events() {
                 match event {
                     Event::Pressed(Switch::Piano(key)) => {
-                        self.physical |= 1 << key.index();
+                        let velocity = touch.velocity(key).expect("press has a strike");
+                        self.physical.held |= 1 << key.index();
+                        self.physical.velocities[usize::from(key.index())] = velocity;
+                        self.last_velocity = velocity;
                         self.seen |= 1 << key.index();
                         self.last = Some(key);
                     }
                     Event::Released(Switch::Piano(key)) => {
-                        self.physical &= !(1 << key.index());
+                        self.physical.held &= !(1 << key.index());
+                        self.physical.velocities[usize::from(key.index())] = 0;
+                        self.physical.pressures[usize::from(key.index())] = 0;
                     }
                     Event::Pressed(Switch::Button(Button::Play)) => {
                         self.clock_playing = !self.clock_playing
@@ -78,6 +85,9 @@ mod app {
                     Event::MasterChanged(Some(level)) => self.master = Some(level),
                     _ => {}
                 }
+            }
+            for (key, pressure) in touch.pressure_changes() {
+                self.physical.pressures[usize::from(key.index())] = pressure;
             }
         }
 
@@ -91,6 +101,20 @@ mod app {
             if let Some(key) = self.last {
                 screen.text(5, 2, &note_name(midi_note(key)), Ink::White);
                 screen.number(16, 2, 2, u32::from(midi_note(key)), None, Ink::White);
+                screen.number(4, 4, 3, u32::from(self.last_velocity), None, Ink::Amber);
+                let i = usize::from(key.index());
+                let bit = 1 << i;
+                let pressure = if self.physical.held & bit != 0 {
+                    key.supports_pressure()
+                        .then_some(self.physical.pressures[i])
+                } else {
+                    (self.remote.held & bit != 0).then_some(self.remote.pressures[i])
+                };
+                if let Some(p) = pressure {
+                    screen.number(15, 4, 3, u32::from(p), None, Ink::Cyan);
+                } else {
+                    screen.text(15, 4, b" --", Ink::Muted);
+                }
             }
             screen.number(5, 3, 2, self.held().count_ones(), None, Ink::Green);
             screen.number(15, 3, 2, self.seen.count_ones(), None, Ink::Cyan);
@@ -152,7 +176,7 @@ mod app {
                 product: "FM-1 MIDI Piano",
             });
         DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
-        let controls = board.panel.into_controls();
+        let controls = board.panel.into_touch_controls();
         let stream = board.audio.into_stream().expect("audio clock");
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         let keyboard = Keyboard::default();
@@ -173,7 +197,7 @@ mod app {
                     device,
                     clock: MidiClock::default(),
                     session: None,
-                    remote: RemoteNotes::default(),
+                    remote: Notes::default(),
                     output: Output::new(),
                 },
                 audio: Audio {
@@ -197,7 +221,7 @@ mod app {
     // Keep column timing steady even while the audio task mixes a large chord.
     #[task(binds = TIMER5, priority = 4, shared = [keyboard])]
     struct Panel {
-        controls: Controls,
+        controls: TouchControls,
         timer: Timer5,
         lit: u32,
         leds: Leds,
@@ -206,11 +230,11 @@ mod app {
     impl RticTask for Panel {
         fn exec(&mut self) {
             self.timer.on_interrupt();
-            let Some(scan) = self.controls.scan(&self.leds) else {
+            let Some((scan, touch)) = self.controls.scan(&self.leds) else {
                 return;
             };
             let (held, playing) = self.shared().keyboard.lock(|keyboard| {
-                keyboard.update(&scan);
+                keyboard.update(&scan, &touch);
                 (keyboard.held(), keyboard.clock_playing)
             });
             if held != self.lit {
@@ -246,11 +270,10 @@ mod app {
             let (physical, remote, master) = self
                 .shared()
                 .keyboard
-                .lock(|k| (k.physical, k.remote.velocities, k.master));
+                .lock(|k| (k.physical, k.remote, k.master));
             let mut synth = self.synth;
             synth.render(
-                physical,
-                &remote,
+                &physical.levels(&remote),
                 master.unwrap_or(MasterLevel::MIN),
                 &mut self.block,
             );
@@ -268,7 +291,7 @@ mod app {
         device: MidiDevice,
         clock: MidiClock,
         session: Option<u32>,
-        remote: RemoteNotes,
+        remote: Notes,
         output: Output,
     }
 
@@ -284,7 +307,7 @@ mod app {
                 let new_session = session != self.session;
                 let previous = self.remote;
                 if new_session {
-                    self.remote = RemoteNotes::default();
+                    self.remote = Notes::default();
                     self.output = Output::new();
                     self.clock = MidiClock::default();
                     self.session = session;
@@ -293,7 +316,7 @@ mod app {
                 let mut seen = 0;
                 for &event in self.device.receive(&mut buffer) {
                     if let Some(key) = self.remote.apply(event) {
-                        last = Some(key);
+                        last = Some((key, event[3]));
                         seen |= 1 << key.index();
                     }
                 }
@@ -305,8 +328,9 @@ mod app {
                         k.online = session.is_some();
                         k.remote = remote;
                         k.seen |= seen;
-                        if last.is_some() {
-                            k.last = last;
+                        if let Some((key, velocity)) = last {
+                            k.last = Some(key);
+                            k.last_velocity = velocity;
                         }
                     }
                     (k.physical, k.clock_playing)
@@ -316,9 +340,11 @@ mod app {
                     // key and an incoming note have the same pitch.
                     self.clock
                         .service(woke, playing, |event| self.device.send(&[event]) == 1);
-                    self.output.observe(physical);
+                    self.output.observe(&physical);
                     let n = self.device.send(self.output.pending());
                     self.output.sent(n);
+                    self.output
+                        .send_pressure(&physical, |events| self.device.send(events));
                 }
                 DeadlineClock::delay_until(self.clock.wake_by(DeadlineClock::now(), playing)).await;
             }
@@ -347,6 +373,8 @@ mod app {
             screen.text(10, 2, b"MIDI  --", Ink::Muted);
             screen.text(0, 3, b"HELD", Ink::Green);
             screen.text(10, 3, b"SEEN", Ink::Cyan);
+            screen.text(0, 4, b"VEL", Ink::Muted);
+            screen.text(9, 4, b"PRESS", Ink::Muted);
             screen.text(17, 3, b"/27", Ink::Muted);
             screen.text(7, 11, b"MAX", Ink::Muted);
             screen.text(18, 11, b"US", Ink::Muted);
