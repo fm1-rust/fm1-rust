@@ -11,7 +11,7 @@ M-VAVE FM-1 synthesizer. It runs on CPU0 of the JieLi AC791N, uses
 | [`fm1`](fm1/) | Board support and peripheral drivers | [![crates.io][fm1-version]][fm1-crate] | [![docs.rs][fm1-docs-badge]][fm1-docs] | [![Build status][fm1-build]][fm1-ci] |
 | [`fm1-audio`](fm1-audio/) | Stereo output, master gain and interrupt timing | [![crates.io][fm1-audio-version]][fm1-audio-crate] | [![docs.rs][fm1-audio-docs-badge]][fm1-audio-docs] | [![Build status][fm1-audio-build]][fm1-audio-ci] |
 | [`fm1-controls`](fm1-controls/) | Front-panel input and async scan delivery | [![crates.io][fm1-controls-version]][fm1-controls-crate] | [![docs.rs][fm1-controls-docs-badge]][fm1-controls-docs] | [![Build status][fm1-controls-build]][fm1-controls-ci] |
-| [`fm1-graphics`](fm1-graphics/) | Text grids and waveform plots over the BSP display | Unpublished | [Drawing guide](fm1-graphics/) | [![Build status][fm1-graphics-build]][fm1-graphics-ci] |
+| [`fm1-graphics`](fm1-graphics/) | Text grids and waveform plots over the BSP display | [![crates.io][fm1-graphics-version]][fm1-graphics-crate] | [![docs.rs][fm1-graphics-docs-badge]][fm1-graphics-docs] | [![Build status][fm1-graphics-build]][fm1-graphics-ci] |
 | [`fm1-rticx`](fm1-rticx/) | RTICX tasks and clocks for the FM-1 | Unpublished | [Application guide](fm1-rticx/README.md#application-setup) | [![Build status][fm1-rticx-build]][fm1-rticx-ci] |
 | [`rticx-pi32v2`](rticx-pi32v2/) | RTICX runtime for AC791N CPU0 | [![crates.io][pi32v2-version]][pi32v2-crate] | [![docs.rs][pi32v2-docs-badge]][pi32v2-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
 | [`rticx-pi32v2-macro`](rticx-pi32v2-macro/) | Application macros for the pi32v2 runtime and FM-1 board crate | [![crates.io][macro-version]][macro-crate] | [![docs.rs][macro-docs-badge]][macro-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
@@ -66,6 +66,10 @@ for the upstream sources and credits.
 [fm1-controls-docs]: https://docs.rs/fm1-controls/
 [fm1-controls-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-controls.yml/badge.svg?branch=main&event=push
 [fm1-controls-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-controls.yml
+[fm1-graphics-version]: https://img.shields.io/crates/v/fm1-graphics?logo=rust
+[fm1-graphics-crate]: https://crates.io/crates/fm1-graphics
+[fm1-graphics-docs-badge]: https://docs.rs/fm1-graphics/badge.svg
+[fm1-graphics-docs]: https://docs.rs/fm1-graphics/
 [fm1-graphics-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml/badge.svg?branch=main&event=push
 [fm1-graphics-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml
 [fm1-rticx-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml/badge.svg?branch=main&event=push

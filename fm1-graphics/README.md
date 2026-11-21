@@ -6,7 +6,7 @@
 plot for the M-VAVE FM-1. Both render into small RGB565 rectangles and send
 them through the BSP's buffered SPI1 driver. The crate is allocation-free,
 works with the native `fm1::display::Display`, and can be used from any runtime.
-Use the workspace version of `fm1` for the buffered rectangle API.
+The buffered rectangle API is available in `fm1` 0.1.2.
 
 ```rust,no_run
 use fm1::display::{Display, Error};
