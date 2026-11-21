@@ -1,6 +1,6 @@
 [package]
 name = "rticx-pi32v2"
-version = "0.1.1"
+version = "0.2.0-pre"
 edition = "2024"
 description = "RTICX for CPU0 of the JieLi AC791N"
 license = "MIT"
@@ -15,6 +15,7 @@ path = "tests/ui/shared_layout.rs"
 crate-type = ["rlib"]
 
 [dependencies]
+rtic-sync = { version = "1.6.1", default-features = false }
 rticx-async = "0.2"
 rticx-pi32v2-macro = "0.1.1"
 

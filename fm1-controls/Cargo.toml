@@ -1,6 +1,6 @@
 [package]
 name = "fm1-controls"
-version = "0.1.0"
+version = "0.2.0-pre"
 edition = "2024"
 description = "Asynchronous front-panel input for the M-VAVE FM-1"
 license = "MIT"
@@ -10,7 +10,7 @@ categories = ["asynchronous", "embedded", "no-std"]
 
 [dependencies]
 fm1 = "0.1.2"
-rticx-async = "0.2"
+rtic-sync = { version = "1.6.1", default-features = false }
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
