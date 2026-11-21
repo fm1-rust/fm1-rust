@@ -26,15 +26,25 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh rticx-controls
 ./fm1/scripts/build-example.sh rticx-piano
 ./fm1/scripts/build-example.sh rticx-waveform
+./fm1/scripts/build-example.sh usb-log
 ```
 
-| Firmware | Tasks and controls |
+### Example tour
+
+These screenshots show the examples running in [fm1-emu](https://github.com/joakimeriksson/fm1-emu).
+
+| Screenshot | Example and controls |
 | --- | --- |
-| [rticx-blink](examples/rticx-blink.rs) | TIMER5 wakes two periodic async tasks. One toggles the PLAY LED every 500 ms. The other samples the button every 10 ms. Hold PLAY for two seconds to return to download mode. |
-| [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
-| [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs. An async task consumes completed sweeps and updates the controls while another task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
-| [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
-| [rticx-waveform](examples/rticx-waveform.rs) | Play a local four-waveform oscillator. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
+| ![Front panel with the PLAY lamp lit](../docs/images/rticx-blink.png) | [`rticx-blink`](examples/rticx-blink.rs)<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
+| ![Tone playing with a green LCD above, muted with a red LCD below](../docs/images/rticx-tone.png) | [`rticx-tone`](examples/rticx-tone.rs)<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
+| ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](../docs/images/rticx-controls.png) | [`rticx-controls`](examples/rticx-controls.rs)<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
+| ![Piano display with C4, E4 and G4 held and USB connected](../docs/images/rticx-piano.png) | [`rticx-piano`](examples/rticx-piano.rs)<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
+| ![Oscilloscope showing an A4 sine wave at the DAC output](../docs/images/rticx-waveform.png) | [`rticx-waveform`](examples/rticx-waveform.rs)<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
+| ![Host terminal showing ready followed by two play+ and play- pairs](../docs/images/usb-log.png) | [`usb-log`](examples/usb-log.rs)<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
+
+To return to download mode, hold **PLAY** for two seconds in Blink, Tone or USB
+Log. In Controls, Piano or Waveform, hold **OCT-** and **OCT+** together for
+two seconds.
 
 The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
 frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
