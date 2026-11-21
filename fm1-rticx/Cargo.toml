@@ -18,7 +18,7 @@ rtt-target = { version = "0.6.2", optional = true }
 
 [dev-dependencies]
 fm1-audio = "0.1"
-fm1-controls = "0.2.0-pre"
+fm1-controls = "0.1.1"
 fm1-graphics = { version = "0.1", features = ["async-display"] }
 futures-util = { version = "0.3", default-features = false }
 static_cell = "2.1.1"
