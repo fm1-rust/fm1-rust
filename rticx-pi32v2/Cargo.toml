@@ -16,7 +16,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 rticx-async = "0.2"
-rticx-pi32v2-macro = { version = "0.1", path = "../rticx-pi32v2-macro" }
+rticx-pi32v2-macro = "0.1"
 
 [target.'cfg(target_arch = "pi32v2")'.dependencies]
 critical-section = { version = "1", features = ["restore-state-u32"] }
