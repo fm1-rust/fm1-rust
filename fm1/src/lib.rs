@@ -2,6 +2,8 @@
 #![doc = include_str!("../README.md")]
 
 pub use embedded_hal;
+#[cfg(feature = "async-display")]
+pub use embedded_hal_async;
 
 #[cfg(feature = "audio")]
 pub mod audio;

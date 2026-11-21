@@ -12,6 +12,7 @@ categories = ["embedded", "hardware-support", "no-std"]
 all-features = true
 
 [features]
+async-display = ["dep:critical-section", "dep:embedded-hal-async"]
 audio = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 
@@ -24,10 +25,15 @@ name = "tone"
 required-features = ["audio"]
 
 [dependencies]
+critical-section = { version = "1", optional = true }
 embedded-graphics = { version = "0.8.2", optional = true }
 embedded-hal = "1"
+embedded-hal-async = { version = "1", optional = true }
 mipidsi = { version = "0.10", optional = true }
 oxstack-gfx = { version = "0.2.1", optional = true }
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
 
 [lints]
 workspace = true

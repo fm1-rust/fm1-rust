@@ -52,6 +52,20 @@ LCD transfer can miss the refill deadline and cause old samples to repeat.
 When initializing USB-MIDI, supply your application's USB vendor ID, product
 ID and descriptor strings to `into_midi`.
 
+## Asynchronous LCD writes
+
+Enable `async-display` on `fm1` or `fm1-rticx` and call
+`fm1::display::on_spi1_interrupt()` from the CPU0 SPI1 handler.
+Borrow the LCD with `lcd.as_async(&mut delay)?`, where `delay` implements
+`embedded_hal_async::delay::DelayNs`. The RTICX TIMER5 handle provides
+`timer.clock()` for this purpose. Other runtimes must supply a
+`critical-section` implementation for the interrupt and task.
+
+`write_rect_buffered(...).await?` copies the pixels into the BSP's SRAM and
+leaves the last strip in flight. Prepare the next rectangle while it sends,
+then call `flush().await?` after the final rectangle. The timer wakes the task
+if SPI1 stalls for 50 ms. See the [RTICX waveform example](../fm1-rticx/examples/rticx-waveform.rs).
+
 ## Drawing with embedded-graphics
 
 Enable the optional `embedded-graphics` feature on `fm1` or `fm1-rticx`.

@@ -3,6 +3,11 @@
 //! The 240 × 240 ST7789 on SPI1. RGB565 bytes are sent most significant byte first.
 //! DMA uses a private SRAM strip, so pixels may come from RAM or flash.
 
+#[cfg(feature = "async-display")]
+mod asynchronous;
+#[cfg(feature = "async-display")]
+pub use asynchronous::{AsyncDisplay, on_spi1_interrupt};
+
 #[cfg(feature = "embedded-graphics")]
 pub mod graphics;
 
@@ -19,6 +24,8 @@ const CS: u32 = 1 << 7;
 const DC: u32 = 1 << 8;
 const DONE: u32 = 1 << 15;
 const ACK: u32 = 1 << 14;
+const IRQ_ENABLE: u32 = 1 << 13;
+const TIMEOUT_CYCLES: u32 = 50 * 24_000;
 const CHUNK: usize = SIZE as usize * 2 * 8;
 
 #[repr(align(4))]
@@ -151,11 +158,8 @@ impl Display {
         height: u16,
         pixels: &[u8],
     ) -> Result<(), Error> {
-        let bytes = self.region_bytes(x, y, width, height)?;
-        if bytes != pixels.len() {
-            return Err(Error::InvalidRegion);
-        }
-        if bytes != 0 {
+        self.validate_pixels(x, y, width, height, pixels)?;
+        if !pixels.is_empty() {
             self.window(x, y, width, height)?;
             self.spi.write_bytes_buffered(pixels)?;
         }
@@ -203,6 +207,20 @@ impl Display {
         Ok(())
     }
 
+    fn validate_pixels(
+        &self,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        pixels: &[u8],
+    ) -> Result<(), Error> {
+        if self.region_bytes(x, y, width, height)? != pixels.len() {
+            return Err(Error::InvalidRegion);
+        }
+        Ok(())
+    }
+
     fn region_bytes(&self, x: u16, y: u16, width: u16, height: u16) -> Result<usize, Error> {
         if self.spi.failed {
             return Err(Error::Timeout);
@@ -231,8 +249,7 @@ impl Spi1 {
     fn write_bytes_buffered(&mut self, bytes: &[u8]) -> Result<(), Error> {
         for chunk in bytes.chunks(CHUNK) {
             self.wait_dma()?;
-            self.staging()[..chunk.len()].copy_from_slice(chunk);
-            self.start_dma(chunk.len());
+            self.stage_bytes(chunk, false);
         }
         Ok(())
     }
@@ -252,7 +269,7 @@ impl Spi1 {
         while remaining != 0 {
             self.wait_dma()?;
             let count = remaining.min(strip);
-            self.start_dma(count * 2);
+            self.start_dma(count * 2, false);
             remaining -= count;
         }
         Ok(())
@@ -266,13 +283,18 @@ impl Spi1 {
         unsafe { &mut *buffer }
     }
 
+    fn stage_bytes(&mut self, bytes: &[u8], interrupt: bool) {
+        self.staging()[..bytes.len()].copy_from_slice(bytes);
+        self.start_dma(bytes.len(), interrupt);
+    }
+
     #[allow(
         clippy::cast_possible_truncation,
         reason = "All callers pass 1..=CHUNK bytes."
     )]
-    fn start_dma(&mut self, len: usize) {
+    fn start_dma(&mut self, len: usize, interrupt: bool) {
         debug_assert!((1..=CHUNK).contains(&len));
-        self.begin(true);
+        self.begin(true, interrupt);
         self.pending_since = Some(cycles());
         // SAFETY: DMA reads only initialized bytes from the transport's static SRAM.
         unsafe { fm1_spi1_dma((&raw const DMA_BUFFER.0).cast(), len as u32) };
@@ -288,14 +310,18 @@ impl Spi1 {
         Ok(())
     }
 
-    fn begin(&mut self, data: bool) {
+    fn begin(&mut self, data: bool, interrupt: bool) {
         level(PC + OUT, DC, data);
         clear(PC + OUT, CS);
-        set(CON, ACK);
+        modify(
+            CON,
+            IRQ_ENABLE,
+            ACK | if interrupt { IRQ_ENABLE } else { 0 },
+        );
     }
     fn finish(&mut self, start: u32) -> Result<(), Error> {
         while read(CON) & DONE == 0 {
-            if cycles().wrapping_sub(start) >= 50 * 24_000 {
+            if cycles().wrapping_sub(start) >= TIMEOUT_CYCLES {
                 clear(CON, 1);
                 set(PC + OUT, CS);
                 self.failed = true;
@@ -308,7 +334,7 @@ impl Spi1 {
     }
     fn command(&mut self, command: u8) -> Result<(), Error> {
         self.wait_dma()?;
-        self.begin(false);
+        self.begin(false, false);
         write(CON + 8, u32::from(command));
         self.finish(cycles())
     }
