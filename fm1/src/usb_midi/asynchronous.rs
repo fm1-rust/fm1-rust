@@ -68,7 +68,8 @@ async fn wait_for_irq() {
         let waker = cx.waker().clone();
         let (poll, previous) = critical_section::with(|cs| {
             if SIGNALED.borrow(cs).replace(false) {
-                return (Poll::Ready(()), None);
+                // Drop the unused clone after leaving the critical section.
+                return (Poll::Ready(()), Some(waker));
             }
             let previous = WAITER.borrow(cs).replace(Some(waker));
             set(CON0, SIEIE);
