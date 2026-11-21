@@ -29,6 +29,7 @@ mod app {
         synth::Synth,
         timing::{PanelReport, PanelTiming, TimingFooter},
     };
+    use core::pin::pin;
     use fm1_audio::{MasterLevel, Output as AudioOutput, Stats};
     use fm1_graphics::{TextGrid, palette};
     use fm1_rticx::{
@@ -41,10 +42,15 @@ mod app {
                 TouchControls,
             },
             time::{Timers, cycles, ticks},
-            usb_midi::{Identity, MidiDevice, PacketBuffer},
+            usb_midi::{Identity, MidiDevice, PacketBuffer, on_usb0_interrupt},
         },
-        time::{Clock, DeadlineClock, ExtU32, Timebase, Timer5},
+        rticx::asynchronous::{
+            channel::{Receiver, Sender},
+            make_channel,
+        },
+        time::{Clock, DeadlineClock, DeadlineDuration, ExtU32, Timebase, Timer5},
     };
+    use futures_util::future::select;
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Keyboard {
@@ -65,7 +71,8 @@ mod app {
             self.physical.held | self.remote.held
         }
 
-        fn update(&mut self, scan: &Scan, touch: &PianoTouch) {
+        fn update(&mut self, scan: &Scan, touch: &PianoTouch) -> bool {
+            let mut midi_changed = false;
             for event in scan.events() {
                 match event {
                     Event::Pressed(Switch::Piano(key)) => {
@@ -84,20 +91,26 @@ mod app {
                     Event::Pressed(Switch::Button(Button::Play)) => {
                         self.clock_playing = !self.clock_playing
                     }
-                    Event::MasterChanged(Some(level)) => self.master = Some(level),
-                    _ => {}
+                    Event::MasterChanged(Some(level)) => {
+                        self.master = Some(level);
+                        continue;
+                    }
+                    _ => continue,
                 }
+                midi_changed = true;
             }
             for (key, pressure) in touch.pressure_changes() {
                 self.physical.pressures[usize::from(key.index())] = pressure;
+                midi_changed = true;
             }
+            midi_changed
         }
 
         fn draw(&self, screen: &mut TextGrid) {
             screen.text(
                 11,
                 0,
-                b"USB",
+                if self.online { b"USB+" } else { b"USB-" },
                 if self.online {
                     palette::GREEN
                 } else {
@@ -197,6 +210,8 @@ mod app {
         let controls = board.panel.into_touch_controls();
         let audio_output = AudioOutput::start(board.audio).expect("audio clock");
         let timer = Clock::start(board.timers.with_panel_scan_rate());
+        let delay = timer.clock();
+        let (changed, updates) = make_channel!((), 1);
         let keyboard = Keyboard::default();
         (
             Shared {
@@ -205,6 +220,7 @@ mod app {
             },
             TaskInits {
                 panel: Panel {
+                    changed,
                     controls,
                     timer,
                     timing: PanelTiming::default(),
@@ -213,6 +229,8 @@ mod app {
                     octave_since: None,
                 },
                 midi: Midi {
+                    updates,
+                    delay,
                     device,
                     clock: MidiClock::default(),
                     session: None,
@@ -239,6 +257,7 @@ mod app {
     // Keep column timing steady even while the audio task mixes a large chord.
     #[task(binds = TIMER5, priority = 4, shared = [keyboard])]
     struct Panel {
+        changed: Sender<'static, (), 1>,
         controls: TouchControls,
         timer: Timer5,
         timing: PanelTiming,
@@ -260,10 +279,18 @@ mod app {
         fn scan(&mut self) -> Option<bool> {
             self.timer.on_interrupt();
             let (scan, touch) = self.controls.scan(&self.leds)?;
-            let (held, playing) = self.shared().keyboard.lock(|keyboard| {
-                keyboard.update(&scan, &touch);
-                (keyboard.held(), keyboard.clock_playing)
+            let (held, playing, changed) = self.shared().keyboard.lock(|keyboard| {
+                let changed = keyboard.update(&scan, &touch);
+                (
+                    keyboard.held(),
+                    keyboard.clock_playing,
+                    keyboard.online && changed,
+                )
             });
+            if changed {
+                // The shared keyboard already holds the latest state if a wake is queued.
+                let _ = self.changed.try_send(());
+            }
             if held != self.lit {
                 for key in PianoKey::all() {
                     self.leds.set(key, held & (1 << key.index()) != 0);
@@ -311,8 +338,19 @@ mod app {
         }
     }
 
+    #[task(binds = USB0, priority = 2, init = generated)]
+    struct UsbInterrupt;
+
+    impl RticTask for UsbInterrupt {
+        fn exec(&mut self) {
+            on_usb0_interrupt();
+        }
+    }
+
     #[async_task(priority = 2, shared = [keyboard])]
     struct Midi {
+        updates: Receiver<'static, (), 1>,
+        delay: Clock,
         device: MidiDevice,
         clock: MidiClock,
         session: Option<u32>,
@@ -325,9 +363,13 @@ mod app {
 
         async fn exec(&mut self, (): ()) {
             let mut buffer = PacketBuffer::default();
+            let mut link_check = None;
             loop {
                 let woke = DeadlineClock::now();
-                self.device.poll();
+                if link_check.is_some_and(|at| woke.checked_duration_since(at).is_some()) {
+                    self.device.poll();
+                    link_check = None;
+                }
                 let session = self.device.session();
                 let new_session = session != self.session;
                 let previous = self.remote;
@@ -371,7 +413,25 @@ mod app {
                     self.output
                         .send_pressure(&physical, |events| self.device.send(events));
                 }
-                DeadlineClock::delay_until(self.clock.wake_by(DeadlineClock::now(), playing)).await;
+                // A failed send or receive can take the device offline during this pass.
+                if self.device.session() != session {
+                    continue;
+                }
+                // Protect sounding host notes if a cable pull produces no bus interrupt.
+                // Local activity and clock wakes must not postpone an existing check.
+                if self.remote.held == 0 {
+                    link_check = None;
+                } else {
+                    link_check.get_or_insert(woke + DeadlineDuration::from_millis(100));
+                }
+                let usb = pin!(self.device.wait_for_activity(&mut self.delay));
+                let panel = pin!(self.updates.recv());
+                let activity = select(usb, panel);
+                if let Some(at) = self.clock.wake_by(playing, link_check) {
+                    let _ = DeadlineClock::timeout_at(at, activity).await;
+                } else {
+                    let _ = activity.await;
+                }
             }
         }
     }

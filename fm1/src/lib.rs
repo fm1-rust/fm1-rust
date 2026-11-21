@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 pub use embedded_hal;
-#[cfg(feature = "async-display")]
+#[cfg(any(feature = "async-display", feature = "async-usb"))]
 pub use embedded_hal_async;
 
 #[cfg(feature = "audio")]

@@ -17,8 +17,8 @@ the idle context. The application supplies its startup code, CPU0 stacks
 and compiler-rt builtins through the BSP. `PI32V2_BIN` selects the same
 assembler as the firmware build.
 
-The supported peripheral vectors are ALNK0, SPI1, UART1, SARADC, SPI2 and
-TIMER5. The FM-1 deadline clock can independently claim TIMER2 (IRQ 6) at its
+Hardware tasks can bind USB0 (controller IRQ 9), ALNK0, SPI1, UART1, SARADC,
+SPI2 and TIMER5. The FM-1 deadline clock can independently claim TIMER2 (IRQ 6) at its
 chosen priority. Its handler services only the timer queue. Peripheral handlers must acknowledge their interrupt at its source.
 SOFT0 through SOFT7 can dispatch software tasks. The runtime clears the
 software latch on entry so a wake during dispatch can pend it again.

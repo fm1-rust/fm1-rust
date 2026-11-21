@@ -9,19 +9,26 @@ pub(crate) const WORDS: usize = 16;
 pub struct SourceMask([u32; WORDS]);
 
 impl SourceMask {
+    /// Include a RAM vector when its priority falls within the resource ceiling.
+    #[must_use]
+    pub const fn with_source(mut self, index: u8, priority: u16, ceiling: u16) -> Self {
+        if priority <= ceiling {
+            let n = index as usize;
+            self.0[n / 8] |= 1 << ((n % 8) << 2);
+        }
+        self
+    }
+
     /// Collect enabled-source bit positions up to the given logical priority.
     #[must_use]
     pub const fn through(irqs: &[(Interrupt, u16)], ceiling: u16) -> Self {
-        let mut mask = [0; WORDS];
+        let mut mask = Self([0; WORDS]);
         let mut remaining = irqs;
         while let [(irq, priority), rest @ ..] = remaining {
-            if *priority <= ceiling {
-                let n = *irq as usize;
-                mask[n / 8] |= 1 << ((n % 8) << 2);
-            }
+            mask = mask.with_source(*irq as u8, *priority, ceiling);
             remaining = rest;
         }
-        Self(mask)
+        mask
     }
 
     // CONFIG must point to the 16-word register bank and IRQs must be masked

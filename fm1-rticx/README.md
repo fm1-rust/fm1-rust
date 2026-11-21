@@ -111,8 +111,8 @@ stereo mix.
 
 ### Record and play a MIDI clip
 
-Connect the piano to a computer with a USB data cable. The USB indicator turns
-green when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, record and play back a chord.
+Connect the piano to a computer with a USB data cable. The USB indicator changes from `USB-` to
+green `USB+` when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, record and play back a chord.
 
 1. Under **Settings → Link, Tempo & MIDI**, enable **Track** for the FM-1 input
    and output ports.
@@ -128,10 +128,19 @@ green when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, r
    velocity and polyphonic pressure.
 
 Incoming notes span MIDI numbers 53–79. Incoming notes and physical keys
-have independent lifetimes, including at the same pitch. The MIDI task uses
-TIMER2 to service USB at roughly 1 ms intervals and to wake for each MIDI Clock
-pulse. Panel scanning and audio have higher task priorities. The example uses the shared
+have independent lifetimes, including at the same pitch. USB0 wakes the MIDI
+task for bus and endpoint activity. Physical notes, pressure and PLAY changes
+wake it from the panel. TIMER2 schedules MIDI Clock pulses. Panel scanning and
+audio have higher task priorities. The example uses the shared
 [pid.codes test identity](https://pid.codes/1209/0001/) for bench use. A distributed product needs its own USB identity.
+
+To check unplug detection, sustain a note from the host and pull the data cable
+while the FM-1 stays powered. The remote note should release and the indicator
+should show `USB-`. Physical keys should keep playing. Reconnect and play
+another note after `USB+` returns. The indicator tracks a configured, active
+host session. Host suspend also shows `USB-`. If removal raises no interrupt,
+a 100 ms frame-counter check runs while a remote note is held. An idle instrument
+can keep showing its previous status until the next controller event.
 
 ### Follow the piano’s MIDI Clock in Ableton Live
 

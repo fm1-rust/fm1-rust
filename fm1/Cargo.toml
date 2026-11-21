@@ -13,6 +13,7 @@ all-features = true
 
 [features]
 async-display = ["dep:critical-section", "dep:embedded-hal-async"]
+async-usb = ["dep:critical-section", "dep:embedded-hal-async"]
 audio = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 

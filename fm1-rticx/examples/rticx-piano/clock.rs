@@ -5,7 +5,6 @@ use fm1_rticx::{
 };
 
 const PULSE: u32 = Timers::CRYSTAL_HZ / (2 * 24);
-const POLL: DeadlineDuration = DeadlineDuration::from_millis(1);
 
 #[derive(Default)]
 pub(super) struct MidiClock {
@@ -20,16 +19,17 @@ pub(super) struct MidiClock {
     reason = "Wrapping instants advance by at most one pulse. The remainder is smaller than PULSE."
 )]
 impl MidiClock {
-    // Service USB between timing messages. An overdue edge runs immediately.
-    pub(super) fn wake_by(&self, now: DeadlineInstant, playing: bool) -> DeadlineInstant {
-        let poll = now + POLL;
-        if playing
-            && let Some(edge) = self.next
-            && poll.checked_duration_since(edge).is_some()
-        {
-            return edge;
+    // Both deadlines are within half the wrapping TIMER4 range.
+    pub(super) fn wake_by(
+        &self,
+        playing: bool,
+        link_check: Option<DeadlineInstant>,
+    ) -> Option<DeadlineInstant> {
+        let pulse = self.next.filter(|_| playing);
+        match (pulse, link_check) {
+            (Some(p), Some(check)) if check.is_before(p) => Some(check),
+            _ => pulse.or(link_check),
         }
-        poll
     }
 
     pub(super) fn service(
@@ -75,23 +75,27 @@ mod tests {
     fn absolute_pulses_survive_rollover_backpressure_and_stop() {
         let start = DeadlineInstant::from_ticks(u32::MAX - 7);
         let pulse = DeadlineDuration::from_ticks(PULSE);
+        let late = DeadlineDuration::from_millis(1);
         let mut clock = MidiClock::default();
         let mut events = Vec::new();
         let mut send = |event: EventPacket| {
             events.push(event[1]);
             true
         };
+        assert_eq!(clock.wake_by(false, None), None);
         clock.service(start, true, &mut send);
         let first = start + pulse;
-        assert_eq!(clock.wake_by(first - POLL, true), first);
+        assert_eq!(clock.wake_by(true, None), Some(first));
+        assert_eq!(clock.wake_by(true, Some(start)), Some(start));
+        assert_eq!(clock.wake_by(true, Some(first + late)), Some(first));
         clock.service(first, true, |_| false);
-        clock.service(first + POLL, true, &mut send);
+        clock.service(first + late, true, &mut send);
         clock.service(first + pulse + pulse, true, &mut send);
         assert_eq!(clock.missed, 1);
         assert_eq!(clock.worst_us, 20_833);
         assert_eq!(clock.next, Some(first + pulse + pulse + pulse));
         clock.service(first + pulse + pulse, false, |_| false);
-        clock.service(first + pulse + pulse + POLL, false, &mut send);
+        clock.service(first + pulse + pulse + late, false, &mut send);
         assert_eq!(events, [0xfa, 0xf8, 0xf8, 0xfc]);
         assert_eq!(clock.next, None);
     }

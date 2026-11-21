@@ -2,10 +2,14 @@
 // Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 //! Full-speed USB-MIDI 1.0 device with one bidirectional virtual cable.
 //!
-//! Move the board's USB port into one task, call [`MidiDevice::poll`] about
-//! every millisecond, then receive and send complete four-byte event packets.
-//! USB needs neither an interrupt binding nor an allocator.
+//! Move the board's USB port into one task. Enable `async-usb` to wait for USB0
+//! interrupts, or call [`MidiDevice::poll`] about every millisecond. Both paths
+//! receive and send complete four-byte event packets without an allocator.
 
+#[cfg(feature = "async-usb")]
+mod asynchronous;
+#[cfg(feature = "async-usb")]
+pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
 use crate::{
@@ -60,7 +64,7 @@ impl Drop for UsbPort {
 }
 
 impl UsbPort {
-    /// Start attachment as a USB-MIDI device. The first poll after 25 ms
+    /// Start attachment as a USB-MIDI device. The first service pass after 25 ms
     /// enables the D+ pull-up, giving the host time to forget the bootloader.
     #[must_use]
     pub fn into_midi(self, identity: Identity) -> MidiDevice {
@@ -82,8 +86,8 @@ impl UsbPort {
     }
 }
 
-/// One owned USB device. All register access, including indexed endpoint
-/// selection, stays in the task that owns this handle. Dropping it detaches.
+/// One owned USB device. The owning task selects the indexed registers and
+/// manages the endpoint buffers. Dropping the handle detaches the device.
 #[derive(Debug)]
 pub struct MidiDevice {
     _port: UsbPort,
@@ -104,14 +108,14 @@ impl MidiDevice {
     /// Run one bounded service pass. Attach, enumeration, suspend and cable
     /// reconnection progress even when the application has no MIDI to send.
     pub fn poll(&mut self) {
-        if self.service().is_err() {
+        if self.service(true).is_err() {
             self.retry();
         }
     }
 
-    /// Identifies the current host configuration. A reset, suspend or unplug
-    /// invalidates it. Release notes and discard queued events from a previous
-    /// session when this value changes.
+    /// Identifies the current active host configuration. A reset, suspend or
+    /// detected disconnect invalidates it. Release notes and discard queued
+    /// events from the previous session when this value changes.
     #[must_use]
     pub fn session(&self) -> Option<u32> {
         (self.interface.configured && !self.suspended).then_some(self.epoch)
@@ -161,7 +165,7 @@ impl MidiDevice {
         self.address = None;
     }
 
-    fn service(&mut self) -> controller::Result<()> {
+    fn service(&mut self, sample_frames: bool) -> controller::Result<()> {
         let now = cycles();
         if let Some((since, delay)) = self.wait {
             if now.wrapping_sub(since) < delay {
@@ -173,16 +177,21 @@ impl MidiDevice {
         let flags = rd(controller::INTR_USB)?;
         let ep0 = rd(controller::INTR_TX)? & 1 != 0;
         let rx = rd(controller::INTR_RX)? & 2 != 0;
-        if flags & 4 != 0 {
+        if flags & (controller::RESET | controller::DISCONNECT) != 0 {
             self.bus_reset();
             controller::reset()?;
+            if flags & controller::RESET == 0 {
+                return Ok(()); // Endpoint flags from the disconnected host are stale.
+            }
         }
-        if flags & 1 != 0 {
+        if flags & controller::SUSPEND != 0 {
             self.suspend(true);
-            self.frame = controller::frame_number()?;
+            if sample_frames {
+                self.frame = controller::frame_number()?;
+            }
             self.frame_sample = now;
         }
-        if flags & 2 != 0 {
+        if flags & controller::RESUME != 0 {
             self.suspend(false);
         }
         self.rx_pending |= rx;
@@ -192,15 +201,17 @@ impl MidiDevice {
 
         // The SOF pending bit can stay active with the cable out. Felucca
         // checks the 11-bit frame counter, which only advances with a host.
-        if self.interface.configured
-            && now.wrapping_sub(self.frame_sample) >= Timers::CRYSTAL_HZ / 100
-        {
+        let elapsed = now.wrapping_sub(self.frame_sample);
+        if sample_frames && self.interface.configured && elapsed >= Timers::CRYSTAL_HZ / 100 {
             self.frame_sample = now;
             let frame = controller::frame_number()?;
             if frame != self.frame {
                 self.frame = frame;
                 self.frame_changed = now;
                 self.suspend(false);
+            } else if elapsed >= 2 * Timers::CRYSTAL_HZ {
+                // Allow for the 2.048 s frame-counter wrap when sampling resumes after a gap.
+                self.frame_changed = now;
             } else if now.wrapping_sub(self.frame_changed) >= Timers::CRYSTAL_HZ / 10 {
                 self.suspend(true);
             }
@@ -266,6 +277,7 @@ impl MidiDevice {
                 self.epoch = self.epoch.wrapping_add(1);
                 self.rx_pending = false;
                 self.suspended = false;
+                self.frame = controller::frame_number()?;
                 self.frame_changed = now;
                 self.frame_sample = now;
                 wr(INDEX, 0)?;

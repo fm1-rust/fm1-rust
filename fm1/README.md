@@ -39,7 +39,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
-| `board.take_usb()` | Call `into_midi(identity)` on the returned port to enumerate as a full-speed USB-MIDI 1.0 device with one input and one output. Poll the owned handle, receive up to 16 event packets at once, and retry the unsent suffix when the host is busy. |
+| `board.take_usb()` | Call `into_midi(identity)` on the returned port to enumerate as a full-speed USB-MIDI 1.0 device with one input and one output. Await USB0 activity with `async-usb`, or poll the owned handle. Receive up to 16 event packets at once and retry the unsent suffix when the host is busy. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
 By default audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
@@ -50,7 +50,13 @@ LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a missed deadline during preparation or copying.
 
 When initializing USB-MIDI, supply your application's USB vendor ID, product
-ID and descriptor strings to `into_midi`.
+ID and descriptor strings to `into_midi`. With `async-usb`, bind
+`fm1::usb_midi::on_usb0_interrupt` to CPU0's USB0 controller interrupt (IRQ 9)
+and call `device.wait_for_activity(&mut delay).await` in the owning task.
+The `embedded_hal_async::delay::DelayNs` provider handles attachment and retry.
+After a wake, check `device.session()`, receive packets, and retry pending sends.
+The task can also wake on locally produced output. An idle, configured device
+sleeps through start-of-frame traffic.
 
 ## Asynchronous LCD writes
 
