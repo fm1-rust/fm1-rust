@@ -1,6 +1,6 @@
 [package]
 name = "rticx-pi32v2"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "RTICX for CPU0 of the JieLi AC791N"
 license = "MIT"
@@ -16,7 +16,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 rticx-async = "0.2"
-rticx-pi32v2-macro = "0.1"
+rticx-pi32v2-macro = "0.1.1"
 
 [target.'cfg(target_arch = "pi32v2")'.dependencies]
 critical-section = { version = "1", features = ["restore-state-u32"] }

@@ -12,7 +12,7 @@ categories = ["embedded", "hardware-support", "no-std"]
 critical-section = "1"
 fm1 = "0.1.2"
 rtic-time = "3"
-rticx-pi32v2 = "0.1"
+rticx-pi32v2 = "0.1.1"
 rticx-pi32v2-macro = "0.1.1"
 
 [dev-dependencies]
