@@ -269,13 +269,13 @@ each example's required features.
 
 ## Use from another crate
 
-Add `fm1 = "0.1.1"` under `[dependencies]` in your application's
+Add `fm1 = "0.1.3"` under `[dependencies]` in your application's
 `Cargo.toml`, or create a new binary crate with the [published BSP][crate].
 
 ```sh
 cargo new --bin my-app
 cd my-app
-cargo add fm1@0.1.1
+cargo add fm1@0.1.3
 ```
 
 Keep the target specification in the application root so Cargo can load it
@@ -283,7 +283,7 @@ before building dependencies. The [blink example][blink-example] shows how
 to use `fm1::entry!` and supply a panic handler in `src/main.rs`.
 
 ```sh
-release=https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1/v0.1.1/fm1
+release=https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1/v0.1.3/fm1
 curl -fsSLo pi32v2-none.json "$release/targets/pi32v2-none.json"
 # For a new project, replace Cargo's generated main.rs with the blink example.
 curl -fsSLo src/main.rs "$release/examples/blink.rs"
@@ -393,7 +393,7 @@ from Charles Vestal’s [MPL-2.0 `fm1-base` touch library][touch-driver].
 [mpl]: https://www.mozilla.org/MPL/2.0/
 [blink-origin]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust
 [c-blink]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink
-[blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.1/fm1/examples/blink.rs
+[blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.3/fm1/examples/blink.rs
 [compiler-build]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust/README.md#the-patched-rustc
 [rust-fork]: https://github.com/jvitkauskas/pi32v2-rust/tree/3ee95ae1dfc454a3eca42af41db34e356d8ff658
 [llvm-tools]: https://github.com/jvitkauskas/pi32v2-llvm/releases/tag/pi32v2-23.1.5-5
