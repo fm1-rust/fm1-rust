@@ -27,7 +27,7 @@ set, run the example builds from the workspace root.
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
 | [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs. An async task consumes completed sweeps and updates the controls while another task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
-| [rticx-waveform](examples/rticx-waveform.rs) | Play a monophonic oscillator and see the samples sent to the DAC. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-waveform](examples/rticx-waveform.rs) | Play the WaveGraph monosynth. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
 
 The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
 frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
@@ -45,7 +45,7 @@ startup using the 24 MHz TIMER4 and are displayed in microseconds, rounded up.
 | `GAP` | Longest interval between consecutive serviced entries. Audio normally has 69,632 ticks (2.901 ms) between refills. The panel has 2,400 ticks (100 µs) between columns. Entry jitter can lengthen a gap even when both jobs finish on time. |
 | `COMMIT` | Longest time from audio handler entry until a successful DMA submission returned. Includes the input snapshot, preparing or copying the mix, MASTER gain and the DMA copy. Starts at zero until the first successful submission. |
 | `XR` | Serviced audio interrupts that reported a late refill, used a full period, or arrived at least two periods after the previous service. Several coalesced events can increment this counter once. |
-| `HIT US` | Waveform only. Peak entry-to-commit time for successful refills that used a prepared oscillator block. Starts at zero until the first hit. |
+| `HIT` | Waveform only. Peak entry-to-commit time for successful refills that used a prepared oscillator block. Starts at zero until the first hit. |
 | `MISS` | Waveform only. Number of refills that rendered the oscillator inline. Startup, control changes and a busy producer can each cause a miss. |
 
 The examples exercise different priority orders on CPU0. In the waveform demo,
@@ -57,19 +57,34 @@ needs bounds on shared-resource and interrupt masking time, interrupt overhead
 and task execution on the chip. TIMER4 sampling at entry cannot measure how
 long an interrupt was pending before the handler ran.
 
-The waveform starts on A4. The graph shows 224 consecutive left-channel samples
-(about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
-trace. A priority-2 async task renders the oscillator one 128-frame block ahead
-in a single 1 KiB stereo buffer. At each refill the priority-4 audio interrupt
-checks the block number, starting phase and current controls. On a match it
-uses the prepared samples. Otherwise it synthesizes that block inline, so
-a key press or STOP still takes effect on the same refill. Both paths apply
-MASTER gain and submit the block to DMA synchronously.
+The waveform starts on A4 with the dry route and DAC tap selected. While a note
+sounds, press **FX** to insert a half-gain stage. Press the **SEL button** to
+see the oscillator at full amplitude while the speaker still plays at half
+level. Press FX again to bypass the stage. The SELECT encoder still transposes.
+The two programs are decoded once and share the same monosynth. A controller
+task awaits the first successful DMA submission for each edit. Its receipt
+carries the block’s first frame on the render timeline. A late render advances
+that timeline and the edit is acknowledged on its next successful submission.
 
-After a successful refill the interrupt offers the left channel to a two-block queue.
+The scope shows 224 consecutive samples
+(about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
+trace. A priority-2 async task renders one 128-frame block ahead from a copy
+of the current monosynth. The priority-4 audio interrupt accepts the prepared
+block when its first frame, voice controls and FX route match. Otherwise it
+renders that block inline from the last committed oscillator state. Both
+paths apply MASTER gain before submitting to DMA. The prepared block keeps
+the raw oscillator bus, so SEL can switch taps on the same refill.
+
+After a successful refill the interrupt offers the selected mono signal to a two-block queue.
 A priority-2 async task finds the trigger and assembles the trace. If the queue
-fills or a refill is late, the next accepted block starts a new capture.
-The HOME view's `SCOPE DROP` counts submitted audio blocks the observer missed
+fills, a refill is late, or an edit takes effect, capture re-arms. The trace
+and its route and tap labels come from the same edit.
+On HOME, `EDIT` and `HIT` share a row and are in microseconds. `EDIT` is the
+peak time from a panel edit to successful DMA submission.
+`AGE` is the peak time from submission of the trigger block to completion of
+its trace paint. `GAP` on that row is the longest interval between completed
+paints of distinct traces. Both display measurements are in milliseconds.
+The HOME view's `DROP` counts submitted audio blocks the observer missed
 because its queue was full. Panel scanning runs at priority 3 and drawing at 1,
 so capture can continue during LCD startup and redraws. The renderer
 replaces changed tiles and prepares the next strip while SPI1 sends

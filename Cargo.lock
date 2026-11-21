@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,6 +239,8 @@ dependencies = [
  "rticx-pi32v2",
  "rticx-pi32v2-macro",
  "static_cell",
+ "wavegraph",
+ "wavegraph-monosynth",
 ]
 
 [[package]]
@@ -622,6 +630,29 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "wavegraph"
+version = "0.1.0"
+source = "git+https://github.com/fm1-rust/wavegraph?rev=6e4425cd1542b45dd86e460274a771cee29dc55d#6e4425cd1542b45dd86e460274a771cee29dc55d"
+dependencies = [
+ "arrayvec",
+ "wavegraph-core",
+ "wavegraph-sample",
+]
+
+[[package]]
+name = "wavegraph-core"
+version = "0.1.0"
+source = "git+https://github.com/fm1-rust/wavegraph?rev=6e4425cd1542b45dd86e460274a771cee29dc55d#6e4425cd1542b45dd86e460274a771cee29dc55d"
+
+[[package]]
+name = "wavegraph-monosynth"
+version = "0.1.0"
+dependencies = [
+ "wavegraph-core",
+ "wavegraph-sample",
+]
 
 [[package]]
 name = "wavegraph-sample"
