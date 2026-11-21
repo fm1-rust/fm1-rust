@@ -4,6 +4,22 @@ The [`fm1` crate](fm1/) is a bare-metal Rust board support package for the
 M-VAVE FM-1 synthesizer. It runs on CPU0 of the JieLi AC791N, uses
 `embedded-hal` 1.0 and needs no allocator.
 
+## Waveform demo
+
+The [`rticx-waveform` example](fm1-rticx/examples/rticx-waveform.rs) scans the
+front panel and streams stereo audio via DMA while an async RTICX task plots
+the samples on the LCD. Tap a piano key to set the pitch and turn **PRESETS**
+to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC**
+on screen, press **FX** to halve the output level and watch the trace shrink.
+
+![FM-1 emulator LCD showing a green A4 sine wave with the DAC output selected](docs/images/rticx-waveform.png)
+
+*LCD capture from [fm1-emu](https://github.com/joakimeriksson/fm1-emu).*
+
+[Build the example locally](fm1-rticx/README.md#examples) or get
+`rticx-waveform.fwsc` from the `fm1-rticx-firmware` artifact on a
+[successful CI run][fm1-rticx-ci].
+
 ## Crates
 
 | Crate | Description | crates.io | Documentation | Build status |
