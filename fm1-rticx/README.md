@@ -1,5 +1,7 @@
 # fm1-rticx
 
+[![Build status][ci-badge]][ci]
+
 Write an FM-1 application as interrupt handlers and async Rust tasks on CPU0.
 The crate provides the board entry point, the [FM-1 BSP](../fm1/) as `bsp`,
 and a TIMER5 clock for delays and timeouts. The
@@ -139,4 +141,13 @@ deadline. TIMER2 stops while the queue is empty. TIMER5 and panel scanning are
 optional. Schedule less than 2³¹ crystal cycles (about 89 s) ahead and advance
 periodic work from its previous deadline to carry phase across counter wrap.
 
+## License
+
+`fm1-rticx` is licensed under the [MIT License][mit]. Its `audio` feature
+enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
+lists the drivers and their upstream sources.
+
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/LICENSE
+[bsp-license]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/README.md#license

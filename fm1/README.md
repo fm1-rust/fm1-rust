@@ -1,5 +1,9 @@
 # `fm1`: Board Support Package for M-VAVE FM-1
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
+[![Build status][ci-badge]][ci]
+
 A `no_std`, allocation-free board support package for the M-VAVE FM-1.
 Pass a function of type `fn(fm1::Board) -> !` to `fm1::entry!`. Startup sets
 up the CPU0 stacks, initializes RAM and hands the application exclusive
@@ -42,6 +46,9 @@ Audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
 of 24 MHz / 544. Submit a prepared block with `try_write`. A long blocking
 LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a boundary crossed during the copy.
+
+When initializing USB-MIDI, supply your application's USB vendor ID, product
+ID and descriptor strings to `into_midi`.
 
 ## Panel controls
 
@@ -203,33 +210,38 @@ Select the resulting `.fwsc` file in [M-Flasher][flasher].
 
 ## License
 
-Licensed under the * [MIT license](http://opensource.org/licenses/MIT).
+Original BSP code is licensed under the [MIT License][mit].
 
-Julius Vitkauskas wrote the original [`fm1-blink-rust` example][blink-origin],
-a Rust port of his [C blink example][c-blink]. The BSP adapts his PLAY wiring,
-timer interrupt, return-to-bootloader sequence and ST7789 bring-up. The
-startup assembly, linker layout and pi32v2 target also come from that work,
-licensed under MIT-0.
+Julius Vitkauskas’s [Rust blink example][blink-origin] and its [C predecessor][c-blink]
+supply the startup assembly, linker layout, pi32v2 target, timer interrupt,
+PLAY wiring, return-to-bootloader sequence and ST7789 bring-up. His [MIT-0
+license][mit-0] permits us to distribute these adaptations under MIT.
 
-The panel matrix and headphone switch wiring follow [felucca-bsp][felucca].
-The scanner follows the MPL-2.0 [Felucca inputs and ADC][panel-driver] and the
-physical control names in [fm1-base][panel-labels]. The green PLAY indicator
-uses the position measured by [Araminta][play-green]. Piano expression uses the
-row-drive and probe wiring from Felucca and the strike curves from Charles
-Vestal’s [fm1-base touch library][touch-driver].
-The optional audio module ports its MPL-2.0 driver by Leo Kuroshita
-(Hügelton Instruments) and Kerem Kilic (Ellic Studio). Repository integration
-is MIT-licensed.
+`fm1` incorporates Rust code adapted from Felucca’s C headers under the
+[Mozilla Public License 2.0][mpl]. The default build uses the [panel input
+scanner][panel-driver], [ADC setup][adc-driver] and [USB controller][usb-controller],
+along with Felucca’s [USB endpoint driver][usb-driver]. The `audio` feature
+enables the port of the [ALNK0 audio driver][audio-driver] by Leo Kuroshita
+(Hügelton Instruments) and Kerem Kilic (Ellic Studio).
 
-The USB-MIDI module ports the device controller and endpoint handling from
-[Felucca’s MPL-2.0 USB driver][usb-driver]. Applications supply their own USB
-vendor and product IDs and descriptor strings.
+The panel matrix and headphone switch wiring follow the [Felucca board map][felucca].
+The physical control names follow [Charles Vestal’s panel map][panel-labels].
+The green PLAY indicator uses the position measured by [Araminta][play-green].
+Piano expression uses Felucca’s row-drive and probe wiring and the strike curves
+from Charles Vestal’s [MPL-2.0 `fm1-base` touch library][touch-driver].
 
+[crate-badge]: https://img.shields.io/crates/v/fm1?logo=rust
+[crate]: https://crates.io/crates/fm1
+[docs-badge]: https://docs.rs/fm1/badge.svg
+[docs]: https://docs.rs/fm1/
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml/badge.svg?branch=main&event=push
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/LICENSE
+[mit-0]: https://spdx.org/licenses/MIT-0.html
+[mpl]: https://www.mozilla.org/MPL/2.0/
 [blink-origin]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust
 [c-blink]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink
 [blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.1/fm1/examples/blink.rs
-[crate]: https://crates.io/crates/fm1/0.1.1
-[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
 [compiler-build]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust/README.md#the-patched-rustc
 [rust-fork]: https://github.com/jvitkauskas/pi32v2-rust/tree/3ee95ae1dfc454a3eca42af41db34e356d8ff658
 [llvm-tools]: https://github.com/jvitkauskas/pi32v2-llvm/releases/tag/pi32v2-23.1.5-5
@@ -237,9 +249,10 @@ vendor and product IDs and descriptor strings.
 [flasher]: https://github.com/jvitkauskas/m-flasher/blob/main/docs/usage.md
 [felucca]: https://github.com/hugelton/felucca-bsp/tree/2a5af3dfc8bccb92e37d48a3e7e0bf9a5827e51f/boards/fm1
 [play-green]: https://github.com/Wulgaren/Araminta/blob/62911ec19b1010b16d2ab508e91eed08775386e6/firmware/src/ui_input.c#L29-L30
-
+[adc-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1/fm1_adc.h
+[audio-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1/fm1_audio.h
+[usb-controller]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/chip/fm1_usb.h
 [usb-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/chip/usb.c
-[panel-driver]: https://github.com/hugelton/felucca-bsp/tree/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1
+[panel-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1/fm1_input.h
 [panel-labels]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/device/panel.c
-
 [touch-driver]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/lib/touch.c
