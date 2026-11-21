@@ -1,26 +1,9 @@
-use fm1_audio::{FRAME_RATE, OUTPUT_FRAMES, OutputBlock};
+use crate::pitch::phase_steps;
+use fm1_audio::{OUTPUT_FRAMES, OutputBlock};
 use fm1_rticx::bsp::panel::PianoKey;
 
 // Equal-tempered F3 through G5 at A4 = 440 Hz.
 const STEPS: [u32; PianoKey::COUNT as usize] = phase_steps(174.614_115_716_502);
-
-// Equal-tempered phase increments for the BSP frame rate, starting at first_hz.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "Every rounded phase increment is positive and fits in u32."
-)]
-const fn phase_steps<const N: usize>(first_hz: f64) -> [u32; N] {
-    let mut steps = [0; N];
-    let mut step = first_hz * 4_294_967_296.0 * FRAME_RATE.1 as f64 / FRAME_RATE.0 as f64;
-    let mut i = 0;
-    while i < steps.len() {
-        steps[i] = (step + 0.5) as u32;
-        step *= 1.059_463_094_359_295_3; // 2^(1/12)
-        i = i.wrapping_add(1);
-    }
-    steps
-}
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Synth {
@@ -69,6 +52,7 @@ impl Synth {
 mod tests {
     use super::*;
     use crate::pitch::{midi_note, note_name};
+    use fm1_audio::FRAME_RATE;
 
     const SILENT: crate::midi::Velocities = [0; PianoKey::COUNT as usize];
 

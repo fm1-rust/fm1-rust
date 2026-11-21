@@ -1,4 +1,4 @@
-//! Live WaveGraph routing and a selectable oscilloscope on the FM-1.
+//! A four-waveform oscillator and a selectable oscilloscope on the FM-1.
 #![allow(
     missing_docs,
     reason = "RTICX generates public task traits and initialisers."
@@ -6,9 +6,6 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
-#[cfg(any(target_os = "none", test))]
-#[path = "rticx-waveform/graph.rs"]
-mod graph;
 #[cfg(any(target_os = "none", test))]
 #[path = "common/pitch.rs"]
 mod pitch;
@@ -26,12 +23,11 @@ mod voice;
 #[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
 mod app {
     use crate::{
-        graph::{Applied, AudioEdits, Buses, Controller, Graph, Selection},
-        render::{PreparedBlock, RenderJob, Renderer},
+        render::{PreparedBlock, RenderRequest},
         timing::{PanelReport, PanelTiming, TimingFooter},
-        voice::{Capture, HEIGHT, ScopeBlock, Trace, Voice, WIDTH},
+        voice::{Capture, HEIGHT, Samples, ScopeBlock, Selection, Trace, Voice, WIDTH},
     };
-    use fm1_audio::{I24, MasterLevel, OUTPUT_FRAMES, Output, Refill, Stats};
+    use fm1_audio::{MasterLevel, OUTPUT_FRAMES, Output, Refill, Stats};
     use fm1_graphics::{TextGrid, Waveform, palette};
     use fm1_rticx::{
         bsp::{
@@ -47,11 +43,13 @@ mod app {
         },
         time::{Clock, Timer5},
     };
-    use static_cell::StaticCell;
+    use static_cell::{ConstStaticCell, StaticCell};
+
+    type RenderJob = (RenderRequest, &'static mut Samples);
 
     #[shared]
     struct Shared {
-        voice: Voice,
+        settings: (Voice, Selection),
         frame: Frame,
         audio_report: AudioReport,
         prepared: Option<PreparedBlock<'static>>,
@@ -63,6 +61,7 @@ mod app {
         scope_drops: u32,
         fallbacks: u32,
         peak_hit_ticks: u32,
+        peak_edit_ticks: u32,
     }
 
     impl AudioReport {
@@ -97,7 +96,6 @@ mod app {
         trace: Trace,
         trace_start: Option<u32>,
         selection: Selection,
-        peak_edit_ticks: u32,
         panel: PanelReport,
         ready: Sender<'static, (), 1>,
     }
@@ -106,24 +104,18 @@ mod app {
     fn init() -> (Shared, TaskInits) {
         let board = Board::take().expect("CPU0 board");
         let voice = Voice::default();
-        static GRAPH: StaticCell<Graph> = StaticCell::new();
-        static AUDIO_BUSES: StaticCell<Buses> = StaticCell::new();
-        static PREPARE_BUSES: StaticCell<Buses> = StaticCell::new();
-        let silence = || [[I24::default(); OUTPUT_FRAMES]; 2];
-        let graph = GRAPH.init_with(Graph::new);
-        let (renders, jobs) = make_channel!(RenderJob<'static>, 1);
+        static OSCILLATOR: ConstStaticCell<Samples> = ConstStaticCell::new([0; OUTPUT_FRAMES]);
+        static SPARE: ConstStaticCell<Samples> = ConstStaticCell::new([0; OUTPUT_FRAMES]);
+        let (renders, jobs) = make_channel!(RenderJob, 1);
         let (ready, updates) = make_channel!((), 1);
         let (tap, blocks) = make_channel!(ScopeBlock, 2);
-        let (changes, gestures) = make_channel!((Selection, u32), 1);
-        let (requests, edits) = make_channel!(Selection, 1);
-        let (receipts, applied) = make_channel!(Applied, 1);
         let timers = Clock::start(board.timers.with_panel_scan_rate());
         let delay = timers.clock();
         let mut leds = Leds::default();
         leds.set_play(PlayLedState::Green);
         (
             Shared {
-                voice,
+                settings: (voice, Selection::default()),
                 audio_report: AudioReport::default(),
                 prepared: None,
                 frame: Frame {
@@ -131,7 +123,6 @@ mod app {
                     trace: [64; WIDTH],
                     trace_start: None,
                     selection: Selection::default(),
-                    peak_edit_ticks: 0,
                     panel: PanelReport::default(),
                     ready: ready.clone(),
                 },
@@ -139,20 +130,16 @@ mod app {
             TaskInits {
                 audio: Audio {
                     output: Output::start(board.audio).expect("audio clock"),
-                    graph,
-                    renderer: Renderer::new(AUDIO_BUSES.init_with(silence)),
-                    spare: Some(Renderer::new(PREPARE_BUSES.init_with(silence))),
+                    next: RenderRequest::new(voice),
+                    oscillator: OSCILLATOR.take(),
+                    spare: Some(SPARE.take()),
                     renders,
-                    edits: AudioEdits::new(edits, receipts),
+                    applied: Selection::default(),
                     tap,
                     gap: false,
                     redraw: ready,
                 },
-                prepare: Prepare { graph, jobs },
-                edit: Edit {
-                    gestures,
-                    control: Controller::new(requests, applied),
-                },
+                prepare: Prepare { jobs },
                 observe: Observe {
                     blocks,
                     capture: Capture::new(),
@@ -165,8 +152,6 @@ mod app {
                     voice,
                     octave_since: None,
                     selection: Selection::default(),
-                    pending: None,
-                    changes,
                 },
                 draw: Draw {
                     port: Some(board.display),
@@ -179,13 +164,12 @@ mod app {
 
     #[post_init]
     fn start() {
-        Prepare::spawn(()).expect("one graph producer");
-        Edit::spawn(()).expect("one graph controller");
+        Prepare::spawn(()).expect("one oscillator producer");
         Observe::spawn(()).expect("one audio observer");
         Draw::spawn(()).expect("one scope renderer");
     }
 
-    #[task(binds = TIMER5, priority = 3, shared = [voice, frame])]
+    #[task(binds = TIMER5, priority = 3, shared = [settings, frame])]
     struct Panel {
         timers: Timer5,
         controls: Controls,
@@ -194,8 +178,6 @@ mod app {
         voice: Voice,
         octave_since: Option<u32>,
         selection: Selection,
-        pending: Option<(Selection, u32)>,
-        changes: Sender<'static, (Selection, u32), 1>,
     }
     impl RticTask for Panel {
         fn exec(&mut self) {
@@ -221,7 +203,7 @@ mod app {
                     Event::Turned {
                         encoder: Encoder::Presets,
                         detents,
-                    } => self.voice.turn_preset(detents),
+                    } => self.voice.wave = self.voice.wave.turn(detents),
                     Event::Turned {
                         encoder: Encoder::Select,
                         detents,
@@ -248,17 +230,11 @@ mod app {
                 }
             }
             if self.selection != previous_selection {
-                self.pending = Some((self.selection, cycles()));
+                self.selection.changed_at = cycles();
             }
-            // If the controller is occupied, retry the latest gesture on the next sweep.
-            if let Some(change) = self.pending
-                && self.changes.try_send(change).is_ok()
-            {
-                self.pending = None;
-            }
-            if self.voice != before {
-                let next = self.voice;
-                self.shared().voice.lock(|v| *v = next);
+            if self.voice != before || self.selection != previous_selection {
+                let settings = (self.voice, self.selection);
+                self.shared().settings.lock(|s| *s = settings);
             }
             if scan.is_down(Button::OctaveDown) && scan.is_down(Button::OctaveUp) {
                 let now = ticks();
@@ -274,46 +250,26 @@ mod app {
 
     #[async_task(priority = 2, shared = [prepared])]
     struct Prepare {
-        graph: &'static Graph,
-        jobs: Receiver<'static, RenderJob<'static>, 1>,
+        jobs: Receiver<'static, RenderJob, 1>,
     }
     impl RticAsyncTask for Prepare {
         type SpawnInput = ();
         async fn exec(&mut self, (): ()) {
-            while let Ok(job) = self.jobs.recv().await {
-                let block = job.prepare(self.graph);
+            while let Ok((request, samples)) = self.jobs.recv().await {
+                let block = request.prepare(samples);
                 self.shared().prepared.lock(|slot| *slot = Some(block));
             }
         }
     }
 
-    #[async_task(priority = 2, shared = [frame])]
-    struct Edit {
-        gestures: Receiver<'static, (Selection, u32), 1>,
-        control: Controller<'static>,
-    }
-    impl RticAsyncTask for Edit {
-        type SpawnInput = ();
-        async fn exec(&mut self, (): ()) {
-            while let Ok((selection, requested_at)) = self.gestures.recv().await {
-                let applied = self.control.commit(selection).await;
-                self.shared().frame.lock(|f| {
-                    f.peak_edit_ticks = f
-                        .peak_edit_ticks
-                        .max(applied.submitted_at.wrapping_sub(requested_at));
-                });
-            }
-        }
-    }
-
-    #[task(binds = ALNK0, priority = 4, shared = [voice, audio_report, prepared])]
+    #[task(binds = ALNK0, priority = 4, shared = [settings, audio_report, prepared])]
     struct Audio {
         output: Output,
-        graph: &'static Graph,
-        renderer: Renderer<'static>,
-        spare: Option<Renderer<'static>>,
-        renders: Sender<'static, RenderJob<'static>, 1>,
-        edits: AudioEdits<'static>,
+        next: RenderRequest,
+        oscillator: &'static mut Samples,
+        spare: Option<&'static mut Samples>,
+        renders: Sender<'static, RenderJob, 1>,
+        applied: Selection,
         tap: Sender<'static, ScopeBlock, 2>,
         gap: bool,
         redraw: Sender<'static, (), 1>,
@@ -322,20 +278,20 @@ mod app {
         fn exec(&mut self) {
             let started = cycles();
             let mut shared = self.shared();
-            let voice = shared.voice.lock(|v| *v);
-            let selection = self.edits.selection();
-            let request = self.edits.render_request(voice, selection);
+            let (voice, selection) = shared.settings.lock(|s| *s);
+            self.next.voice = voice;
             let mut hit = false;
             let result = self.output.render(MasterLevel::MAX, |block| {
-                let ready = shared.prepared.lock(Option::take);
-                let (matched, spare) = self.renderer.refill(self.graph, request, ready, block);
-                hit = matched;
-                if spare.is_some() {
-                    self.spare = spare;
+                let mut ready = shared.prepared.lock(Option::take);
+                hit = self
+                    .next
+                    .render_and_advance(&mut self.oscillator, ready.as_mut());
+                if let Some(ready) = ready {
+                    self.spare = Some(ready.samples);
                 }
+                selection.write_stereo(self.oscillator, block);
             });
             let refill_ended = cycles();
-            let applied = self.edits.finish(result, refill_ended);
             let dropped = match result {
                 Refill::WouldBlock => return,
                 Refill::Late => false,
@@ -344,9 +300,9 @@ mod app {
                 Refill::Written => {
                     let block = ScopeBlock::new(
                         self.output.block(),
-                        self.renderer.oscillator(),
+                        self.oscillator,
                         voice,
-                        applied,
+                        selection,
                         refill_ended,
                         self.gap,
                     );
@@ -354,18 +310,23 @@ mod app {
                 }
             };
             self.gap = dropped || result == Refill::Late;
-            if let Some(spare) = self.spare.take() {
-                let next = self.edits.render_request(voice, selection);
-                let job = self.renderer.job(next, spare);
-                if let Err(TrySendError::Full(job) | TrySendError::NoReceiver(job)) =
-                    self.renders.try_send(job)
-                {
-                    self.spare = Some(job.renderer);
-                }
+            // A job owns the spare buffer until the ISR consumes or rejects its prediction.
+            if let Some(samples) = self.spare.take()
+                && let Err(
+                    TrySendError::Full((_, samples)) | TrySendError::NoReceiver((_, samples)),
+                ) = self.renders.try_send((self.next, samples))
+            {
+                self.spare = Some(samples);
             }
-            let notify = shared
-                .audio_report
-                .lock(|report| report.record(started, refill_ended, result, dropped, hit));
+            let notify = shared.audio_report.lock(|report| {
+                if result == Refill::Written && self.applied != selection {
+                    self.applied = selection;
+                    report.peak_edit_ticks = report
+                        .peak_edit_ticks
+                        .max(refill_ended.wrapping_sub(selection.changed_at));
+                }
+                report.record(started, refill_ended, result, dropped, hit)
+            });
             if notify {
                 let _ = self.redraw.try_send(());
             }
@@ -388,7 +349,7 @@ mod app {
                         frame.voice = block.voice;
                         frame.trace = trace;
                         frame.trace_start = Some(started_at);
-                        frame.selection = block.applied.selection;
+                        frame.selection = block.selection;
                         let _ = frame.ready.try_send(());
                     });
                 }
@@ -433,17 +394,10 @@ mod app {
             let mut peak_paint_gap = 0;
             loop {
                 self.updates.recv().await.expect("frame owns sender");
-                let (voice, trace, trace_start, selection, edit_ticks, panel) =
-                    self.shared().frame.lock(|f| {
-                        (
-                            f.voice,
-                            f.trace,
-                            f.trace_start,
-                            f.selection,
-                            f.peak_edit_ticks,
-                            f.panel,
-                        )
-                    });
+                let (voice, trace, trace_start, selection, panel) = self
+                    .shared()
+                    .frame
+                    .lock(|f| (f.voice, f.trace, f.trace_start, f.selection, f.panel));
                 let report = self.shared().audio_report.lock(|report| *report);
                 let home = footer.draw(text, panel, &report.stats);
                 if timing_page != home {
@@ -458,7 +412,9 @@ mod app {
                         4,
                         0,
                         5,
-                        edit_ticks.div_ceil(Timers::CRYSTAL_HZ / 1_000_000),
+                        report
+                            .peak_edit_ticks
+                            .div_ceil(Timers::CRYSTAL_HZ / 1_000_000),
                         palette::WHITE,
                     );
                     text.text(9, 0, b" HIT", palette::MUTED);
@@ -483,7 +439,7 @@ mod app {
                     text.number(12, 2, 5, ms(peak_paint_gap), palette::WHITE);
                     text.text(18, 2, b"MS", palette::MUTED);
                 } else {
-                    text.text(0, 0, voice.label(), palette::CYAN);
+                    text.text(0, 0, voice.wave.label(), palette::CYAN);
                     text.text(
                         16,
                         0,
