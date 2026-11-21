@@ -211,6 +211,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal",
  "embedded-hal-async",
+ "heapless 0.9.4",
  "mipidsi",
  "oxstack-gfx",
 ]
@@ -253,6 +254,7 @@ dependencies = [
  "rtic-time",
  "rticx-pi32v2",
  "rticx-pi32v2-macro",
+ "rtt-target",
  "static_cell",
 ]
 
@@ -652,6 +654,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtt-target"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7afed1f4302eeba88c601636cf2c554c45e1cbb464bab44c6012bab0e71473c"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+ "ufmt-write",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -819,6 +832,12 @@ dependencies = [
  "tracing-core",
  "tracing-log",
 ]
+
+[[package]]
+name = "ufmt-write"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
 
 [[package]]
 name = "unicode-ident"

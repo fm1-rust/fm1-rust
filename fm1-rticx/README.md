@@ -113,6 +113,28 @@ shows how hard that note is being held, or `--` after release and for a physical
 key without pressure sensing. Pressing harder brings that voice up in the local
 stereo mix.
 
+### Read a log over USB
+
+Build `./fm1/scripts/build-example.sh usb-log` and install
+`target/firmware/usb-log.fwsc` with M-Flasher. Connect the USB data cable and
+tap PLAY. Run the reader from the workspace root.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install python-rtmidi
+.venv/bin/python fm1/scripts/read-usb-log.py
+```
+
+The example leaves the screen dark. Startup logs `ready`, a press logs
+`play+`, and release logs `play-`. Hold PLAY for two seconds to return to
+download mode. The reader accepts both `FM-1 USB Log` and `FM-1 MIDI Piano`
+because the examples share a USB identity.
+
+The `usb-log` feature forwards to the [BSP USB log](../fm1/#usb-debug-log).
+The independent `rtt` feature provides `fm1_rticx::rtt::init()`, which
+allocates a 256-byte nonblocking RTT up-channel. This example uses both and
+the host reader communicates entirely over USB-MIDI.
+
 ### Record and play a MIDI clip
 
 Connect the piano to a computer with a USB data cable. The USB indicator changes from `USB-` to
