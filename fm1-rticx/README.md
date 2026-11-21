@@ -1,6 +1,13 @@
-# fm1-rticx
+# FM-1 RTICX Support
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
 [![Build status][ci-badge]][ci]
+
+Concurrency, interrupt handling, and async support for the M-VAVE FM-1 using
+the [RTICX] realtime framework.
+
+## About
 
 Write an FM-1 application as interrupt handlers and async Rust tasks on CPU0.
 The crate provides the board entry point, the [FM-1 BSP](../fm1/) as `bsp`,
@@ -218,9 +225,14 @@ periodic work from its previous deadline to carry phase across counter wrap.
 enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
 lists the drivers and their upstream sources.
 
+[RTICX]: https://github.com/rticx-rs/rticx
 [waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1-rticx/examples/rticx-waveform.rs
 [standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1/README.md#use-from-another-crate
 [target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.0/fm1/targets/pi32v2-none.json
+[crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
+[crate]: https://crates.io/crates/fm1-rticx
+[docs-badge]: https://docs.rs/fm1-rticx/badge.svg
+[docs]: https://docs.rs/fm1-rticx/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/LICENSE

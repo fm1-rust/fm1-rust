@@ -1,6 +1,12 @@
-# FM-1 audio
+# FM-1 Audio
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
 [![Build status][ci-badge]][ci]
+
+Extended audio functionality for the M-VAVE FM-1.
+
+## About
 
 `fm1-audio` re-exports the BSP's `fm1::audio` API and adds a 128-frame stereo
 output with a software mixer for the M-VAVE FM-1. It runs without an allocator.
@@ -38,7 +44,18 @@ again when `Output::render` returns and pass both timestamps to
 `Stats::record_with_refill` at the end of service. The RTICX waveform and
 piano examples display these measurements while HOME is held.
 
+## License
+
+Licensed under the [MIT License][mit]. This crate enables the BSP’s MPL-2.0
+audio driver. See the [BSP license section][bsp-license] for details.
+
+[crate-badge]: https://img.shields.io/crates/v/fm1-audio?logo=rust
+[crate]: https://crates.io/crates/fm1-audio
+[docs-badge]: https://docs.rs/fm1-audio/badge.svg
+[docs]: https://docs.rs/fm1-audio/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml
 [teardown]: https://note.com/kurogedelix/n/n225a8e2374cd?hl=en
 [specs]: https://www.cuvave.com/product?id=fm-1
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-audio/LICENSE
+[bsp-license]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/README.md#license

@@ -1,6 +1,12 @@
-# FM-1 graphics
+# FM-1 Graphics
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
 [![Build status][ci-badge]][ci]
+
+Extended high-performance graphics support for the M-VAVE FM-1.
+
+## About
 
 `fm1-graphics` provides a text grid for instrument readouts and an oscilloscope
 plot for the M-VAVE FM-1. Both render into small RGB565 rectangles and send
@@ -42,5 +48,14 @@ its entire rectangle. Place the text you update outside that rectangle.
 For proportional layouts, other fonts and general drawing primitives, the
 BSP also exposes `embedded-graphics` through its optional feature.
 
+## License
+
+Licensed under the [MIT License][mit].
+
+[crate-badge]: https://img.shields.io/crates/v/fm1-graphics?logo=rust
+[crate]: https://crates.io/crates/fm1-graphics
+[docs-badge]: https://docs.rs/fm1-graphics/badge.svg
+[docs]: https://docs.rs/fm1-graphics/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-graphics.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-graphics/LICENSE
