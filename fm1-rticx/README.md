@@ -43,8 +43,10 @@ startup using the 24 MHz TIMER4 and are displayed in microseconds, rounded up.
 | --- | --- |
 | `WORK` | Longest elapsed time from Rust handler entry to its final timing sample, including preemption. The audio sample follows the output taps. The panel sample includes the complete column service, including end-of-sweep processing. A value turns red if it reaches the period. |
 | `GAP` | Longest interval between consecutive serviced entries. Audio normally has 69,632 ticks (2.901 ms) between refills. The panel has 2,400 ticks (100 µs) between columns. Entry jitter can lengthen a gap even when both jobs finish on time. |
-| `COMMIT` | Longest time from audio handler entry until a successful DMA submission returned. Includes the input snapshot, synthesis, MASTER gain and DMA copy. Starts at zero until the first successful submission. |
+| `COMMIT` | Longest time from audio handler entry until a successful DMA submission returned. Includes the input snapshot, preparing or copying the mix, MASTER gain and the DMA copy. Starts at zero until the first successful submission. |
 | `XR` | Serviced audio interrupts that reported a late refill, used a full period, or arrived at least two periods after the previous service. Several coalesced events can increment this counter once. |
+| `HIT US` | Waveform only. Peak entry-to-commit time for successful refills that used a prepared oscillator block. Starts at zero until the first hit. |
+| `MISS` | Waveform only. Number of refills that rendered the oscillator inline. Startup, control changes and a busy producer can each cause a miss. |
 
 The examples exercise different priority orders on CPU0. In the waveform demo,
 audio (4) can interrupt the panel (3). In the piano demo, the panel (4) can
@@ -57,8 +59,14 @@ long an interrupt was pending before the handler ran.
 
 The waveform starts on A4. The graph shows 224 consecutive left-channel samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
-trace. The priority-4 audio interrupt submits each DAC refill synchronously.
-After a successful refill it offers the left channel to a two-block queue.
+trace. A priority-2 async task renders the oscillator one 128-frame block ahead
+in a single 1 KiB stereo buffer. At each refill the priority-4 audio interrupt
+checks the block number, starting phase and current controls. On a match it
+uses the prepared samples. Otherwise it synthesizes that block inline, so
+a key press or STOP still takes effect on the same refill. Both paths apply
+MASTER gain and submit the block to DMA synchronously.
+
+After a successful refill the interrupt offers the left channel to a two-block queue.
 A priority-2 async task finds the trigger and assembles the trace. If the queue
 fills or a refill is late, the next accepted block starts a new capture.
 The HOME view's `SCOPE DROP` counts submitted audio blocks the observer missed
