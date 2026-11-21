@@ -15,6 +15,9 @@ mod pitch;
 #[cfg(any(target_os = "none", test))]
 #[path = "rticx-piano/synth.rs"]
 mod synth;
+#[cfg(any(target_os = "none", test))]
+#[path = "common/timing.rs"]
+mod timing;
 
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
@@ -24,6 +27,7 @@ mod app {
         midi::{Notes, Output},
         pitch::{midi_note, note_name},
         synth::Synth,
+        timing::{PanelReport, PanelTiming, TimingFooter},
     };
     use fm1_audio::{MasterLevel, Output as AudioOutput, Stats};
     use fm1_graphics::{TextGrid, palette};
@@ -53,6 +57,7 @@ mod app {
         last: Option<PianoKey>,
         last_velocity: u8,
         master: Option<MasterLevel>,
+        panel: PanelReport,
     }
 
     impl Keyboard {
@@ -131,6 +136,15 @@ mod app {
                 let i = usize::from(key.index());
                 screen.text((i % 5) * 4, 5 + i / 5, &note_name(midi_note(key)), ink);
             }
+        }
+
+        fn draw_footer(&self, screen: &mut TextGrid) {
+            screen.text(7, 11, b"MAX", palette::MUTED);
+            screen.text(18, 11, b"US", palette::MUTED);
+            screen.text(0, 12, b"MASTER", palette::WHITE);
+            screen.text(11, 12, b"/1023", palette::MUTED);
+            screen.text(0, 13, b"MISSED", palette::MUTED);
+            screen.text(0, 14, b"OCT-/+ 2S USB   HOME", palette::MUTED);
             let (worst, missed) = self.clock_stats;
             screen.text(
                 0,
@@ -193,6 +207,7 @@ mod app {
                 panel: Panel {
                     controls,
                     timer,
+                    timing: PanelTiming::default(),
                     lit: 0,
                     leds: Leds::default(),
                     octave_since: None,
@@ -226,16 +241,25 @@ mod app {
     struct Panel {
         controls: TouchControls,
         timer: Timer5,
+        timing: PanelTiming,
         lit: u32,
         leds: Leds,
         octave_since: Option<u32>,
     }
     impl RticTask for Panel {
         fn exec(&mut self) {
+            let started = cycles();
+            let home = self.scan();
+            if let Some(report) = self.timing.record(started, cycles(), home) {
+                self.shared().keyboard.lock(|k| k.panel = report);
+            }
+        }
+    }
+
+    impl Panel {
+        fn scan(&mut self) -> Option<bool> {
             self.timer.on_interrupt();
-            let Some((scan, touch)) = self.controls.scan(&self.leds) else {
-                return;
-            };
+            let (scan, touch) = self.controls.scan(&self.leds)?;
             let (held, playing) = self.shared().keyboard.lock(|keyboard| {
                 keyboard.update(&scan, &touch);
                 (keyboard.held(), keyboard.clock_playing)
@@ -259,6 +283,7 @@ mod app {
             } else {
                 self.octave_since = None;
             }
+            Some(scan.is_down(Button::Home))
         }
     }
 
@@ -279,9 +304,10 @@ mod app {
                 .render(master.unwrap_or(MasterLevel::MIN), |block| {
                     self.synth.render(&physical.levels(&remote), block);
                 });
+            let refill_ended = cycles();
             self.shared()
                 .audio_stats
-                .lock(|stats| stats.record(started, result));
+                .lock(|stats| stats.record_with_refill(started, refill_ended, result));
         }
     }
 
@@ -364,6 +390,7 @@ mod app {
                 return;
             };
             let mut screen = TextGrid::new();
+            let mut footer = TimingFooter::default();
             if display.fill_rect(0, 0, SIZE, SIZE, 0).is_err() {
                 return;
             }
@@ -378,16 +405,13 @@ mod app {
             screen.text(0, 4, b"VEL", palette::MUTED);
             screen.text(9, 4, b"PRESS", palette::MUTED);
             screen.text(17, 3, b"/27", palette::MUTED);
-            screen.text(7, 11, b"MAX", palette::MUTED);
-            screen.text(18, 11, b"US", palette::MUTED);
-            screen.text(0, 12, b"MASTER", palette::WHITE);
-            screen.text(0, 13, b"MISSED", palette::MUTED);
-            screen.text(11, 12, b"/1023", palette::MUTED);
-            screen.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
             loop {
                 let keyboard = self.shared().keyboard.lock(|k| *k);
                 keyboard.draw(&mut screen);
                 let stats = self.shared().audio_stats.lock(|stats| *stats);
+                if !footer.draw(&mut screen, keyboard.panel, &stats) {
+                    keyboard.draw_footer(&mut screen);
+                }
                 screen.number(4, 1, 4, stats.peak_ticks.div_ceil(24), palette::WHITE);
                 screen.number(14, 1, 6, stats.overruns, palette::WHITE);
                 if stats.overruns != 0 {
