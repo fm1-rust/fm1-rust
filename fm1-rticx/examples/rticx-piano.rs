@@ -25,18 +25,18 @@ mod app {
         pitch::{midi_note, note_name},
         synth::Synth,
     };
+    use fm1_audio::{MasterLevel, Output as AudioOutput, Stats};
     use fm1_graphics::{TextGrid, palette};
     use fm1_rticx::{
         bsp::{
             Board,
-            audio::{BLOCK_FRAMES, Block, Refill, Stream},
             display::{DisplayPort, SIZE, SpiClock},
             enter_download_mode,
             panel::{
-                Button, Event, Leds, MasterLevel, PianoKey, PianoTouch, PlayLedState, Scan, Switch,
+                Button, Event, Leds, PianoKey, PianoTouch, PlayLedState, Scan, Switch,
                 TouchControls,
             },
-            time::{Timers, ticks},
+            time::{Timers, cycles, ticks},
             usb_midi::{Identity, MidiDevice, PacketBuffer},
         },
         time::{Clock, DeadlineClock, ExtU32, Timebase, Timer5},
@@ -163,7 +163,7 @@ mod app {
     #[shared]
     struct Shared {
         keyboard: Keyboard,
-        late: bool,
+        audio_stats: Stats,
     }
 
     #[init]
@@ -181,13 +181,13 @@ mod app {
             });
         DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
         let controls = board.panel.into_touch_controls();
-        let stream = board.audio.into_stream().expect("audio clock");
+        let audio_output = AudioOutput::start(board.audio).expect("audio clock");
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         let keyboard = Keyboard::default();
         (
             Shared {
                 keyboard,
-                late: false,
+                audio_stats: Stats::default(),
             },
             TaskInits {
                 panel: Panel {
@@ -205,9 +205,8 @@ mod app {
                     output: Output::new(),
                 },
                 audio: Audio {
-                    stream,
+                    output: audio_output,
                     synth: Synth::default(),
-                    block: [[0; 2]; BLOCK_FRAMES],
                 },
                 draw: Draw {
                     port: Some(board.display),
@@ -263,30 +262,26 @@ mod app {
         }
     }
 
-    #[task(binds = ALNK0, priority = 3, shared = [keyboard, late])]
+    #[task(binds = ALNK0, priority = 3, shared = [keyboard, audio_stats])]
     struct Audio {
-        stream: Stream<'static>,
+        output: AudioOutput,
         synth: Synth,
-        block: Block,
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
+            let started = cycles();
             let (physical, remote, master) = self
                 .shared()
                 .keyboard
                 .lock(|k| (k.physical, k.remote, k.master));
-            let mut synth = self.synth;
-            synth.render(
-                &physical.levels(&remote),
-                master.unwrap_or(MasterLevel::MIN),
-                &mut self.block,
-            );
-            match self.stream.try_write(&self.block) {
-                Refill::Written => {}
-                Refill::WouldBlock => return,
-                Refill::Late => self.shared().late.lock(|late| *late = true),
-            }
-            self.synth = synth;
+            let result = self
+                .output
+                .render(master.unwrap_or(MasterLevel::MIN), |block| {
+                    self.synth.render(&physical.levels(&remote), block);
+                });
+            self.shared()
+                .audio_stats
+                .lock(|stats| stats.record(started, result));
         }
     }
 
@@ -355,7 +350,7 @@ mod app {
         }
     }
 
-    #[async_task(priority = 1, shared = [keyboard, late])]
+    #[async_task(priority = 1, shared = [keyboard, audio_stats])]
     struct Draw {
         port: Option<DisplayPort>,
     }
@@ -373,6 +368,9 @@ mod app {
                 return;
             }
             screen.text(0, 0, b"FM-1 PIANO", palette::WHITE);
+            screen.text(0, 1, b"AUD", palette::MUTED);
+            screen.text(8, 1, b"US", palette::MUTED);
+            screen.text(11, 1, b"XR", palette::MUTED);
             screen.text(0, 2, b"LAST --", palette::MUTED);
             screen.text(10, 2, b"MIDI  --", palette::MUTED);
             screen.text(0, 3, b"HELD", palette::GREEN);
@@ -389,7 +387,10 @@ mod app {
             loop {
                 let keyboard = self.shared().keyboard.lock(|k| *k);
                 keyboard.draw(&mut screen);
-                if self.shared().late.lock(|late| *late) {
+                let stats = self.shared().audio_stats.lock(|stats| *stats);
+                screen.number(4, 1, 4, stats.peak_ticks.div_ceil(24), palette::WHITE);
+                screen.number(14, 1, 6, stats.overruns, palette::WHITE);
+                if stats.overruns != 0 {
                     screen.text(16, 0, b"LATE", palette::RED);
                 }
                 if screen.paint(&mut display).is_err() {

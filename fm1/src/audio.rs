@@ -3,7 +3,7 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // AC791N ALNK0 initialization ported from felucca-bsp/boards/fm1/fm1_audio.h.
 //! Stereo I²S output on PC0, PC1, PC2 and PC6. The DMA cycles through
-//! two fixed SRAM halves. Service it about every 5.8 ms to keep both filled.
+//! two SRAM halves. The default 256-frame half lasts about 5.8 ms.
 
 use core::marker::PhantomData;
 
@@ -13,12 +13,10 @@ use crate::{
     time::{cycles, wait_cycles},
 };
 
-const FRAMES_PER_HALF: u16 = 256;
-
-/// Frames in one DMA half.
-pub const BLOCK_FRAMES: usize = FRAMES_PER_HALF as usize;
+/// Default and maximum number of stereo frames in one DMA half.
+pub const BLOCK_FRAMES: usize = 256;
 /// A block of left/right signed Q23 samples. Values outside the range are saturated on copy.
-pub type Block = [[i32; 2]; BLOCK_FRAMES];
+pub type Block<const N: usize = BLOCK_FRAMES> = [[i32; 2]; N];
 /// Physical frame rate in hertz as a numerator and denominator.
 pub const FRAME_RATE: (u32, u32) = (24_000_000, 544);
 
@@ -103,20 +101,40 @@ impl AudioPort {
     /// Returns [`StartError::Busy`] if DMA is running, or [`StartError::Clock`]
     /// if the PLL settings differ from those used by the FM-1.
     pub fn start(&mut self) -> Result<Stream<'_>, StartError> {
-        self.start_dma()?;
-        Ok(Stream { _port: PhantomData })
+        self.start_with_frames()
     }
 
     /// Consume the port and start a stream which a task can own for its lifetime.
     ///
     /// # Errors
     /// Returns the same clock and busy errors as [`Self::start`].
-    pub fn into_stream(mut self) -> Result<Stream<'static>, StartError> {
-        self.start_dma()?;
+    pub fn into_stream(self) -> Result<Stream<'static>, StartError> {
+        self.into_stream_with_frames()
+    }
+
+    /// Borrow the port and start with `N` stereo frames per half (`1..=BLOCK_FRAMES`).
+    ///
+    /// # Errors
+    /// Returns the same clock and busy errors as [`Self::start`].
+    pub fn start_with_frames<const N: usize>(&mut self) -> Result<Stream<'_, N>, StartError> {
+        self.start_dma::<N>()?;
         Ok(Stream { _port: PhantomData })
     }
 
-    fn start_dma(&mut self) -> Result<(), StartError> {
+    /// Consume the port and start with `N` stereo frames per half (`1..=BLOCK_FRAMES`).
+    ///
+    /// # Errors
+    /// Returns the same clock and busy errors as [`Self::start`].
+    pub fn into_stream_with_frames<const N: usize>(
+        mut self,
+    ) -> Result<Stream<'static, N>, StartError> {
+        self.start_dma::<N>()?;
+        Ok(Stream { _port: PhantomData })
+    }
+
+    #[allow(clippy::cast_possible_truncation, reason = "N is at most 256 frames.")]
+    fn start_dma<const N: usize>(&mut self) -> Result<(), StartError> {
+        const { assert!(N > 0 && N <= BLOCK_FRAMES) };
         if read16(CON0) & RUN != 0 {
             return Err(StartError::Busy);
         }
@@ -127,7 +145,7 @@ impl AudioPort {
         }
         // The port exclusively owns ALNK0 and its DMA storage.
         let dma = (&raw mut DMA).cast::<i32>();
-        for i in 0..BLOCK_FRAMES * 4 {
+        for i in 0..const { N * 4 } {
             // SAFETY: DMA is stopped and this port exclusively owns the static array.
             unsafe { dma.add(i).write_volatile(0) };
         }
@@ -144,7 +162,7 @@ impl AudioPort {
         pin(1 << 2, true); // LRCK
         pin(1 << 1, true); // BCLK
         write16(CON0, 0x180);
-        write16(LEN, FRAMES_PER_HALF * 2); // words per half
+        write16(LEN, const { (N * 2) as u16 }); // words per half
         registers::clear(0x10014, 0x0f00); // stock 44.1 kHz clock family
         write8(CON3, 0x83);
         write16(CON1, 0x5000); // channel 3 transmit, 24-bit samples
@@ -162,40 +180,67 @@ impl AudioPort {
 /// A running stereo output. Dropping it stops DMA and drives the data line low.
 /// Missed refill deadlines can repeat old samples.
 #[derive(Debug)]
-pub struct Stream<'a> {
+pub struct Stream<'a, const N: usize = BLOCK_FRAMES> {
     _port: PhantomData<&'a mut AudioPort>,
 }
 
-/// Whether DMA accepted a block and whether it crossed a half-buffer boundary during the copy.
+/// Result of servicing a DMA half-buffer event.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Refill {
     /// DMA has not released a half since the last submission.
     WouldBlock,
     /// The complete block was copied and published before the next observed boundary.
     Written,
-    /// The DMA boundary moved during the copy. The DAC may have consumed a partial block.
+    /// The refill ran out of time. A copy already in progress may be partial.
     Late,
 }
 
-impl Stream<'_> {
-    /// Try to submit one pre-rendered block. Never hands out references to DMA-owned memory.
-    pub fn try_write(&mut self, input: &Block) -> Refill {
-        let status = pending();
-        // Clear any auxiliary channel flags sharing the ALNK0 interrupt line.
-        let auxiliary = (status >> 4) & 7;
-        if auxiliary != 0 {
-            write8(STATUS, auxiliary);
-        }
-        if status & 0x80 == 0 {
+impl<const N: usize> Stream<'_, N> {
+    /// Try to submit one pre-rendered block.
+    pub fn try_write(&mut self, input: &Block<N>) -> Refill {
+        self.try_write_with(|| input)
+    }
+
+    /// Prepare a block in application memory only when DMA has released a half.
+    /// Reserve the last eighth of the period for copying. If preparation uses
+    /// that margin or spans a boundary, discard the block. A boundary during
+    /// the copy can produce a partial block. Both cases report [`Refill::Late`].
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "Starting a stream bounds N to 1..=256."
+    )]
+    pub fn try_write_with<'b>(&mut self, prepare: impl FnOnce() -> &'b Block<N>) -> Refill {
+        let status = pending() >> 4;
+        if status == 0 {
             return Refill::WouldBlock;
         }
         let start = cycles();
         let active = read16(CON0) >> 15;
+        // Acknowledge the observed flags before rendering so the next boundary
+        // can latch even if DMA makes a full turn while we are preempted.
+        write8(STATUS, status);
+        if status & 8 == 0 {
+            return Refill::WouldBlock;
+        }
+        let (prepare_limit, period) = const {
+            let period = FRAME_RATE.1 * N as u32;
+            (period - period / 8, period)
+        };
+        let moved = || read16(CON0) >> 15 != active || pending() & 0x80 != 0;
+        let input = prepare();
+        if moved() || cycles().wrapping_sub(start) >= prepare_limit {
+            return Refill::Late;
+        }
         let free = usize::from(active ^ 1);
         // SAFETY: the port exclusively owns the array; its two fixed-size halves are
         // in SRAM for the life of the program. DMA only reads it. CPU writes are
         // full, aligned volatile sample words, including when firmware misses a deadline.
-        let dst = unsafe { (&raw mut DMA).cast::<Block>().add(free).cast::<[i32; 2]>() };
+        let dst = unsafe {
+            (&raw mut DMA)
+                .cast::<Block<N>>()
+                .add(free)
+                .cast::<[i32; 2]>()
+        };
         for (i, frame) in input.iter().enumerate() {
             for (ch, sample) in frame.iter().enumerate() {
                 unsafe {
@@ -207,14 +252,15 @@ impl Stream<'_> {
             }
         }
         sync();
-        let late = read16(CON0) >> 15 != active
-            || cycles().wrapping_sub(start) >= 544 * u32::from(FRAMES_PER_HALF);
-        write8(STATUS, 0x08);
-        if late { Refill::Late } else { Refill::Written }
+        if moved() || cycles().wrapping_sub(start) >= period {
+            Refill::Late
+        } else {
+            Refill::Written
+        }
     }
 }
 
-impl Drop for Stream<'_> {
+impl<const N: usize> Drop for Stream<'_, N> {
     fn drop(&mut self) {
         write16(CON0, read16(CON0) & !RUN);
         sync();
@@ -256,6 +302,51 @@ mod tests {
         drop(stream);
         assert_eq!(read16(CON0) & RUN, 0);
         assert_eq!(registers::read(PC + OUT) & DATA, 0);
-        assert!(audio.start().is_ok());
+        // A shorter stream packs both halves into the beginning of the same SRAM.
+        let mut short = audio.start_with_frames::<128>().expect("restart at 128");
+        assert_eq!(read16(LEN), 256);
+        let block = [[17, -42]; 128];
+        registers::write(STATUS, 0x10); // Only an auxiliary event fired.
+        let mut called = false;
+        assert_eq!(
+            short.try_write_with(|| {
+                called = true;
+                &block
+            }),
+            Refill::WouldBlock
+        );
+        assert!(!called);
+        registers::write(STATUS, 0x80);
+        assert_eq!(short.try_write(&block), Refill::Written);
+        // SAFETY: the mocked DMA is idle and this test owns the audio port.
+        unsafe {
+            assert_eq!(ptr.add(127).read_volatile(), [0; 2]);
+            assert_eq!(ptr.add(128).read_volatile(), [17, -42]);
+            assert_eq!(ptr.add(255).read_volatile(), [17, -42]);
+        }
+        registers::write(STATUS, 0x80);
+        let late = short.try_write_with(|| {
+            // Another half finished during rendering, even if parity now looks the same.
+            registers::write(STATUS, 0x80);
+            &[[75, 75]; 128]
+        });
+        assert_eq!(late, Refill::Late);
+        // No stale write, and the new event is still available to the next call.
+        unsafe { assert_eq!(ptr.add(128).read_volatile(), [17, -42]) };
+        write16(CON0, read16(CON0) | (1 << 15));
+        assert_eq!(short.try_write(&block), Refill::Written);
+        unsafe { assert_eq!(ptr.read_volatile(), [17, -42]) };
+        drop(short);
+
+        let mut stream = audio.start_with_frames::<144>().expect("restart at 144");
+        registers::write(STATUS, 0x80);
+        let late = stream.try_write_with(|| {
+            // The mock advances 1 ms per timer read. The pre-copy check at 3 ms
+            // falls inside the last eighth of this 3.264 ms period.
+            wait_cycles(24_000);
+            &[[1, 1]; 144]
+        });
+        assert_eq!(late, Refill::Late);
+        unsafe { assert_eq!(ptr.add(144).read_volatile(), [0; 2]) };
     }
 }

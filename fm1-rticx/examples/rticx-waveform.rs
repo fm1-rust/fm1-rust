@@ -17,15 +17,15 @@ mod voice;
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
     use crate::voice::{Capture, HEIGHT, Trace, Voice, WIDTH};
+    use fm1_audio::{MasterLevel, Output, Refill, Stats};
     use fm1_graphics::{TextGrid, Waveform, palette};
     use fm1_rticx::{
         bsp::{
             Board,
-            audio::{BLOCK_FRAMES, Block, Refill, Stream},
             display::{DisplayPort, SIZE, SpiClock},
             enter_download_mode,
             panel::{Button, Controls, Encoder, Event, Leds, PlayLedState, Switch},
-            time::{Timers, ticks},
+            time::{Timers, cycles, ticks},
         },
         rticx::asynchronous::{
             channel::{Receiver, Sender},
@@ -43,7 +43,7 @@ mod app {
     pub struct Frame {
         voice: Voice,
         trace: Trace,
-        late: bool,
+        stats: Stats,
         ready: Sender<'static, (), 1>,
     }
 
@@ -60,15 +60,14 @@ mod app {
                 frame: Frame {
                     voice,
                     trace: [64; WIDTH],
-                    late: false,
+                    stats: Stats::default(),
                     ready,
                 },
             },
             TaskInits {
                 audio: Audio {
-                    stream: board.audio.into_stream().expect("audio clock"),
+                    output: Output::start(board.audio).expect("audio clock"),
                     phase: 0,
-                    block: [[0; 2]; BLOCK_FRAMES],
                     capture: Capture::new(),
                 },
                 panel: Panel {
@@ -148,23 +147,24 @@ mod app {
 
     #[task(binds = ALNK0, priority = 3, shared = [voice, frame])]
     struct Audio {
-        stream: Stream<'static>,
-        block: Block,
+        output: Output,
         phase: u32,
         capture: Capture,
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
+            let started = cycles();
             let voice = self.shared().voice.lock(|v| *v);
-            let next = voice.render(self.phase, &mut self.block);
-            match self.stream.try_write(&self.block) {
+            let result = self.output.render(MasterLevel::MAX, |block| {
+                self.phase = voice.render(self.phase, block);
+            });
+            match result {
                 Refill::WouldBlock => return,
                 Refill::Late => {
                     self.capture.discontinuity();
-                    self.shared().frame.lock(|f| f.late = true);
                 }
                 Refill::Written => {
-                    if self.capture.push(&self.block, voice) {
+                    if self.capture.push(self.output.block(), voice) {
                         let trace = self.capture.trace;
                         self.shared().frame.lock(|frame| {
                             frame.voice = voice;
@@ -175,7 +175,9 @@ mod app {
                     }
                 }
             }
-            self.phase = next;
+            self.shared()
+                .frame
+                .lock(|f| f.stats.record(started, result));
         }
     }
 
@@ -205,7 +207,10 @@ mod app {
             text.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
             loop {
                 self.updates.recv().await.expect("audio owns sender");
-                let (voice, trace, late) = self.shared().frame.lock(|f| (f.voice, f.trace, f.late));
+                let (voice, trace, late) = self
+                    .shared()
+                    .frame
+                    .lock(|f| (f.voice, f.trace, f.stats.overruns != 0));
                 text.text(0, 0, voice.wave.label(), palette::CYAN);
                 text.text(
                     16,

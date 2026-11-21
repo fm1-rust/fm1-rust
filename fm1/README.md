@@ -42,10 +42,12 @@ entry path.
 | `board.take_usb()` | Call `into_midi(identity)` on the returned port to enumerate as a full-speed USB-MIDI 1.0 device with one input and one output. Poll the owned handle, receive up to 16 event packets at once, and retry the unsent suffix when the host is busy. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
-Audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
-of 24 MHz / 544. Submit a prepared block with `try_write`. A long blocking
+By default audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
+of 24 MHz / 544. `start_with_frames` and `into_stream_with_frames` select a
+smaller DMA half at startup. Submit a prepared block with `try_write`, or use
+`try_write_with` to render when the next half becomes available. A long blocking
 LCD transfer can miss the refill deadline and cause old samples to repeat.
-`Refill::Late` reports a boundary crossed during the copy.
+`Refill::Late` reports a missed deadline during preparation or copying.
 
 When initializing USB-MIDI, supply your application's USB vendor ID, product
 ID and descriptor strings to `into_midi`.

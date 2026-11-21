@@ -64,8 +64,8 @@ jobs:
         run: |
           cargo install --locked --git https://github.com/obi1kenobi/cargo-semver-checks \
             --rev "$SEMVER_CHECKS_REV" cargo-semver-checks
-      # fm1-rticx and fm1-graphics have no release on crates.io to compare against yet.
-      - run: cargo semver-checks --workspace --exclude fm1-rticx --exclude fm1-graphics --all-features
+      # fm1-rticx, fm1-audio and fm1-graphics have no release on crates.io to compare against yet.
+      - run: cargo semver-checks --workspace --exclude fm1-rticx --exclude fm1-audio --exclude fm1-graphics --all-features
 
   typos:
     runs-on: ubuntu-latest

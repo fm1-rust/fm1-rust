@@ -9,14 +9,14 @@
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
+    use fm1_audio::{MasterLevel, Output, Stats};
     use fm1_rticx::{
         bsp::{
             Board,
-            audio::{BLOCK_FRAMES, Block, Refill, Stream},
             display::{Display, SIZE, SpiClock},
             embedded_hal::digital::OutputPin,
             panel::{Play, PlayColor},
-            time::Timers,
+            time::{Timers, cycles},
         },
         rticx::asynchronous::{
             channel::{Receiver, Sender},
@@ -32,7 +32,7 @@ mod app {
     #[derive(Debug)]
     pub struct Transport {
         playing: bool,
-        late: bool,
+        stats: Stats,
         redraw: Sender<'static, (), 1>,
     }
     impl Transport {
@@ -50,21 +50,17 @@ mod app {
         panel.led().set_color(PlayColor::Green);
         let Ok(()) = panel.led().set_high();
         let (redraw, updates) = make_channel!((), 1);
-        let stream = board.audio.into_stream().expect("audio clock");
+        let output = Output::start(board.audio).expect("audio clock");
         (
             Shared {
                 transport: Transport {
                     playing: true,
-                    late: false,
+                    stats: Stats::default(),
                     redraw,
                 },
             },
             TaskInits {
-                audio: Audio {
-                    stream,
-                    block: [[0; 2]; BLOCK_FRAMES],
-                    phase: 0,
-                },
+                audio: Audio { output, phase: 0 },
                 keys: Keys {
                     timers: board.timers,
                     panel,
@@ -119,33 +115,28 @@ mod app {
 
     #[task(binds = ALNK0, priority = 3, shared = [transport])]
     struct Audio {
-        stream: Stream<'static>,
-        block: Block,
+        output: Output,
         phase: u32,
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
-            let mut phase = self.phase;
-            if self.shared().transport.lock(|t| t.playing) {
-                for frame in &mut self.block {
-                    *frame = [if phase < 50 { 32_768 } else { -32_768 }; 2];
-                    phase = (phase + 1) % 100;
-                }
-            } else {
-                self.block.fill([0; 2]);
-                phase = 0;
-            }
-            match self.stream.try_write(&self.block) {
-                Refill::WouldBlock => return,
-                Refill::Late => self.shared().transport.lock(|t| {
-                    if !t.late {
-                        t.late = true;
-                        t.notify_screen();
+            let started = cycles();
+            let playing = self.shared().transport.lock(|t| t.playing);
+            let result = self.output.render(MasterLevel::MAX, |block| {
+                if playing {
+                    for frame in block {
+                        *frame = [if self.phase < 50 { 32_768 } else { -32_768 }; 2];
+                        self.phase = (self.phase + 1) % 100;
                     }
-                }),
-                Refill::Written => {}
-            }
-            self.phase = phase;
+                } else {
+                    self.phase = 0;
+                }
+            });
+            self.shared().transport.lock(|t| {
+                if t.stats.record(started, result) && t.stats.overruns == 1 {
+                    t.notify_screen();
+                }
+            });
         }
     }
 
@@ -161,7 +152,10 @@ mod app {
             const MARKER: u16 = 8;
             let mut shown = None;
             loop {
-                let (playing, late) = self.shared().transport.lock(|t| (t.playing, t.late));
+                let (playing, late) = self
+                    .shared()
+                    .transport
+                    .lock(|t| (t.playing, t.stats.overruns != 0));
                 if shown.map(|(old, _)| old) != Some(playing) {
                     let height = if late { SIZE - MARKER } else { SIZE };
                     let color = if playing { 0x07e0 } else { 0xf800 };
