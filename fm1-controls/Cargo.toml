@@ -1,6 +1,6 @@
 [package]
 name = "fm1-controls"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Asynchronous front-panel input for the M-VAVE FM-1"
 license = "MIT"

@@ -17,7 +17,7 @@ rticx-pi32v2-macro = "0.1.1"
 
 [dev-dependencies]
 fm1-audio = "0.1"
-fm1-controls = "0"
+fm1-controls = "0.1"
 fm1-graphics = { version = "0", features = ["async-display"] }
 futures-util = { version = "0.3", default-features = false }
 static_cell = "2.1.1"
