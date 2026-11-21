@@ -12,9 +12,9 @@ the samples on the LCD. Tap a piano key to set the pitch and turn **PRESETS**
 to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC**
 on screen, press **FX** to halve the output level and watch the trace shrink.
 
-![FM-1 emulator LCD showing a green A4 sine wave with the DAC output selected](docs/images/rticx-waveform.png)
+[![FM-1 emulator LCD showing a green A4 sine wave with the DAC output selected](docs/images/rticx-waveform.png)][example-tour]
 
-*LCD capture from [fm1-emu](https://github.com/joakimeriksson/fm1-emu).*
+*LCD capture from [fm1-emu](https://github.com/joakimeriksson/fm1-emu).* [More examples to try][example-tour].
 
 [Build the example locally](fm1-rticx/README.md#examples) or get
 `rticx-waveform.fwsc` from the `fm1-rticx-firmware` artifact on a
@@ -94,6 +94,7 @@ for the upstream sources and credits.
 [fm1-rticx-docs]: https://docs.rs/fm1-rticx/
 [fm1-rticx-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml/badge.svg?branch=main&event=push
 [fm1-rticx-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml
+[example-tour]: fm1-rticx/README.md#example-tour
 [pi32v2-version]: https://img.shields.io/crates/v/rticx-pi32v2?logo=rust
 [pi32v2-crate]: https://crates.io/crates/rticx-pi32v2
 [pi32v2-docs-badge]: https://docs.rs/rticx-pi32v2/badge.svg
