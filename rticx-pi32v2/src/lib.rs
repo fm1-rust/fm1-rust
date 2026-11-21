@@ -8,6 +8,8 @@ pub mod export;
 mod mask;
 #[cfg(any(pi32v2, test))]
 mod queue;
+#[cfg(any(pi32v2, test))]
+mod registers;
 pub use rticx_async as asynchronous;
 pub use rticx_pi32v2_macro::app;
 #[doc(hidden)]

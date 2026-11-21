@@ -14,3 +14,19 @@ fi
 for example in "$package"/examples/*.rs; do
     ./fm1/scripts/build-example.sh "$(basename "$example" .rs)"
 done
+
+if [[ $package == fm1-rticx ]]; then
+    # Use the same macro, controller and target ABI as the firmware examples.
+    layout=(cargo rustc --color never --locked -p rticx-pi32v2 --example shared-layout --profile firmware
+        --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
+        -Zbuild-std-features=compiler-builtins-mem -- --check-cfg 'cfg(packed_shared)')
+    "${layout[@]}"
+    log=$(mktemp)
+    trap 'rm -f "$log"' EXIT
+    if "${layout[@]}" --cfg packed_shared >"$log" 2>&1; then
+        echo "packed shared fields compiled successfully" >&2
+        exit 1
+    fi
+    cat "$log"
+    grep -Fq 'error[E0793]' "$log"
+fi

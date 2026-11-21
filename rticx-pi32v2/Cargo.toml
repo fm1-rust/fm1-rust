@@ -8,6 +8,12 @@ repository = "https://github.com/fm1-rust/fm1-rust"
 keywords = ["pi32v2", "rticx"]
 categories = ["embedded", "hardware-support", "no-std"]
 
+# Compile the shared layout fixture with the real target backend in CI.
+[[example]]
+name = "shared-layout"
+path = "tests/ui/shared_layout.rs"
+crate-type = ["rlib"]
+
 [dependencies]
 rticx-async = "0.2"
 rticx-pi32v2-macro = { version = "0.1", path = "../rticx-pi32v2-macro" }

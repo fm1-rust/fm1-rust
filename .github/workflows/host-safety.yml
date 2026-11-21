@@ -1,0 +1,50 @@
+name: Host safety checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: nightly-2026-11-21
+
+jobs:
+  miri:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component miri --component rust-src --no-self-update
+      - run: cargo miri setup
+      - name: Check the interrupt backend and clocks
+        run: cargo miri test --locked --all-features --lib -p rticx-pi32v2 -p fm1-rticx
+      - name: Check panel queues and executor slot storage in release mode
+        run: |
+          cargo miri test --release --locked -p fm1-controls --lib
+          cargo miri test --release --locked -p rticx-pi32v2-macro --test slots
+      - name: Check audio refill, display DMA, and USB-MIDI
+        run: >-
+          cargo miri test --locked --all-features -p fm1 --lib --
+          audio:: usb_midi:: test_board::async_display::
+          test_board::completion_before_resuming_after_preemption_wins
+
+  careful:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
+      - run: cargo install --locked --version 0.4.10 cargo-careful
+      - run: cargo careful test --workspace --all-features --locked
