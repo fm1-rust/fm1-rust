@@ -1,0 +1,131 @@
+name: pi32v2 build
+
+on:
+  workflow_call:
+    inputs:
+      args:
+        description: Additional cargo build arguments (or script arguments), one per line
+        type: string
+      script:
+        description: Executable in the caller's checkout to run in place of cargo build
+        type: string
+      artifact-path:
+        description: Optional file, directory or glob to upload, relative to the caller's checkout
+        type: string
+      artifact-name:
+        description: Name for the uploaded artifact
+        type: string
+        default: firmware
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_TAG: pi32v2-23.1.5-5
+      LLVM_TOOLS_SHA256: a20e257b840eb6b212761bfa93a7f3804502940d0035d62790da3d42fefa31e3
+      PI32V2_ISA: ${{ github.workspace }}/.ci/pi32v2-isa
+      RUSTUP_TOOLCHAIN: 1.100.0
+    steps:
+      - name: Check out the toolchain build scripts and target specification
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: fm1-rust
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - name: Check out the Rust patch and firmware packager
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          repository: jvitkauskas/pi32v2-isa
+          ref: 701a76faf103d1889d9bdf67987b872899c27257
+          path: .ci/pi32v2-isa
+          persist-credentials: false
+      - name: Restore the patched compiler
+        id: rustc
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: pi32v2-rustc-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('fm1-rust/.github/scripts/build-llvm.sh', 'fm1-rust/.github/scripts/build-rustc.sh', '.ci/pi32v2-isa/examples/fm1-blink-rust/rustc/*.patch') }}
+      - name: Restore host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true'
+        id: host-llvm
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: pi32v2-host-llvm-ubuntu-24.04-${{ runner.arch }}-${{ env.LLVM_TAG }}-${{ hashFiles('fm1-rust/.github/scripts/build-llvm.sh') }}
+      - name: Build host LLVM
+        if: steps.rustc.outputs.cache-hit != 'true' && steps.host-llvm.outputs.cache-hit != 'true'
+        id: build-llvm
+        run: fm1-rust/.github/scripts/build-llvm.sh "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Save host LLVM
+        if: steps.build-llvm.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-host-llvm
+          key: ${{ steps.host-llvm.outputs.cache-primary-key }}
+      - name: Build the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        run: fm1-rust/.github/scripts/build-rustc.sh "$RUNNER_TEMP/pi32v2-rustc" "$RUNNER_TEMP/pi32v2-host-llvm"
+      - name: Check the patched compiler
+        run: |
+          "$RUNNER_TEMP/pi32v2-rustc/bin/rustc" -vV
+      - name: Save the patched compiler
+        if: steps.rustc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-rustc
+          key: ${{ steps.rustc.outputs.cache-primary-key }}
+      - name: Cache the pi32v2 LLVM tools archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi32v2-llvm.tar.xz
+          key: pi32v2-llvm-${{ env.LLVM_TOOLS_SHA256 }}
+      - name: Install the pi32v2 assembler, linker and runtime
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [[ ! -f pi32v2-llvm.tar.xz ]]; then
+            asset="pi32v2-llvm-${LLVM_TAG#pi32v2-}-linux-x64.tar.xz"
+            curl -fsSL --retry 3 -o pi32v2-llvm.tar.xz \
+              "https://github.com/jvitkauskas/pi32v2-llvm/releases/download/$LLVM_TAG/$asset"
+          fi
+          echo "$LLVM_TOOLS_SHA256  pi32v2-llvm.tar.xz" | sha256sum --check
+          mkdir -p pi32v2-llvm
+          tar -xf pi32v2-llvm.tar.xz --strip-components=1 -C pi32v2-llvm
+          echo "$RUNNER_TEMP/pi32v2-llvm/bin" >> "$GITHUB_PATH"
+      - name: Check out the caller's project
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
+        with:
+          path: project
+          persist-credentials: false
+      - name: Build the caller's project
+        working-directory: project
+        env:
+          BUILD_ARGS: ${{ inputs.args }}
+          BUILD_SCRIPT: ${{ inputs.script }}
+          RUSTC: ${{ runner.temp }}/pi32v2-rustc/bin/rustc
+          RUSTC_BOOTSTRAP: 1
+          PI32V2_BIN: ${{ runner.temp }}/pi32v2-llvm/bin
+          PI32V2_TARGET: ${{ github.workspace }}/fm1-rust/fm1/targets/pi32v2-none.json
+          CARGO_TARGET_PI32V2_NONE_LINKER: ${{ runner.temp }}/pi32v2-llvm/bin/ld.lld
+          CARGO_TARGET_PI32V2_NONE_RUSTFLAGS: -C link-arg=-Tfm1.ld
+        shell: bash
+        run: |
+          mapfile -t args < <(printf '%s' "$BUILD_ARGS")
+          if [[ -n "$BUILD_SCRIPT" ]]; then
+            "./$BUILD_SCRIPT" "${args[@]}"
+          else
+            cargo build --release --target "$PI32V2_TARGET" \
+              -Zjson-target-spec -Zbuild-std=core,compiler_builtins \
+              -Zbuild-std-features=compiler-builtins-mem "${args[@]}"
+          fi
+      - name: Upload build artifacts
+        if: inputs.artifact-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: project/${{ inputs.artifact-path }}
+          if-no-files-found: error
