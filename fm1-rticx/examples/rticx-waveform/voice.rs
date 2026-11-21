@@ -1,92 +1,24 @@
-//! A monophonic DDS oscillator and a rising-edge trigger on its submitted PCM.
-use fm1_audio::{OUTPUT_FRAMES, OutputBlock};
+//! Panel settings and a rising-edge trigger for the selected signal.
+use super::graph::Applied;
+use fm1_audio::{I24, OUTPUT_FRAMES, OutputBlock};
 use fm1_rticx::bsp::panel::PianoKey;
+use wavegraph_monosynth::{Message, Waveform};
 
 pub(super) const WIDTH: usize = 224;
 const LAST_ROW: u8 = 127;
 pub(super) const HEIGHT: usize = LAST_ROW as usize + 1;
 pub(super) type Trace = [u8; WIDTH];
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum Wave {
-    #[default]
-    Sine,
-    Triangle,
-    Sawtooth,
-    Square,
-}
-
-impl Wave {
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "An i8 detent count plus a preset index in 0..4 fits in i16."
-    )]
-    pub(super) fn turn(self, detents: i8) -> Self {
-        const WAVES: [Wave; 4] = [Wave::Sine, Wave::Triangle, Wave::Sawtooth, Wave::Square];
-        WAVES[(self as i16 + i16::from(detents)).rem_euclid(4) as usize]
-    }
-
-    pub(super) fn label(self) -> &'static [u8] {
-        match self {
-            Self::Sine => b"SINE    ",
-            Self::Triangle => b"TRIANGLE",
-            Self::Sawtooth => b"SAWTOOTH",
-            Self::Square => b"SQUARE  ",
-        }
-    }
-
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "The ramp is 16 bits and the quarter-wave interpolation uses an 8-bit fraction; all intermediates fit in i32."
-    )]
-    fn sample(self, phase: u32) -> i32 {
-        let ramp = (phase >> 16).cast_signed();
-        match self {
-            Self::Sawtooth => ramp - 32768,
-            Self::Square => {
-                if phase < 1 << 31 {
-                    32767
-                } else {
-                    -32767
-                }
-            }
-            Self::Triangle => 32767 - (2 * ramp - 65535).abs(),
-            Self::Sine => {
-                let part = phase & 0x3fff_ffff;
-                let folded = if phase & (1 << 30) == 0 {
-                    part
-                } else {
-                    (1 << 30) - part
-                };
-                let i = (folded >> 24) as usize;
-                let a = i32::from(SINE[i]);
-                let b = i32::from(SINE[(i + 1).min(64)]);
-                let fraction = ((folded >> 16) & 255).cast_signed();
-                let value = a + (((b - a) * fraction) >> 8);
-                if phase & (1 << 31) == 0 {
-                    value
-                } else {
-                    -value
-                }
-            }
-        }
-    }
-}
-
-// One quarter of a sine, round(32767 * sin(i * π / 128)).
-const SINE: [i16; 65] = [
-    0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
-    12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787,
-    21403, 22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683,
-    28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785,
-    31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757, 32767,
+const PRESETS: [(Waveform, &[u8]); 4] = [
+    (Waveform::Sine, b"SINE    "),
+    (Waveform::Triangle, b"TRIANGLE"),
+    (Waveform::Sawtooth, b"SAWTOOTH"),
+    (Waveform::Square, b"SQUARE  "),
 ];
-// F2 through G6 covers the keyboard and one octave of transposition in either direction.
-const STEPS: [u32; 51] = crate::pitch::phase_steps(87.307_057_858_251);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Voice {
-    pub(super) wave: Wave,
+    preset: usize,
     pub(super) playing: bool,
     pub(super) velocity: u8,
     pub(super) transpose: i8,
@@ -96,7 +28,7 @@ pub struct Voice {
 impl Default for Voice {
     fn default() -> Self {
         Self {
-            wave: Wave::Sine,
+            preset: 0,
             playing: true,
             velocity: 0,
             transpose: 0,
@@ -115,40 +47,60 @@ impl Voice {
     pub(super) fn note(self) -> u8 {
         self.key.saturating_add_signed(self.transpose)
     }
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "Notes are 41..=91 and multiplying a Q15 waveform by a 7-bit velocity fits in i32."
-    )]
-    pub(super) fn render(self, mut phase: u32, block: &mut OutputBlock) -> u32 {
-        let note = self.note();
-        let step = STEPS[usize::from(note - 41)];
-        let gain = if self.playing {
-            i32::from(self.velocity)
-        } else {
-            0
+    pub(super) fn turn_preset(&mut self, detents: i8) {
+        const MASK: usize = {
+            assert!(PRESETS.len().is_power_of_two());
+            PRESETS.len() - 1
         };
-        for frame in block {
-            // Peak output is about -24 dBFS at velocity 127.
-            let sample = (self.wave.sample(phase) * gain) >> 3;
-            *frame = [sample; 2];
-            phase = phase.wrapping_add(step);
-        }
-        phase
+        self.preset = self.preset.wrapping_add_signed(isize::from(detents)) & MASK;
+    }
+    pub(super) fn label(self) -> &'static [u8] {
+        PRESETS[self.preset].1
+    }
+
+    // On a muted pitch change, set the new increment and release at the same frame.
+    // Unmuting then resumes at the phase the oscillator reached during silence.
+    pub(super) fn messages(self) -> [Message; 3] {
+        let note = self.note();
+        [
+            Message::Waveform(PRESETS[self.preset].0),
+            Message::NoteOn {
+                note,
+                velocity: self.velocity.max(1),
+            },
+            Message::NoteOff(note),
+        ]
     }
 }
 
-/// An owned copy of the left channel from one successful DAC submission.
+/// One selected signal block and the identity of the edit that produced it.
 pub(super) struct ScopeBlock {
     pub(super) voice: Voice,
-    left: [i32; OUTPUT_FRAMES],
+    pub(super) applied: Applied,
+    submitted_at: u32,
+    samples: [i32; OUTPUT_FRAMES],
     gap: bool,
 }
 
 impl ScopeBlock {
-    pub(super) fn new(block: &OutputBlock, voice: Voice, gap: bool) -> Self {
+    pub(super) fn new(
+        dac: &OutputBlock,
+        oscillator: &[I24; OUTPUT_FRAMES],
+        voice: Voice,
+        applied: Applied,
+        submitted_at: u32,
+        gap: bool,
+    ) -> Self {
+        let samples = if applied.selection.oscillator_tap {
+            core::array::from_fn(|i| oscillator[i].inner())
+        } else {
+            core::array::from_fn(|i| dac[i][0])
+        };
         Self {
             voice,
-            left: core::array::from_fn(|i| block[i][0]),
+            applied,
+            submitted_at,
+            samples,
             gap,
         }
     }
@@ -156,6 +108,8 @@ impl ScopeBlock {
 
 pub(super) struct Capture {
     pub(super) trace: Trace,
+    pub(super) started_at: u32,
+    applied: Option<Applied>,
     count: usize,
     previous: i32,
     skip: u8,
@@ -166,6 +120,8 @@ impl Capture {
     pub(super) const fn new() -> Self {
         Self {
             trace: [64; WIDTH],
+            started_at: 0,
+            applied: None,
             count: 0,
             previous: 0,
             skip: 0,
@@ -181,8 +137,8 @@ impl Capture {
         reason = "Block indices are bounded, samples are signed Q23 and the display coordinate is clamped to 0..=127 before conversion."
     )]
     pub(super) fn push(&mut self, block: &ScopeBlock) -> bool {
-        if block.gap {
-            // A dropped tap block or a late refill breaks sample continuity.
+        if self.applied.replace(block.applied) != Some(block.applied) || block.gap {
+            // A graph edit, a new tap or a missing block starts a fresh trace.
             self.count = 0;
             self.skip = 0;
             self.previous = 0;
@@ -195,15 +151,18 @@ impl Capture {
         }
         if self.skip != 0 {
             self.skip -= 1;
-            self.previous = block.left[OUTPUT_FRAMES - 1];
+            self.previous = block.samples[OUTPUT_FRAMES - 1];
             return false;
         }
         let silent = !voice.playing || voice.velocity == 0;
-        for &sample in &block.left {
+        for &sample in &block.samples {
             let rising = self.previous < 0 && sample >= 0;
             self.previous = sample;
-            if self.count == 0 && !silent && !rising {
-                continue;
+            if self.count == 0 {
+                if !silent && !rising {
+                    continue;
+                }
+                self.started_at = block.submitted_at;
             }
             // About eight rows of headroom keep both rails clear of the labels.
             let offset = (((sample >> 8) * 7) + 128) >> 8;
@@ -212,7 +171,7 @@ impl Capture {
             if self.count == WIDTH {
                 self.count = 0;
                 self.skip = 10; // About 29 ms between traces at 128 frames per half.
-                self.previous = block.left[OUTPUT_FRAMES - 1];
+                self.previous = block.samples[OUTPUT_FRAMES - 1];
                 return true;
             }
         }
@@ -222,7 +181,19 @@ impl Capture {
 
 #[cfg(test)]
 mod tests {
+    use super::super::graph::{Graph, Oscillator, Selection};
     use super::*;
+
+    fn dac(block: &OutputBlock, voice: Voice, gap: bool) -> ScopeBlock {
+        ScopeBlock::new(
+            block,
+            &[I24::default(); OUTPUT_FRAMES],
+            voice,
+            Applied::default(),
+            0,
+            gap,
+        )
+    }
 
     #[test]
     fn preset_and_keyboard_controls_reach_the_oscillator() {
@@ -233,13 +204,17 @@ mod tests {
         assert_eq!(crate::pitch::note_name(voice.note()), *b"A4 ");
         let mut block = [[0; 2]; OUTPUT_FRAMES];
         for label in [b"SINE    ", b"TRIANGLE", b"SAWTOOTH", b"SQUARE  "] {
-            assert_eq!(voice.wave.label(), label);
-            voice.render(0, &mut block);
+            assert_eq!(voice.label(), label);
+            block.fill([0; 2]);
+            let mut buses = [[I24::default(); OUTPUT_FRAMES]; 2];
+            Graph::new().render(&mut Oscillator::new(), voice, false, &mut buses);
+            fm1_audio::mix_stereo(&mut block, &buses[0], &buses[0]);
             assert!(block.iter().all(|f| f[0] == f[1] && f[0].abs() < (1 << 19)));
             assert!(block.iter().any(|f| f[0] > 100_000));
-            voice.wave = voice.wave.turn(1);
+            voice.turn_preset(1);
         }
-        assert_eq!(voice.wave.turn(-1), Wave::Square);
+        voice.turn_preset(-1);
+        assert_eq!(voice.label(), b"SQUARE  ");
         voice.select_key(PianoKey::new(26).expect("rightmost key"));
         voice.transpose_by(127);
         assert_eq!(crate::pitch::note_name(voice.note()), *b"G6 ");
@@ -257,18 +232,21 @@ mod tests {
             velocity: 80,
             ..Voice::default()
         };
-        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
+        assert!(!capture.push(&dac(&block, voice, false)));
         block.fill([16384; 2]);
         voice.velocity = 81;
-        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
-        assert!(capture.push(&ScopeBlock::new(&block, voice, false)));
+        assert!(!capture.push(&dac(&block, voice, false)));
+        assert!(capture.push(&dac(&block, voice, false)));
         assert_eq!(capture.trace[0], 63);
         assert_eq!(capture.trace[1..], [62; WIDTH - 1]);
-        assert!(!capture.push(&ScopeBlock::new(&block, voice, true))); // Arm on a fresh crossing.
+        assert!(!capture.push(&dac(&block, voice, true))); // Arm on a fresh crossing.
         voice.playing = false;
-        voice.render(0, &mut block);
-        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
-        assert!(capture.push(&ScopeBlock::new(&block, voice, false)));
+        block.fill([0; 2]);
+        let mut buses = [[I24::default(); OUTPUT_FRAMES]; 2];
+        Graph::new().render(&mut Oscillator::new(), voice, false, &mut buses);
+        fm1_audio::mix_stereo(&mut block, &buses[0], &buses[0]);
+        assert!(!capture.push(&dac(&block, voice, false)));
+        assert!(capture.push(&dac(&block, voice, false)));
         assert_eq!(usize::from(capture.trace[0]), HEIGHT / 2);
         assert_eq!(capture.trace, [64; WIDTH]);
     }
@@ -283,18 +261,48 @@ mod tests {
         let mut pcm = [[8192, 0]; OUTPUT_FRAMES];
         pcm[0][0] = -8192;
         pcm[OUTPUT_FRAMES - 1][0] = -8192;
-        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        assert!(!capture.push(&dac(&pcm, voice, false)));
 
         // A rising edge on the right channel cannot complete the pre-gap trace.
         pcm.fill([16384, 8192]);
         pcm[0][1] = -8192;
-        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, true)));
-        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        assert!(!capture.push(&dac(&pcm, voice, true)));
+        assert!(!capture.push(&dac(&pcm, voice, false)));
 
         pcm[0][0] = -8192;
-        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        assert!(!capture.push(&dac(&pcm, voice, false)));
         pcm[0][0] = 16384;
-        assert!(capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        assert!(capture.push(&dac(&pcm, voice, false)));
+        assert_eq!(capture.trace, [62; WIDTH]);
+    }
+
+    #[test]
+    fn switching_taps_discards_partial_traces_and_dates_the_fresh_trigger() {
+        let voice = Voice {
+            velocity: 80,
+            ..Voice::default()
+        };
+        let mut capture = Capture::new();
+        let mut dac = [[8192, 0]; OUTPUT_FRAMES];
+        dac[0][0] = -8192;
+        let mut osc = [I24::new_unchecked(16384); OUTPUT_FRAMES];
+        let old = Applied::default();
+        let new = Applied {
+            first_frame: 128,
+            submitted_at: 20,
+            selection: Selection {
+                half_gain: true,
+                oscillator_tap: true,
+            },
+        };
+        assert!(!capture.push(&ScopeBlock::new(&dac, &osc, voice, old, 10, false)));
+        // DAC has a crossing, the newly selected oscillator does not.
+        assert!(!capture.push(&ScopeBlock::new(&dac, &osc, voice, new, 20, false)));
+        osc[0] = I24::new_unchecked(-8192);
+        assert!(!capture.push(&ScopeBlock::new(&dac, &osc, voice, new, 30, false)));
+        osc[0] = I24::new_unchecked(16384);
+        assert!(capture.push(&ScopeBlock::new(&dac, &osc, voice, new, 40, false)));
+        assert_eq!(capture.started_at, 30);
         assert_eq!(capture.trace, [62; WIDTH]);
     }
 }

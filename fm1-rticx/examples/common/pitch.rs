@@ -1,4 +1,3 @@
-use fm1_audio::FRAME_RATE;
 use fm1_rticx::bsp::panel::PianoKey;
 
 pub(super) const FIRST_NOTE: u8 = 53;
@@ -28,22 +27,4 @@ pub(super) fn note_name(note: u8) -> [u8; 3] {
     } else {
         [letter, octave, b' ']
     }
-}
-
-// Equal-tempered phase increments for the BSP frame rate, starting at first_hz.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "Every rounded phase increment is positive and fits in u32."
-)]
-pub(super) const fn phase_steps<const N: usize>(first_hz: f64) -> [u32; N] {
-    let mut steps = [0; N];
-    let mut step = first_hz * 4_294_967_296.0 * FRAME_RATE.1 as f64 / FRAME_RATE.0 as f64;
-    let mut i = 0;
-    while i < steps.len() {
-        steps[i] = (step + 0.5) as u32;
-        step *= 1.059_463_094_359_295_3; // 2^(1/12)
-        i = i.wrapping_add(1);
-    }
-    steps
 }

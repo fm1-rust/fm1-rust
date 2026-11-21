@@ -39,6 +39,12 @@ fm1-audio = { version = "0.1", path = "../fm1-audio" }
 fm1-controls = { version = "0.1", path = "../fm1-controls" }
 fm1-graphics = { version = "0.1", path = "../fm1-graphics", features = ["async-display"] }
 static_cell = "2.1.1"
+# The bytecode engine and monosynth are developed together and are not yet released.
+wavegraph = { git = "https://github.com/fm1-rust/wavegraph", rev = "6e4425cd1542b45dd86e460274a771cee29dc55d" }
+wavegraph-monosynth = { git = "https://github.com/fm1-rust/wavegraph", rev = "6e4425cd1542b45dd86e460274a771cee29dc55d" }
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
 
 [lints]
 workspace = true

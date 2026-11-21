@@ -10,6 +10,13 @@ members = [
     "rticx-pi32v2-macro"
 ]
 
+# Use the same published I24 type in fm1-audio and the WaveGraph example's Git dependencies.
+[patch."https://github.com/fm1-rust/wavegraph"]
+wavegraph-sample = { version = "0.1" }
+# The waveform's async renderer needs a copy of the oscillator at the start of its next block.
+# This copy at 6e4425c adds only `#[derive(Clone)]` to Monosynth. Remove the patch once upstream provides it.
+wavegraph-monosynth = { path = "fm1-rticx/examples/rticx-waveform/vendor/wavegraph-monosynth" }
+
 [workspace.lints.clippy]
 arithmetic_side_effects = "warn"
 cast_lossless = "warn"
