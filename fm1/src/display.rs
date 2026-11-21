@@ -3,6 +3,9 @@
 //! The 240 × 240 ST7789 on SPI1. RGB565 bytes are sent most significant byte first.
 //! DMA uses a private SRAM strip, so pixels may come from RAM or flash.
 
+#[cfg(feature = "embedded-graphics")]
+pub mod graphics;
+
 use crate::{
     Token,
     registers::*,
@@ -43,9 +46,14 @@ pub struct DisplayPort(pub(crate) Token);
 /// to observe a transfer error before releasing the handle.
 #[derive(Debug)]
 pub struct Display {
+    spi: Spi1,
+    visible: bool,
+}
+
+#[derive(Debug)]
+struct Spi1 {
     _port: DisplayPort,
     failed: bool,
-    visible: bool,
     pending_since: Option<u32>,
 }
 
@@ -72,29 +80,35 @@ impl DisplayPort {
     /// # Errors
     /// Returns [`Error::Timeout`] if an initialization command stalls.
     pub fn init_with_clock(self, clock: SpiClock) -> Result<Display, Error> {
+        let mut spi = self.start_spi();
+        spi.command(0x01)?;
+        wait_cycles(150 * 24_000);
+        spi.command(0x11)?;
+        wait_cycles(120 * 24_000);
+        spi.command_data(0x3a, &[0x55])?; // RGB565
+        spi.command_data(0x36, &[0])?; // RGB, origin at top left
+        spi.command(0x21)?; // IPS inversion
+        spi.command(0x13)?; // normal mode
+        write(CON + 4, clock as u32);
+        Ok(Display {
+            spi,
+            visible: false,
+        })
+    }
+
+    fn start_spi(self) -> Spi1 {
         set(0x51020, 0x10);
         set(PC + OUT, CS);
         clear(PC + OUT, DC | (1 << 9) | (1 << 10));
         clear(PC + DIR, CS | DC | (1 << 9) | (1 << 10));
         write(CON, 0x4021);
         write(CON + 4, SpiClock::Div5 as u32);
-        let mut lcd = Display {
+        wait_cycles(100 * 24_000);
+        Spi1 {
             _port: self,
             failed: false,
-            visible: false,
             pending_since: None,
-        };
-        wait_cycles(100 * 24_000);
-        lcd.command(0x01)?;
-        wait_cycles(150 * 24_000);
-        lcd.command(0x11)?;
-        wait_cycles(120 * 24_000);
-        lcd.command_data(0x3a, &[0x55])?; // RGB565
-        lcd.command_data(0x36, &[0])?; // RGB, origin at top left
-        lcd.command(0x21)?; // IPS inversion
-        lcd.command(0x13)?; // normal mode
-        write(CON + 4, clock as u32);
-        Ok(lcd)
+        }
     }
 }
 
@@ -143,11 +157,7 @@ impl Display {
         }
         if bytes != 0 {
             self.window(x, y, width, height)?;
-            for chunk in pixels.chunks(CHUNK) {
-                self.wait_dma()?;
-                self.staging()[..chunk.len()].copy_from_slice(chunk);
-                self.start_dma(chunk.len());
-            }
+            self.spi.write_bytes_buffered(pixels)?;
         }
         Ok(())
     }
@@ -171,17 +181,7 @@ impl Display {
             return Ok(());
         }
         self.window(x, y, width, height)?;
-        self.staging()[..bytes.min(CHUNK)]
-            .as_chunks_mut::<2>()
-            .0
-            .fill(rgb565.to_be_bytes());
-        let mut remaining = bytes;
-        while remaining != 0 {
-            self.wait_dma()?;
-            let count = remaining.min(CHUNK);
-            self.start_dma(count);
-            remaining = remaining.saturating_sub(count);
-        }
+        self.spi.repeat_rgb565(rgb565.to_be_bytes(), bytes / 2)?;
         self.flush()
     }
 
@@ -190,13 +190,13 @@ impl Display {
     /// # Errors
     /// Returns [`Error::Timeout`] if SPI1 stalls or a previous transfer failed.
     pub fn flush(&mut self) -> Result<(), Error> {
-        if self.failed {
+        if self.spi.failed {
             return Err(Error::Timeout);
         }
-        if self.pending_since.is_some() {
-            self.wait_dma()?;
+        if self.spi.pending_since.is_some() {
+            self.spi.wait_dma()?;
             if !self.visible {
-                self.command(0x29)?;
+                self.spi.command(0x29)?;
                 self.visible = true;
             }
         }
@@ -204,7 +204,7 @@ impl Display {
     }
 
     fn region_bytes(&self, x: u16, y: u16, width: u16, height: u16) -> Result<usize, Error> {
-        if self.failed {
+        if self.spi.failed {
             return Err(Error::Timeout);
         }
         region_bytes(x, y, width, height)
@@ -221,14 +221,46 @@ impl Display {
             let [c, d] = (start + len - 1).to_be_bytes();
             [a, b, c, d]
         };
-        self.command_data(0x2a, &endpoints(x, width))?;
-        self.command_data(0x2b, &endpoints(y, height))?;
-        self.command(0x2c)
+        self.spi.command_data(0x2a, &endpoints(x, width))?;
+        self.spi.command_data(0x2b, &endpoints(y, height))?;
+        self.spi.command(0x2c)
+    }
+}
+
+impl Spi1 {
+    fn write_bytes_buffered(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        for chunk in bytes.chunks(CHUNK) {
+            self.wait_dma()?;
+            self.staging()[..chunk.len()].copy_from_slice(chunk);
+            self.start_dma(chunk.len());
+        }
+        Ok(())
+    }
+
+    // Prepare one strip, replay it, and leave its final DMA in flight.
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "A strip holds at most CHUNK / 2 pixels, and each count is bounded by remaining."
+    )]
+    fn repeat_rgb565(&mut self, pixel: [u8; 2], mut remaining: usize) -> Result<(), Error> {
+        self.wait_dma()?;
+        let strip = remaining.min(CHUNK / 2);
+        self.staging()[..strip * 2]
+            .as_chunks_mut::<2>()
+            .0
+            .fill(pixel);
+        while remaining != 0 {
+            self.wait_dma()?;
+            let count = remaining.min(strip);
+            self.start_dma(count * 2);
+            remaining -= count;
+        }
+        Ok(())
     }
 
     fn staging(&mut self) -> &mut [u8; CHUNK] {
         debug_assert!(!self.failed && self.pending_since.is_none());
-        // SAFETY: the unique Display owns this permanent SRAM allocation. Callers
+        // SAFETY: the unique SPI1 transport owns this permanent SRAM allocation. Callers
         // complete any preceding transfer and stop on timeout before borrowing it.
         let buffer = unsafe { &raw mut DMA_BUFFER.0 };
         unsafe { &mut *buffer }
@@ -242,11 +274,14 @@ impl Display {
         debug_assert!((1..=CHUNK).contains(&len));
         self.begin(true);
         self.pending_since = Some(cycles());
-        // SAFETY: DMA reads only initialized bytes from the single Display's static SRAM.
+        // SAFETY: DMA reads only initialized bytes from the transport's static SRAM.
         unsafe { fm1_spi1_dma((&raw const DMA_BUFFER.0).cast(), len as u32) };
     }
 
     fn wait_dma(&mut self) -> Result<(), Error> {
+        if self.failed {
+            return Err(Error::Timeout);
+        }
         if let Some(start) = self.pending_since.take() {
             self.finish(start)?;
         }
@@ -272,15 +307,14 @@ impl Display {
         Ok(())
     }
     fn command(&mut self, command: u8) -> Result<(), Error> {
+        self.wait_dma()?;
         self.begin(false);
         write(CON + 8, u32::from(command));
         self.finish(cycles())
     }
     fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Error> {
         self.command(command)?;
-        // Initialization arguments and window endpoints always fit in one strip.
-        self.staging()[..data.len()].copy_from_slice(data);
-        self.start_dma(data.len());
+        self.write_bytes_buffered(data)?;
         self.wait_dma()
     }
 }

@@ -8,15 +8,26 @@ repository = "https://github.com/fm1-rust/fm1-rust"
 keywords = ["embedded-hal", "fm1", "pi32v2"]
 categories = ["embedded", "hardware-support", "no-std"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 audio = []
+embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
+
+[[example]]
+name = "graphics"
+required-features = ["embedded-graphics"]
 
 [[example]]
 name = "tone"
 required-features = ["audio"]
 
 [dependencies]
+embedded-graphics = { version = "0.8.2", optional = true }
 embedded-hal = "1"
+mipidsi = { version = "0.10", optional = true }
+oxstack-gfx = { version = "0.2.1", optional = true }
 
 [lints]
 workspace = true

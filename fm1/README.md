@@ -50,6 +50,51 @@ LCD transfer can miss the refill deadline and cause old samples to repeat.
 When initializing USB-MIDI, supply your application's USB vendor ID, product
 ID and descriptor strings to `into_midi`.
 
+## Drawing with embedded-graphics
+
+Enable the optional `embedded-graphics` feature on `fm1` or `fm1-rticx`.
+`fm1::display::graphics` re-exports `embedded_graphics` and `mipidsi`.
+Both drawing paths use the BSP's SPI1 DMA strip and work without a heap.
+
+Use `init_mipidsi` to draw directly to the 240 × 240 panel. It returns a
+`mipidsi::Display` using the upstream `mipidsi::models::ST7789`. Each draw
+finishes its transfer before returning.
+
+```rust,no_run
+# #[cfg(feature = "embedded-graphics")]
+# fn draw(mut board: fm1::Board) {
+use fm1::display::SpiClock;
+use fm1::display::graphics::embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+
+let mut lcd = board.display.init_mipidsi(SpiClock::Div1, &mut board.timers).unwrap();
+lcd.clear(Rgb565::BLACK).unwrap();
+Pixel(Point::new(24, 5), Rgb565::GREEN).draw(&mut lcd).unwrap();
+# }
+```
+
+To overlap drawing and transfer, use the native `Display` with a caller-sized
+`Framebuffer<W, H>`. It stores two bytes per pixel and tracks the first and last
+dirty rows. A full-screen canvas uses 115,200 bytes of pixel storage and belongs
+in static RAM. The example sends one 96-pixel row at panel y = 37. A second write
+without further drawing sends nothing. Call `mark_all_dirty()` for an initial
+full repaint or when moving the canvas.
+
+```rust,no_run
+# #[cfg(feature = "embedded-graphics")]
+# fn draw(lcd: &mut fm1::display::Display) -> Result<(), fm1::display::Error> {
+use fm1::display::graphics::{
+    Framebuffer,
+    embedded_graphics::{pixelcolor::Rgb565, prelude::*},
+};
+
+let mut meter = Framebuffer::<96, 12>::new();
+Pixel(Point::new(24, 5), Rgb565::GREEN).draw(&mut meter).unwrap();
+lcd.write_framebuffer_buffered(8, 32, &mut meter)?;
+// The meter can be redrawn while SPI1 sends the copied pixels.
+lcd.flush()
+# }
+```
+
 ## Panel controls
 
 Pass a desired `Leds` value to `Controls::scan` every 100 µs. Each completed
@@ -155,8 +200,9 @@ export PI32V2_ISA=/path/to/pi32v2-isa
 
 From the `fm1-rust` workspace root, `./fm1/scripts/build-example.sh blink`
 writes `target/firmware/blink.fwsc` alongside its ELF and raw application
-binary. Use `display` to build the RGB test card or `tone` for the audio test.
-The script enables the `audio` feature for `tone`.
+binary. Use `display` for the native RGB test card, `graphics` for the
+embedded-graphics card or `tone` for the audio test. The script enables
+each example's required features.
 
 1. On an FM-1 with M-Bootloader installed, hold **REC** while powering on to
    enter USB download mode. Connect the device with a USB data cable.
@@ -164,8 +210,9 @@ The script enables the `audio` feature for `tone`.
    `target/firmware/blink.fwsc` and restart the unit after flashing. The
    package updates the application area and preserves the bootloader.
 3. The PLAY LED should blink once per second. Hold **PLAY** for two seconds
-   to return to download mode. In the display and tone examples, press **PLAY**
-   to return.
+   to return to download mode. In the display, graphics and tone examples,
+   press **PLAY** to return. The graphics card normally reads **ST7789**.
+   Hold **PLAY** at startup to select **FRAMEBUFFER**, then release it.
 
 ## Use from another crate
 
