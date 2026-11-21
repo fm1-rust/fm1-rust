@@ -43,7 +43,22 @@ pub unsafe fn reset() {
 /// CPU0 IRQs must be disabled. The vector must save interrupted state and
 /// return with `rti`. Priority must be in the RTICX range 1..=8.
 pub unsafe fn install(irq: Interrupt, priority: u16, vector: unsafe extern "C" fn()) {
-    let n = irq as usize;
+    unsafe { install_at(irq as usize, priority, vector) };
+}
+
+/// Install the TIMER2 entry for the board monotonic and its nesting trampoline.
+///
+/// # Safety
+/// Same as [`install`]. The board driver must exclusively own TIMER2.
+pub unsafe fn install_timer2(priority: u16) {
+    unsafe extern "C" {
+        fn __rticx_irq_TIMER2();
+    }
+    const TIMER2_IRQ: usize = 6; // AC79 SDK, asm/hwi.h: IRQ_TIMER2_IDX
+    unsafe { install_at(TIMER2_IRQ, priority, __rticx_irq_TIMER2) };
+}
+
+unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()) {
     let shift = (n % 8) * 4;
     let config = ((u32::from(priority) - 1) << 1) | 1;
     unsafe {

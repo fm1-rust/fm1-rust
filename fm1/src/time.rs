@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Julius Vitkauskas
 // SPDX-License-Identifier: MIT-0
-//! AC791N TIMER4 and TIMER5, both referenced to the 24 MHz crystal.
+//! AC791N timers referenced to the 24 MHz crystal.
 
-use crate::{
-    Token,
-    panel::Controls,
-    registers::{read, write},
-};
+mod alarm;
+pub use alarm::Alarm;
+
+use crate::{Token, panel::Controls, registers::write};
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use embedded_hal::delay::DelayNs;
 
@@ -47,7 +46,10 @@ fn tick() {
 
 /// Clock frequencies are fixed for this boot configuration.
 #[derive(Debug)]
-pub struct Timers(Token);
+pub struct Timers {
+    _core: Token,
+    alarm_taken: bool,
+}
 impl Timers {
     /// TIMER4 crystal counts per second.
     pub const CRYSTAL_HZ: u32 = 24_000_000;
@@ -64,7 +66,19 @@ impl Timers {
         write(T5_CON + 4, 0);
         write(T5_CON + 8, Self::CRYSTAL_HZ / 4 / Self::TICK_HZ - 1);
         write(T5_CON, 0x4019);
-        Self(Token::new())
+        Self {
+            _core: Token::new(),
+            alarm_taken: false,
+        }
+    }
+
+    /// Take the independent TIMER2 alarm once. TIMER4 and TIMER5 keep running.
+    #[must_use]
+    pub fn take_alarm(&mut self) -> Option<Alarm> {
+        if core::mem::replace(&mut self.alarm_taken, true) {
+            return None;
+        }
+        Some(Alarm::new())
     }
 
     /// Acknowledge TIMER5 and advance the 100 Hz clock when due. Call once per interrupt
@@ -122,8 +136,18 @@ pub(crate) fn install_tick_interrupt() {
     unsafe { fm1_set_icfg(0x300) };
 }
 
-pub(crate) fn cycles() -> u32 {
-    read(T4_CNT)
+/// Read the free-running TIMER4 crystal counter from any CPU0 task after board startup.
+/// The counter wraps every 2³² cycles (about 179 seconds). A host has no running counter.
+#[must_use]
+pub fn cycles() -> u32 {
+    #[cfg(any(fm1, test))]
+    {
+        crate::registers::read(T4_CNT)
+    }
+    #[cfg(not(any(fm1, test)))]
+    {
+        0
+    }
 }
 pub(crate) fn wait_cycles(span: u32) {
     let start = cycles();

@@ -60,9 +60,23 @@ green when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, r
    playback level.
 
 Incoming notes span MIDI numbers 53–79. Incoming notes and physical keys
-have independent lifetimes, including at the same pitch. The MIDI task runs
-once per panel sweep below the audio interrupt. The example uses the shared
+have independent lifetimes, including at the same pitch. The MIDI task uses
+TIMER2 to service USB at roughly 1 ms intervals and to wake for each MIDI Clock
+pulse. Panel scanning and audio have higher task priorities. The example uses the shared
 [pid.codes test identity](https://pid.codes/1209/0001/) for bench use. A distributed product needs its own USB identity.
+
+### Follow the piano’s MIDI Clock in Ableton Live
+
+Enable **Sync** for the **FM-1 MIDI Piano** input in Live’s MIDI settings and
+turn on **EXT** in the control bar. Tap PLAY/STOP on the FM-1. The green PLAY
+lamp indicates the transport is running. The piano sends MIDI Start, 24 timing
+pulses per quarter note at 120 BPM, and MIDI Stop on the next press. Keys
+still play and send notes during synchronization.
+
+`MAX US` shows the worst lateness of the firmware’s clock task since Start.
+`MISSED` counts pulses skipped when the task or USB endpoint falls a full pulse
+behind. The audio `LATE` indicator continues to report DMA refill overruns.
+USB frame scheduling and host-side latency are outside the `MAX US` measurement.
 
 The packages are written to `target/firmware/`. Download the `.fwsc` files from the `fm1-rticx-firmware`
 artifact on a successful [fm1-rticx workflow run][ci].
@@ -101,5 +115,23 @@ Import `time::Timebase` for `Clock::now()`, `delay`, `delay_until` and
 timeouts. The clock wraps after 2³² ticks of 10 ms. Keep deadlines less
 than 2³¹ ticks ahead. The blink example advances an absolute deadline each
 period so work done in the task does not accumulate as drift.
+
+For finer deadlines, take TIMER2 before moving the board timers into the
+panel or 100 Hz clock task. The deadline clock owns its interrupt handler.
+The const argument sets its RTICX priority.
+
+```rust,ignore
+use fm1_rticx::time::{DeadlineClock, ExtU32, Timebase};
+
+DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
+// In an async task:
+let deadline = DeadlineClock::now() + 250.micros();
+DeadlineClock::delay_until(deadline).await;
+```
+
+`DeadlineClock` reads the 24 MHz TIMER4 counter and arms TIMER2 for the next
+deadline. TIMER2 stops while the queue is empty. TIMER5 and panel scanning are
+optional. Schedule less than 2³¹ crystal cycles (about 89 s) ahead and advance
+periodic work from its previous deadline to carry phase across counter wrap.
 
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml

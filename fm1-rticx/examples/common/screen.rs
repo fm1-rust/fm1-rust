@@ -78,7 +78,7 @@ impl Screen {
         sign: Option<u8>,
         ink: Ink,
     ) {
-        let mut bytes = [b' '; 4];
+        let mut bytes = [b' '; 10];
         let mut i = width;
         loop {
             i -= 1;
