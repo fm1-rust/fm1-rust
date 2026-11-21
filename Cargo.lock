@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "fm1-audio"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "fm1",
  "wavegraph-sample",
@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "fm1-controls"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "critical-section",
  "fm1",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "fm1-graphics"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "embedded-graphics-core",
  "fm1",
