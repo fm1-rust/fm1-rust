@@ -12,6 +12,8 @@ mod asynchronous;
 pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
+#[cfg(feature = "usb-log")]
+mod log;
 use crate::{
     Board, Token,
     time::{Timers, cycles},
@@ -19,6 +21,8 @@ use crate::{
 use control::{Control, Interface, Reply};
 use controller::{CSR0, INDEX, rd, wr};
 use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "usb-log")]
+pub use log::{InvalidLogLine, UsbLog};
 
 /// A USB-MIDI 1.0 event packet. Byte 0 contains the cable (high nibble,
 /// zero for this device) and Code Index Number; bytes 1..=3 carry MIDI.

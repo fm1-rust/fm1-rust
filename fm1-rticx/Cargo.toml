@@ -14,6 +14,7 @@ fm1 = "0.1.2"
 rtic-time = "3"
 rticx-pi32v2 = "0.2.0-pre"
 rticx-pi32v2-macro = "0.1.1"
+rtt-target = { version = "0.6.2", optional = true }
 
 [dev-dependencies]
 fm1-audio = "0.1"
@@ -27,6 +28,8 @@ async-display = ["fm1/async-display"]
 async-usb = ["fm1/async-usb"]
 audio = ["fm1/audio"]
 embedded-graphics = ["fm1/embedded-graphics"]
+rtt = ["dep:rtt-target"]
+usb-log = ["fm1/usb-log"]
 
 [[example]]
 name = "rticx-piano"
@@ -36,6 +39,10 @@ test = true
 [[example]]
 name = "rticx-tone"
 required-features = ["audio"]
+
+[[example]]
+name = "usb-log"
+required-features = ["usb-log", "rtt"]
 
 [[example]]
 name = "rticx-waveform"

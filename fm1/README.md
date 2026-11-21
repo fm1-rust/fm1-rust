@@ -58,6 +58,37 @@ After a wake, check `device.session()`, receive packets, and retry pending sends
 The task can also wake on locally produced output. An idle, configured device
 sleeps through start-of-frame traffic.
 
+### USB debug log
+
+Enable the `usb-log` feature to keep short, printable ASCII lines in a
+`usb_midi::UsbLog`. Recording only writes to RAM. The USB owner passes each
+received batch to the log and can process those same events as usual.
+
+```rust
+# #[cfg(feature = "usb-log")]
+# fn example(usb: &mut fm1::usb_midi::MidiDevice) -> ! {
+use fm1::usb_midi::{PacketBuffer, UsbLog};
+
+let mut log = UsbLog::new();
+log.record("voice started").expect("short ASCII line");
+let mut rx = PacketBuffer::default();
+loop {
+    usb.poll();
+    let events = usb.receive(&mut rx);
+    log.service(usb, events);
+    // Handle application MIDI from `events` here.
+}
+# }
+```
+
+A snapshot fits in one USB transfer and retains the newest 44 bytes of complete
+lines, including newlines. One record can contain up to 43 printable bytes.
+Call `service` even with empty input to retry a busy endpoint. The reader
+sends `F0 7D F7` on cable zero and prints the text between `F0 7D 01` and
+`F7`. Reading preserves the history. For a custom MIDI port name, pass
+`--port "WaveGraph"` (or another matching name) to
+[`read-usb-log.py`](scripts/read-usb-log.py).
+
 ## Asynchronous LCD writes
 
 Enable `async-display` on `fm1` or `fm1-rticx` and call
