@@ -11,7 +11,8 @@ interrupt bindings. Both run without an allocator.
 ## Examples
 
 With the [firmware toolchain environment](../fm1/README.md#build-and-flash)
-set, run the example builds from the workspace root.
+set, run the example builds from the workspace root. The WaveGraph demo uses
+Git dependencies and is built from the repository checkout.
 
 ```sh
 ./fm1/scripts/build-example.sh rticx-blink
@@ -27,7 +28,7 @@ set, run the example builds from the workspace root.
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
 | [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs. An async task consumes completed sweeps and updates the controls while another task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
-| [rticx-waveform](examples/rticx-waveform.rs) | Play the WaveGraph monosynth. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-waveform][waveform-example] | Play the WaveGraph monosynth. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
 
 The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
 frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
@@ -160,12 +161,12 @@ artifact on a successful [fm1-rticx workflow run][ci].
 
 ## Application setup
 
-For a firmware project next to an `fm1-rust` checkout, add one dependency.
+For a firmware project, add the published crate to `Cargo.toml`.
 Enable its `audio` feature to use the ALNK0 driver.
 
 ```toml
 [dependencies]
-fm1-rticx = { path = "../fm1-rust/fm1-rticx" }
+fm1-rticx = "0.1.0"
 ```
 
 Annotate the application module with `#[fm1_rticx::app]`. In `#[init]`, call
@@ -175,9 +176,9 @@ and vectors. Use `#[post_init]` to spawn the first software tasks. The
 [RTICX blink example](examples/rticx-blink.rs) includes a panic handler and
 can serve as your `src/main.rs`.
 
-Copy `../fm1-rust/fm1/targets/pi32v2-none.json` to your application root.
+Copy the [pi32v2 target specification][target-spec] to your application root.
 Then use the `cargo build` and `fm1app.py` commands in the
-[BSP's standalone build instructions](../fm1/README.md#use-from-another-crate).
+[BSP's standalone build instructions][standalone].
 
 Bind hardware tasks with `#[task(binds = ALNK0, priority = 3)]`. For
 `#[async_task]`, list one software interrupt per distinct positive software
@@ -217,6 +218,9 @@ periodic work from its previous deadline to carry phase across counter wrap.
 enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
 lists the drivers and their upstream sources.
 
+[waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1-rticx/examples/rticx-waveform.rs
+[standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1/README.md#use-from-another-crate
+[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.0/fm1/targets/pi32v2-none.json
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/LICENSE
