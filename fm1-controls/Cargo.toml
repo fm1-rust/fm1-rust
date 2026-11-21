@@ -1,0 +1,19 @@
+[package]
+name = "fm1-controls"
+version = "0.1.0"
+edition = "2024"
+description = "Asynchronous front-panel input for the M-VAVE FM-1"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["fm1", "async", "controls"]
+categories = ["asynchronous", "embedded", "no-std"]
+
+[dependencies]
+fm1 = { version = "0.1.1", path = "../fm1" }
+rticx-async = "0.2"
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
+
+[lints]
+workspace = true

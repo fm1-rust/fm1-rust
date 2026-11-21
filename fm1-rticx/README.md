@@ -25,7 +25,7 @@ set, run the example builds from the workspace root.
 | --- | --- |
 | [rticx-blink](examples/rticx-blink.rs) | TIMER5 wakes two periodic async tasks. One toggles the PLAY LED every 500 ms. The other samples the button every 10 ms. Hold PLAY for two seconds to return to download mode. |
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
-| [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs while a lower-priority task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs. An async task consumes completed sweeps and updates the controls while another task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-waveform](examples/rticx-waveform.rs) | Play a monophonic oscillator and see the samples sent to the DAC. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
 
@@ -78,7 +78,14 @@ SPI1 completion interrupt at priority 1. TIMER5 supplies its stall timeout.
 
 The controls display shows MASTER, signed counts for all encoders, a press count
 for each button, and the last piano key (1–27). Green text means held, cyan means
-previously pressed, and an asterisk marks an enabled lamp.
+previously pressed, and an asterisk marks an enabled lamp. Hold HOME for the
+peak TIMER5 handler time (`IRQ US`), peak time from a completed sweep to the
+input task receiving it (`DISPATCH US`), and the number of dropped sweeps
+(`SCAN DROPS`). The [`fm1-controls`](../fm1-controls/) FIFO holds eight sweeps.
+Only the display coalesces updates during normal operation. A full input FIFO
+drops the newest sweep. The next accepted one restores held levels, key LEDs
+and MASTER. The diagnostic counts only button presses and encoder detents it
+actually received.
 
 On the piano display, held notes are green and notes played since boot stay
 cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent

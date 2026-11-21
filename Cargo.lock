@@ -204,6 +204,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fm1-controls"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "fm1",
+ "rticx-async",
+]
+
+[[package]]
 name = "fm1-graphics"
 version = "0.1.0"
 dependencies = [
@@ -218,6 +227,7 @@ dependencies = [
  "critical-section",
  "fm1",
  "fm1-audio",
+ "fm1-controls",
  "fm1-graphics",
  "rtic-time",
  "rticx-pi32v2",
