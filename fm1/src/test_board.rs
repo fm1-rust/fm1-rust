@@ -11,6 +11,7 @@ use registers::*;
 struct Chip {
     regs: BTreeMap<usize, u32>,
     ticks: u32,
+    usb_reply: Option<u8>,
     spi_done: bool,
     dma_stuck: bool,
     dma: Option<(*const u8, usize)>,
@@ -20,6 +21,10 @@ struct Chip {
     last_key_sample: Option<(u16, u32)>,
 }
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
+
+pub(crate) fn complete_usb_on_timer_read(value: u8) {
+    CHIP.with_borrow_mut(|chip| chip.usb_reply = Some(value));
+}
 
 pub(crate) fn read(addr: usize) -> u32 {
     CHIP.with_borrow_mut(|chip| match addr {
@@ -36,6 +41,12 @@ pub(crate) fn read(addr: usize) -> u32 {
         }
         0x10804 => {
             chip.ticks = chip.ticks.wrapping_add(24_000);
+            // Complete an outstanding SIE read while a millisecond elapses in an ISR.
+            if chip.regs.get(&0x11804).is_some_and(|v| v & 0x4000 != 0)
+                && let Some(value) = chip.usb_reply.take()
+            {
+                chip.regs.insert(0x11804, 0x8000 | u32::from(value));
+            }
             chip.ticks
         }
         0x11d00 => {

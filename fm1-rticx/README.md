@@ -41,8 +41,10 @@ previously pressed, and an asterisk marks an enabled lamp.
 On the piano display, held notes are green and notes played since boot stay
 cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent
 note name and MIDI number on screen. A red `LATE` records a DMA boundary
-crossed during an audio refill. The piano uses digital key events at fixed
-velocity 127 and produces stereo audio locally.
+crossed during an audio refill. `VEL` shows the last strike velocity. `PRESS`
+shows how hard that note is being held, or `--` after release and for a physical
+key without pressure sensing. Pressing harder brings that voice up in the local
+stereo mix.
 
 ### Record and play a MIDI clip
 
@@ -53,11 +55,14 @@ green when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, r
    and output ports.
 2. On an empty MIDI track, choose **MIDI From → FM-1 MIDI Piano → Ch. 1**.
    Leave **MIDI To** set to **No Output**, arm the track, and record a chord.
-   The FM-1 plays the keys locally while Live records their lengths.
+   The FM-1 plays the keys locally and sends their strike velocities. Hold two
+   keys between F3 and C5 and press harder on one. The piano sends MIDI
+   Polyphonic Key Pressure (0xA0) for that note. The top seven keys send strike
+   velocity only.
 3. Stop recording, disarm the track, choose **MIDI To → FM-1 MIDI Piano →
    Ch. 1**, and play the clip. The matching key LEDs light up and the FM-1's
-   speaker or headphones play the chord. Edit a note's velocity to change its
-   playback level.
+   speaker or headphones play the chord. The synth responds to incoming note
+   velocity and polyphonic pressure.
 
 Incoming notes span MIDI numbers 53–79. Incoming notes and physical keys
 have independent lifetimes, including at the same pitch. The MIDI task uses

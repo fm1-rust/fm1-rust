@@ -7,8 +7,10 @@
 
 mod controls;
 mod state;
+mod touch;
 pub use controls::{Button, Controls, Encoder};
 pub use state::{Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan, Switch};
+pub use touch::{PianoTouch, TouchControls};
 
 use crate::{Token, registers::*, time::wait_cycles};
 use core::convert::Infallible;
@@ -139,6 +141,12 @@ impl Play {
     #[must_use]
     pub fn into_controls(self) -> Controls {
         Controls::new(self.into_matrix())
+    }
+
+    /// Scan the panel with strike velocity on every piano key and pressure on the lower 20.
+    #[must_use]
+    pub fn into_touch_controls(self) -> TouchControls {
+        TouchControls::new(self.into_controls())
     }
 }
 

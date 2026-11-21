@@ -30,6 +30,7 @@ entry path.
 | --- | --- |
 | `board.panel` | Borrow the PLAY/STOP indicator as an `OutputPin` or `StatefulOutputPin`. Its `set_color` method selects amber (default) or green. Sampling the active-low button briefly blanks the indicator and restores its color and on/off state. |
 | `board.panel.into_controls()` | Scan 14 panel buttons, 27 piano keys and their indicators, seven encoders, both PLAY/STOP LED channels, and the 10-bit MASTER potentiometer. |
+| `board.panel.into_touch_controls()` | Scan the same panel with per-key strike velocity and polyphonic aftertouch. |
 | `board.panel.into_matrix()` | Select one of 11 columns, sample six switch rows or drive the four LED rows. The application controls scan timing and debounce. |
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
@@ -74,6 +75,49 @@ STOP channel as `PlayColor::Amber` on the fixed PLAY handle.
 With RTICX, start the clock with `Clock::start(board.timers.with_panel_scan_rate())`.
 Call the returned timer's `on_interrupt()` and the panel's `scan(&leds)` on every
 TIMER5 interrupt. Async deadlines retain their 10 ms unit.
+
+### Piano velocity and aftertouch
+
+Use `board.panel.into_touch_controls()` and call `scan(&leds)` at the same
+10 kHz column rate. Its two snapshots describe the same sweep. Each press
+has a velocity in 1–127, held constant until release. The lower 20 keys
+(F3–C5) also measure pressure in 0–127. The upper seven (C♯5–G5) estimate
+velocity through the shared LED line. Their `pressure()` returns `None`.
+An upper key already held at startup uses velocity 64 until its first release
+lets the scanner measure the open contact.
+
+```rust
+use fm1::panel::{Event, Leds, Switch, TouchControls};
+
+fn scan_keyboard(
+    controls: &mut TouchControls,
+    leds: &Leds,
+    mut note_on: impl FnMut(u8, u8),
+    mut note_off: impl FnMut(u8),
+    mut aftertouch: impl FnMut(u8, u8),
+) {
+    let Some((scan, touch)) = controls.scan(leds) else { return };
+    for event in scan.events() {
+        match event {
+            Event::Pressed(Switch::Piano(key)) => {
+                if let Some(velocity) = touch.velocity(key) {
+                    note_on(key.index() + 53, velocity);
+                }
+            }
+            Event::Released(Switch::Piano(key)) => note_off(key.index() + 53),
+            _ => {}
+        }
+    }
+    for (key, pressure) in touch.pressure_changes() {
+        aftertouch(key.index() + 53, pressure);
+    }
+}
+```
+
+The scanner shares the ADC with MASTER. Each key has a measurement slot every
+4.4 ms. Sampling can take several slots to distinguish the landing from contact
+bounce. Measuring a held analog key briefly blanks its column. One sweep in four is
+reserved for lighting, so indicators can look dimmer in this mode.
 
 ## Build and flash
 
@@ -170,7 +214,9 @@ licensed under MIT-0.
 The panel matrix and headphone switch wiring follow [felucca-bsp][felucca].
 The scanner follows the MPL-2.0 [Felucca inputs and ADC][panel-driver] and the
 physical control names in [fm1-base][panel-labels]. The green PLAY indicator
-uses the position measured by [Araminta][play-green].
+uses the position measured by [Araminta][play-green]. Piano expression uses the
+row-drive and probe wiring from Felucca and the strike curves from Charles
+Vestal’s [fm1-base touch library][touch-driver].
 The optional audio module ports its MPL-2.0 driver by Leo Kuroshita
 (Hügelton Instruments) and Kerem Kilic (Ellic Studio). Repository integration
 is MIT-licensed.
@@ -195,3 +241,5 @@ vendor and product IDs and descriptor strings.
 [usb-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/chip/usb.c
 [panel-driver]: https://github.com/hugelton/felucca-bsp/tree/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1
 [panel-labels]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/device/panel.c
+
+[touch-driver]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/lib/touch.c

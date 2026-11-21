@@ -128,15 +128,18 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
 // leave DONE clear indefinitely. Bound one transaction, then back off.
 #[inline(never)]
 fn transaction(command: u32) -> Result<u8> {
-    let start = cycles();
     write(CON1, command);
     sync_tx();
+    let start = cycles();
     loop {
+        // The audio ISR can preempt a poll for longer than the timeout. Read DONE
+        // after sampling the deadline so a completed transfer always wins.
+        let expired = cycles().wrapping_sub(start) >= Timers::CRYSTAL_HZ / 10_000;
         let value = read(CON1);
         if value & 0x8000 != 0 {
             return Ok(value.to_le_bytes()[0]);
         }
-        if cycles().wrapping_sub(start) >= Timers::CRYSTAL_HZ / 10_000 {
+        if expired {
             return Err(Timeout);
         }
     }
@@ -235,4 +238,16 @@ unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: 
         count_reg,
         u32::try_from(bytes.len()).expect("one USB packet fits"),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_completed_sie_read_wins_after_preemption() {
+        crate::test_board::complete_usb_on_timer_read(42);
+        assert_eq!(rd(INDEX).ok(), Some(42));
+        assert!(rd(INDEX).is_err()); // A controller that stays busy still times out.
+    }
 }
