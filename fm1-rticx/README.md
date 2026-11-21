@@ -35,6 +35,26 @@ interrupt overruns its budget or a refill deadline is missed. The piano also
 shows peak audio service time in microseconds (`AUD`) and observed audio
 overruns (`XR`). Its MIDI clock timing fields are independent.
 
+Hold **HOME** in the waveform or piano demo to see peak interrupt timings while
+playing. Release it to restore the usual display. The peaks accumulate from
+startup using the 24 MHz TIMER4 and are displayed in microseconds, rounded up.
+
+| Field | Measurement |
+| --- | --- |
+| `WORK` | Longest elapsed time from Rust handler entry to its final timing sample, including preemption. The audio sample follows the output taps. The panel sample includes the complete column service, including end-of-sweep processing. A value turns red if it reaches the period. |
+| `GAP` | Longest interval between consecutive serviced entries. Audio normally has 69,632 ticks (2.901 ms) between refills. The panel has 2,400 ticks (100 µs) between columns. Entry jitter can lengthen a gap even when both jobs finish on time. |
+| `COMMIT` | Longest time from audio handler entry until a successful DMA submission returned. Includes the input snapshot, synthesis, MASTER gain and DMA copy. Starts at zero until the first successful submission. |
+| `XR` | Serviced audio interrupts that reported a late refill, used a full period, or arrived at least two periods after the previous service. Several coalesced events can increment this counter once. |
+
+The examples exercise different priority orders on CPU0. In the waveform demo,
+audio (3) can interrupt the panel (2). In the piano demo, the panel (4) can
+interrupt audio (3), and up to 30 panel ticks can arrive in a 128-frame block. The
+piano's independent TIMER2 alarm also runs at 3 and can delay audio entry.
+These readings describe observed runs. A worst-case response-time bound also
+needs bounds on shared-resource and interrupt masking time, interrupt overhead
+and task execution on the chip. TIMER4 sampling at entry cannot measure how
+long an interrupt was pending before the handler ran.
+
 The waveform starts on A4. The graph shows 224 consecutive left-channel samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
 trace. Audio runs at priority 3, panel scanning at 2 and drawing at 1. The

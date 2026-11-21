@@ -10,13 +10,19 @@
 #[path = "common/pitch.rs"]
 mod pitch;
 #[cfg(any(target_os = "none", test))]
+#[path = "common/timing.rs"]
+mod timing;
+#[cfg(any(target_os = "none", test))]
 #[path = "rticx-waveform/voice.rs"]
 mod voice;
 
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
-    use crate::voice::{Capture, HEIGHT, Trace, Voice, WIDTH};
+    use crate::{
+        timing::{PanelReport, PanelTiming, TimingFooter},
+        voice::{Capture, HEIGHT, Trace, Voice, WIDTH},
+    };
     use fm1_audio::{MasterLevel, Output, Refill, Stats};
     use fm1_graphics::{TextGrid, Waveform, palette};
     use fm1_rticx::{
@@ -44,6 +50,7 @@ mod app {
         voice: Voice,
         trace: Trace,
         stats: Stats,
+        panel: PanelReport,
         ready: Sender<'static, (), 1>,
     }
 
@@ -61,6 +68,7 @@ mod app {
                     voice,
                     trace: [64; WIDTH],
                     stats: Stats::default(),
+                    panel: PanelReport::default(),
                     ready,
                 },
             },
@@ -73,6 +81,7 @@ mod app {
                 panel: Panel {
                     timers: board.timers.with_panel_scan_rate(),
                     controls: board.panel.into_controls(),
+                    timing: PanelTiming::default(),
                     leds,
                     voice,
                     octave_since: None,
@@ -90,20 +99,32 @@ mod app {
         Draw::spawn(()).expect("one scope renderer");
     }
 
-    #[task(binds = TIMER5, priority = 2, shared = [voice])]
+    #[task(binds = TIMER5, priority = 2, shared = [voice, frame])]
     struct Panel {
         timers: Timers,
         controls: Controls,
+        timing: PanelTiming,
         leds: Leds,
         voice: Voice,
         octave_since: Option<u32>,
     }
     impl RticTask for Panel {
         fn exec(&mut self) {
+            let started = cycles();
+            let home = self.scan();
+            if let Some(report) = self.timing.record(started, cycles(), home) {
+                self.shared().frame.lock(|f| {
+                    f.panel = report;
+                    let _ = f.ready.try_send(());
+                });
+            }
+        }
+    }
+
+    impl Panel {
+        fn scan(&mut self) -> Option<bool> {
             self.timers.on_interrupt();
-            let Some(scan) = self.controls.scan(&self.leds) else {
-                return;
-            };
+            let scan = self.controls.scan(&self.leds)?;
             let before = self.voice;
             for event in scan.events() {
                 match event {
@@ -142,6 +163,7 @@ mod app {
             } else {
                 self.octave_since = None;
             }
+            Some(scan.is_down(Button::Home))
         }
     }
 
@@ -158,6 +180,7 @@ mod app {
             let result = self.output.render(MasterLevel::MAX, |block| {
                 self.phase = voice.render(self.phase, block);
             });
+            let refill_ended = cycles();
             match result {
                 Refill::WouldBlock => return,
                 Refill::Late => {
@@ -175,9 +198,15 @@ mod app {
                     }
                 }
             }
-            self.shared()
-                .frame
-                .lock(|f| f.stats.record(started, result));
+            self.shared().frame.lock(|f| {
+                // If no traces complete, show the first overrun and refresh at most
+                // once per 32 further overruns (about 11 Hz under continuous loss).
+                if f.stats.record_with_refill(started, refill_ended, result)
+                    && (f.stats.overruns == 1 || f.stats.overruns.is_multiple_of(32))
+                {
+                    let _ = f.ready.try_send(());
+                }
+            });
         }
     }
 
@@ -197,20 +226,17 @@ mod app {
                 .init_with_clock(SpiClock::Div1)
                 .expect("LCD");
             let mut text = TextGrid::new();
+            let mut footer = TimingFooter::default();
             let mut scope = Waveform::<WIDTH, HEIGHT>::new(8, 48).expect("scope fits the LCD");
             lcd.fill_rect(0, 0, SIZE, SIZE, 0).expect("LCD clear");
             text.text(0, 2, b"NOTE", palette::MUTED);
             text.text(10, 2, b"VEL", palette::MUTED);
-            text.text(0, 11, b"PRESETS  WAVEFORM", palette::MUTED);
-            text.text(0, 12, b"MASTER   VELOCITY", palette::MUTED);
-            text.text(0, 13, b"SELECT   TRANS", palette::MUTED);
-            text.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
             loop {
-                self.updates.recv().await.expect("audio owns sender");
-                let (voice, trace, late) = self
+                self.updates.recv().await.expect("frame owns sender");
+                let (voice, trace, stats, panel) = self
                     .shared()
                     .frame
-                    .lock(|f| (f.voice, f.trace, f.stats.overruns != 0));
+                    .lock(|f| (f.voice, f.trace, f.stats, f.panel));
                 text.text(0, 0, voice.wave.label(), palette::CYAN);
                 text.text(
                     16,
@@ -224,9 +250,14 @@ mod app {
                 );
                 text.text(5, 2, &crate::pitch::note_name(voice.note()), palette::WHITE);
                 text.number(14, 2, 3, u32::from(voice.velocity), palette::WHITE);
-                let shift = voice.transpose;
-                text.signed_number(16, 13, 3, i32::from(shift), palette::WHITE);
-                if late {
+                if !footer.draw(&mut text, panel, &stats) {
+                    text.text(0, 11, b"PRESETS  WAVEFORM", palette::MUTED);
+                    text.text(0, 12, b"MASTER   VELOCITY", palette::MUTED);
+                    text.text(0, 13, b"SELECT   TRANS", palette::MUTED);
+                    text.signed_number(16, 13, 3, i32::from(voice.transpose), palette::WHITE);
+                    text.text(0, 14, b"OCT-/+ 2S USB   HOME", palette::MUTED);
+                }
+                if stats.overruns != 0 {
                     text.text(9, 0, b"LATE", palette::RED);
                 }
                 text.paint(&mut lcd).expect("LCD labels");

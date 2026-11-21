@@ -31,9 +31,12 @@ fn play(output: &mut Output, master: MasterLevel, left: &[I24; OUTPUT_FRAMES],
 ```
 
 To measure an interrupt, read `fm1::time::cycles()` at entry and call
-`Stats::record` after rendering, submitting and servicing any output taps.
-The RTICX tone, piano and waveform examples use this path. The piano displays
-its observed overrun count and longest audio service time.
+`Stats::record` after servicing any output taps. This tracks the longest
+service time, the longest interval between serviced entries and observed
+overruns. To also track the time to a successful DMA commit, sample TIMER4
+again when `Output::render` returns and pass both timestamps to
+`Stats::record_with_refill` at the end of service. The RTICX waveform and
+piano examples display these measurements while HOME is held.
 
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml

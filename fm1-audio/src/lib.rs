@@ -114,6 +114,11 @@ pub struct Stats {
     pub overruns: u32,
     /// Longest serviced interrupt in ticks of the 24 MHz TIMER4, including preemption.
     pub peak_ticks: u32,
+    /// Longest entry-to-entry interval between serviced audio interrupts, in TIMER4 ticks.
+    pub peak_gap_ticks: u32,
+    /// Longest time from entry to a successful refill return sampled by
+    /// [`record_with_refill`](Self::record_with_refill), in TIMER4 ticks.
+    pub peak_commit_ticks: u32,
     last_start: Option<u32>,
 }
 
@@ -121,20 +126,39 @@ impl Stats {
     /// At the end of the interrupt, pass the TIMER4 reading taken at entry and
     /// the refill result. Returns true if this service call observed an overrun.
     pub fn record(&mut self, started: u32, result: Refill) -> bool {
-        self.record_at(started, cycles(), result)
+        self.record_at(started, None, cycles(), result)
     }
 
-    fn record_at(&mut self, started: u32, ended: u32, result: Refill) -> bool {
+    /// Also record the timestamp taken immediately after [`Output::render`] returned.
+    /// Call this once at the end of service, after any output taps. Only a
+    /// [`Refill::Written`] contributes to the peak commit time.
+    pub fn record_with_refill(&mut self, started: u32, refill_ended: u32, result: Refill) -> bool {
+        self.record_at(started, Some(refill_ended), cycles(), result)
+    }
+
+    fn record_at(
+        &mut self,
+        started: u32,
+        refill_ended: Option<u32>,
+        ended: u32,
+        result: Refill,
+    ) -> bool {
         if result == Refill::WouldBlock {
             return false;
+        }
+        if result == Refill::Written
+            && let Some(at) = refill_ended
+        {
+            self.peak_commit_ticks = self.peak_commit_ticks.max(at.wrapping_sub(started));
         }
         let elapsed = ended.wrapping_sub(started);
         self.peak_ticks = self.peak_ticks.max(elapsed);
         let gap = self
             .last_start
             .replace(started)
-            .is_some_and(|last| started.wrapping_sub(last) >= 2 * BLOCK_TICKS);
-        let overrun = result == Refill::Late || elapsed >= BLOCK_TICKS || gap;
+            .map_or(0, |last| started.wrapping_sub(last));
+        self.peak_gap_ticks = self.peak_gap_ticks.max(gap);
+        let overrun = result == Refill::Late || elapsed >= BLOCK_TICKS || gap >= 2 * BLOCK_TICKS;
         if overrun {
             self.overruns = self.overruns.saturating_add(1);
         }
@@ -170,13 +194,22 @@ mod tests {
     fn timing_wraps_and_counts_each_late_service_once() {
         let mut stats = Stats::default();
         let start = u32::MAX - 10;
-        assert!(!stats.record_at(start, 10, Refill::Written));
+        assert!(!stats.record_at(start, Some(2), 10, Refill::Written));
         assert_eq!(stats.peak_ticks, 21);
-        assert!(!stats.record_at(50, 60, Refill::WouldBlock));
+        assert_eq!((stats.peak_commit_ticks, stats.peak_gap_ticks), (13, 0));
+        let before = stats;
+        assert!(!stats.record_at(50, Some(100), 120, Refill::WouldBlock));
+        assert_eq!(stats, before);
         let next = start.wrapping_add(2 * BLOCK_TICKS);
-        assert!(stats.record_at(next, next + 1, Refill::Written));
+        assert!(stats.record_at(next, None, next + 1, Refill::Written));
         let next = next + BLOCK_TICKS;
-        assert!(stats.record_at(next, next + BLOCK_TICKS, Refill::Late));
+        assert!(stats.record_at(next, Some(next + 20), next + BLOCK_TICKS, Refill::Late));
+        let next = next + BLOCK_TICKS + 1;
+        assert!(!stats.record_at(next, Some(next + 3), next + 5, Refill::Written));
+        assert_eq!(
+            (stats.peak_commit_ticks, stats.peak_gap_ticks),
+            (13, 2 * BLOCK_TICKS)
+        );
         assert_eq!((stats.overruns, stats.peak_ticks), (2, BLOCK_TICKS));
     }
 }
