@@ -21,6 +21,11 @@ struct Chip {
     last_key_sample: Option<(u16, u32)>,
 }
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
+// The registers are thread-local, but the real driver's DMA strip is shared.
+static DISPLAY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature = "embedded-graphics")]
+mod graphics;
 
 pub(crate) fn complete_usb_on_timer_read(value: u8) {
     CHIP.with_borrow_mut(|chip| chip.usb_reply = Some(value));
@@ -169,6 +174,7 @@ fn green_play_indicator_restores_its_column_after_sampling() {
 
 #[test]
 fn blink_and_display_use_the_board_api() {
+    let _display = DISPLAY.lock().expect("exclusive display");
     // Isolated, single-core register model at boot.
     let mut board = unsafe { Board::from_reset() };
     assert_eq!(read(0x10908), 59_999);

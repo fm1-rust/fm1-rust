@@ -23,9 +23,10 @@ return to USB download mode on a physical FM-1.
 | --- | --- |
 | [`blink`](fm1/examples/blink.rs) | The PLAY LED turns on for half a second and off for half a second. |
 | [`display`](fm1/examples/display.rs) | Three vertical bars fill the screen in red, green and blue. |
+| [`graphics`](fm1/examples/graphics.rs) | RGB swatches with the label ST7789. Hold PLAY at startup for the framebuffer version of the card. |
 | [`tone`](fm1/examples/tone.rs) | A quiet, continuous square wave at about 441 Hz. |
 
-All three behaviors have been observed on an FM-1 running M-Bootloader
+The blink, display and tone examples have been observed on an FM-1 running M-Bootloader
 `2.4-395E6CC`. Start with the [firmware build and flashing instructions](fm1/README.md#build-and-flash).
 
 For interrupt-driven applications, [`fm1-rticx`](fm1-rticx/) adds priority-based

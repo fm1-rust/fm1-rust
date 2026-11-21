@@ -10,6 +10,7 @@ categories = ["embedded", "hardware-support", "no-std"]
 
 [features]
 audio = ["fm1/audio"]
+embedded-graphics = ["fm1/embedded-graphics"]
 
 [[example]]
 name = "rticx-piano"
