@@ -9,6 +9,8 @@ use core::{
 };
 pub use critical_section;
 
+// Physical MMIO and vector addresses have no Rust backing allocation.
+// Use wrapping offsets when computing a register or vector address.
 // 128 vectors, eight four-bit source configurations per word. Bit zero
 // enables the source and the upper three bits select its hardware priority.
 const CONFIG: *mut u32 = 0x01ee_f100 as _;
@@ -32,7 +34,7 @@ unsafe extern "C" {
 /// Called once from CPU0 startup with interrupts disabled.
 pub unsafe fn reset() {
     for word in 0..WORDS {
-        unsafe { write_volatile(CONFIG.add(word), 0) };
+        unsafe { write_volatile(CONFIG.wrapping_add(word), 0) };
     }
     unsafe { write_volatile(LATCH_CLEAR, 0xff) };
 }
@@ -62,8 +64,8 @@ unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()) {
     let shift = (n % 8) * 4;
     let config = ((u32::from(priority) - 1) << 1) | 1;
     unsafe {
-        write_volatile(VECTORS.add(n), vector);
-        let reg = CONFIG.add(n / 8);
+        write_volatile(VECTORS.wrapping_add(n), vector);
+        let reg = CONFIG.wrapping_add(n / 8);
         write_volatile(
             reg,
             (read_volatile(reg) & !(15 << shift)) | (config << shift),

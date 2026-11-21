@@ -14,6 +14,7 @@ struct Chip {
     usb_reply: Option<u8>,
     spi_done: bool,
     dma_stuck: bool,
+    preempt_until_after_spi_timeout: bool,
     #[cfg(feature = "async-display")]
     hold_irq_dma: bool,
     dma: Option<(*const u8, usize)>,
@@ -21,6 +22,17 @@ struct Chip {
     shifted: u16,
     latched: Vec<u16>,
     last_key_sample: Option<(u16, u32)>,
+}
+impl Chip {
+    fn complete_spi_dma(&mut self) {
+        if let Some((ptr, len)) = self.dma.take() {
+            // SAFETY: the SPI stub records the driver's permanent SRAM strip and
+            // transfer length. Display tests hold DISPLAY while the strip is live.
+            let bytes = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+            self.transfers.push((true, bytes));
+            self.spi_done = true;
+        }
+    }
 }
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
 // The registers are thread-local, but the real driver's DMA strip is shared.
@@ -50,6 +62,13 @@ pub(crate) fn read(addr: usize) -> u32 {
             }
         }
         0x10804 => {
+            if core::mem::take(&mut chip.preempt_until_after_spi_timeout) {
+                // The transfer completes while the CPU is preempted.
+                chip.complete_spi_dma();
+                chip.dma_stuck = false;
+                // A higher-priority interrupt prevents the CPU from resuming for 51 ms.
+                chip.ticks = chip.ticks.wrapping_add(51 * 24_000);
+            }
             chip.ticks = chip.ticks.wrapping_add(24_000);
             // Complete an outstanding SIE read while a millisecond elapses in an ISR.
             if chip.regs.get(&0x11804).is_some_and(|v| v & 0x4000 != 0)
@@ -60,13 +79,8 @@ pub(crate) fn read(addr: usize) -> u32 {
             chip.ticks
         }
         0x11d00 => {
-            if !chip.dma_stuck
-                && let Some((ptr, len)) = chip.dma.take()
-            {
-                // The DMA reads the driver's permanent SRAM only when the model completes it.
-                let bytes = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
-                chip.transfers.push((true, bytes));
-                chip.spi_done = true;
+            if !chip.dma_stuck {
+                chip.complete_spi_dma();
             }
             chip.regs[&addr] | (u32::from(chip.spi_done) << 15)
         }
@@ -296,4 +310,21 @@ fn blink_and_display_use_the_board_api() {
         Err(display::Error::Timeout)
     );
     CHIP.with_borrow(|chip| assert_eq!(chip.transfers.len(), transfers));
+}
+
+#[test]
+fn completion_before_resuming_after_preemption_wins() {
+    let _display = DISPLAY.lock().expect("exclusive display");
+    let mut lcd = display::DisplayPort(Token::new()).init().expect("SPI init");
+    lcd.write_rect_buffered(0, 0, 1, 1, &[0x12, 0x34])
+        .expect("submit");
+    CHIP.with_borrow_mut(|chip| {
+        chip.dma_stuck = true;
+        chip.preempt_until_after_spi_timeout = true;
+    });
+    let result = lcd.flush();
+    CHIP.with_borrow(|chip| {
+        assert!(chip.transfers.contains(&(true, std::vec![0x12, 0x34])));
+    });
+    assert_eq!(result, Ok(()));
 }

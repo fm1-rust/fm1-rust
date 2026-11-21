@@ -320,8 +320,12 @@ impl Spi1 {
         );
     }
     fn finish(&mut self, start: u32) -> Result<(), Error> {
-        while read(CON) & DONE == 0 {
-            if cycles().wrapping_sub(start) >= TIMEOUT_CYCLES {
+        loop {
+            let expired = cycles().wrapping_sub(start) >= TIMEOUT_CYCLES;
+            if read(CON) & DONE != 0 {
+                break;
+            }
+            if expired {
                 clear(CON, 1);
                 set(PC + OUT, CS);
                 self.failed = true;
