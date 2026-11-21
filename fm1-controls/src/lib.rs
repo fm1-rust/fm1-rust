@@ -3,8 +3,8 @@
 #![doc = include_str!("../README.md")]
 
 pub use fm1::panel::*;
-use rticx_async::channel::{Channel, Receiver, Sender};
-pub use rticx_async::channel::{ReceiveError, TrySendError};
+use rtic_sync::channel::{Channel, Receiver, Sender};
+pub use rtic_sync::channel::{ReceiveError, TrySendError};
 
 /// One completed panel sweep and its position relative to any lost input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,7 +19,7 @@ pub struct QueuedScan {
 
 /// Bounded FIFO for one panel interrupt and one input task. Capacity is 1–255 scans.
 pub struct ScanQueue<const N: usize> {
-    channel: Option<Channel<QueuedScan, N>>,
+    channel: Channel<QueuedScan, N>,
 }
 
 impl<const N: usize> ScanQueue<N> {
@@ -27,12 +27,14 @@ impl<const N: usize> ScanQueue<N> {
     #[must_use]
     pub const fn new() -> Self {
         const { assert!(N > 0 && N <= 255, "scan capacity must be 1..=255") };
-        Self { channel: None }
+        Self {
+            channel: Channel::new(),
+        }
     }
 
     /// Start an empty queue. The producer never waits and the receiver can await a scan.
     pub fn split(&mut self) -> (ScanSender<'_, N>, ScanReceiver<'_, N>) {
-        let (sender, receiver) = self.channel.insert(Channel::new()).split();
+        let (sender, receiver) = self.channel.split();
         (ScanSender { sender, missed: 0 }, receiver)
     }
 }

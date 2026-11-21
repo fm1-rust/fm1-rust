@@ -1,6 +1,6 @@
 [package]
 name = "fm1-rticx"
-version = "0.1.0"
+version = "0.2.0-pre"
 edition = "2024"
 description = "RTICX application support for the M-VAVE FM-1"
 license = "MIT"
@@ -14,12 +14,12 @@ exclude = ["/examples/rticx-waveform.rs", "/examples/rticx-waveform/"]
 critical-section = "1"
 fm1 = "0.1.2"
 rtic-time = "3"
-rticx-pi32v2 = "0.1.1"
+rticx-pi32v2 = "0.2.0-pre"
 rticx-pi32v2-macro = "0.1.1"
 
 [dev-dependencies]
 fm1-audio = "0.1"
-fm1-controls = "0.1"
+fm1-controls = "0.2.0-pre"
 fm1-graphics = { version = "0.1", features = ["async-display"] }
 futures-util = { version = "0.3", default-features = false }
 static_cell = "2.1.1"
