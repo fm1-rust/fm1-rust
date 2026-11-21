@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "fm1-audio"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fm1",
  "wavegraph-sample",

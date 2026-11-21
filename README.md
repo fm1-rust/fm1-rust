@@ -9,7 +9,7 @@ M-VAVE FM-1 synthesizer. It runs on CPU0 of the JieLi AC791N, uses
 | Crate | Description | crates.io | Documentation | Build status |
 | --- | --- | --- | --- | --- |
 | [`fm1`](fm1/) | Board support and peripheral drivers | [![crates.io][fm1-version]][fm1-crate] | [![docs.rs][fm1-docs-badge]][fm1-docs] | [![Build status][fm1-build]][fm1-ci] |
-| [`fm1-audio`](fm1-audio/) | Stereo output, master gain and interrupt timing | Unpublished | [Audio guide](fm1-audio/) | [![Build status][fm1-audio-build]][fm1-audio-ci] |
+| [`fm1-audio`](fm1-audio/) | Stereo output, master gain and interrupt timing | [![crates.io][fm1-audio-version]][fm1-audio-crate] | [![docs.rs][fm1-audio-docs-badge]][fm1-audio-docs] | [![Build status][fm1-audio-build]][fm1-audio-ci] |
 | [`fm1-controls`](fm1-controls/) | Front-panel input and async scan delivery | Unpublished | [Controls guide](fm1-controls/) | [![Build status][fm1-controls-build]][fm1-controls-ci] |
 | [`fm1-graphics`](fm1-graphics/) | Text grids and waveform plots over the BSP display | Unpublished | [Drawing guide](fm1-graphics/) | [![Build status][fm1-graphics-build]][fm1-graphics-ci] |
 | [`fm1-rticx`](fm1-rticx/) | RTICX tasks and clocks for the FM-1 | Unpublished | [Application guide](fm1-rticx/README.md#application-setup) | [![Build status][fm1-rticx-build]][fm1-rticx-ci] |
@@ -54,6 +54,10 @@ for the upstream sources and credits.
 [fm1-docs]: https://docs.rs/fm1/
 [fm1-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml/badge.svg?branch=main&event=push
 [fm1-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
+[fm1-audio-version]: https://img.shields.io/crates/v/fm1-audio?logo=rust
+[fm1-audio-crate]: https://crates.io/crates/fm1-audio
+[fm1-audio-docs-badge]: https://docs.rs/fm1-audio/badge.svg
+[fm1-audio-docs]: https://docs.rs/fm1-audio/
 [fm1-audio-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml/badge.svg?branch=main&event=push
 [fm1-audio-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-audio.yml
 [fm1-controls-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-controls.yml/badge.svg?branch=main&event=push
