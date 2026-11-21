@@ -10,6 +10,14 @@ members = [
     "rticx-pi32v2-macro"
 ]
 
+[patch.crates-io]
+fm1 = { path = "fm1" }
+fm1-audio = { path = "fm1-audio" }
+fm1-controls = { path = "fm1-controls" }
+fm1-graphics = { path = "fm1-graphics" }
+rticx-pi32v2 = { path = "rticx-pi32v2" }
+rticx-pi32v2-macro = { path = "rticx-pi32v2-macro" }
+
 # Use the same published I24 type in fm1-audio and the WaveGraph example's Git dependencies.
 [patch."https://github.com/fm1-rust/wavegraph"]
 wavegraph-sample = { version = "0.1" }
