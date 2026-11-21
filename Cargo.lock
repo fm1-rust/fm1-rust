@@ -230,6 +230,7 @@ version = "0.2.0-pre"
 dependencies = [
  "critical-section",
  "fm1",
+ "heapless 0.9.4",
  "rtic-sync",
 ]
 

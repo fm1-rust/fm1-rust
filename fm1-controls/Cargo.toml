@@ -9,7 +9,9 @@ keywords = ["fm1", "async", "controls"]
 categories = ["asynchronous", "embedded", "no-std"]
 
 [dependencies]
+critical-section = "1"
 fm1 = "0.1.2"
+heapless = { version = "0.9", default-features = false }
 rtic-sync = { version = "1.6.1", default-features = false }
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]

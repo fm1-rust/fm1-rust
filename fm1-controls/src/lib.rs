@@ -2,8 +2,14 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+use core::{
+    cell::RefCell,
+    future::poll_fn,
+    task::{Poll, Waker},
+};
+use critical_section::Mutex;
 pub use fm1::panel::*;
-use rtic_sync::channel::{Channel, Receiver, Sender};
+use heapless::Deque;
 pub use rtic_sync::channel::{ReceiveError, TrySendError};
 
 /// One completed panel sweep and its position relative to any lost input.
@@ -19,7 +25,24 @@ pub struct QueuedScan {
 
 /// Bounded FIFO for one panel interrupt and one input task. Capacity is 1–255 scans.
 pub struct ScanQueue<const N: usize> {
-    channel: Channel<QueuedScan, N>,
+    state: Mutex<RefCell<State<N>>>,
+}
+
+struct State<const N: usize> {
+    scans: Deque<QueuedScan, N>,
+    waiter: Option<Waker>,
+    // While either endpoint is usable, this means its peer has dropped.
+    closed: bool,
+}
+
+impl<const N: usize> State<N> {
+    fn try_recv(&mut self) -> Result<QueuedScan, ReceiveError> {
+        self.scans.pop_front().ok_or(if self.closed {
+            ReceiveError::NoSender
+        } else {
+            ReceiveError::Empty
+        })
+    }
 }
 
 impl<const N: usize> ScanQueue<N> {
@@ -28,16 +51,38 @@ impl<const N: usize> ScanQueue<N> {
     pub const fn new() -> Self {
         const { assert!(N > 0 && N <= 255, "scan capacity must be 1..=255") };
         Self {
-            channel: Channel::new(),
+            state: Mutex::new(RefCell::new(State {
+                scans: Deque::new(),
+                waiter: None,
+                closed: false,
+            })),
         }
     }
 
     /// Start an empty queue. The producer never waits and the receiver can await a scan.
     pub fn split(&mut self) -> (ScanSender<'_, N>, ScanReceiver<'_, N>) {
-        // rtic-sync 1.6.1 retains the previous receiver's waker across splits.
-        self.channel = Channel::new();
-        let (sender, receiver) = self.channel.split();
-        (ScanSender { sender, missed: 0 }, receiver)
+        let state = self.state.get_mut().get_mut();
+        state.scans.clear();
+        state.waiter = None;
+        state.closed = false;
+        (
+            ScanSender {
+                queue: self,
+                missed: 0,
+            },
+            ScanReceiver { queue: self },
+        )
+    }
+
+    fn with_state<R>(&self, f: impl FnOnce(&mut State<N>) -> R) -> R {
+        critical_section::with(|cs| f(&mut self.state.borrow_ref_mut(cs)))
+    }
+
+    fn close(&self) -> Option<Waker> {
+        self.with_state(|state| {
+            state.closed = true;
+            state.waiter.take()
+        })
     }
 }
 
@@ -58,7 +103,7 @@ impl<const N: usize> core::fmt::Debug for ScanQueue<N> {
 /// Interrupt-side producer. A full queue keeps the older scans in arrival order.
 #[derive(Debug)]
 pub struct ScanSender<'a, const N: usize> {
-    sender: Sender<'a, QueuedScan, N>,
+    queue: &'a ScanQueue<N>,
     missed: u32,
 }
 
@@ -73,22 +118,113 @@ impl<const N: usize> ScanSender<'_, N> {
         scan: Scan,
         captured_at: u32,
     ) -> Result<(), TrySendError<QueuedScan>> {
-        let result = self.sender.try_send(QueuedScan {
+        let frame = QueuedScan {
             scan,
             captured_at,
             missed_before: self.missed,
-        });
-        match result {
-            Ok(()) => self.missed = 0,
-            Err(TrySendError::Full(_)) => self.missed = self.missed.saturating_add(1),
-            Err(TrySendError::NoReceiver(_)) => {}
+        };
+        let waiter = self.queue.with_state(|state| {
+            if state.closed {
+                return Err(TrySendError::NoReceiver(frame));
+            }
+            if let Err(frame) = state.scans.push_back(frame) {
+                self.missed = self.missed.saturating_add(1);
+                return Err(TrySendError::Full(frame));
+            }
+            Ok(state.waiter.take())
+        })?;
+        self.missed = 0;
+        if let Some(waker) = waiter {
+            waker.wake();
         }
-        result
+        Ok(())
+    }
+}
+
+impl<const N: usize> Drop for ScanSender<'_, N> {
+    fn drop(&mut self) {
+        if let Some(waker) = self.queue.close() {
+            waker.wake();
+        }
     }
 }
 
 /// Task-side FIFO endpoint. Use `recv().await` to wait or `try_recv()` to poll.
-pub type ScanReceiver<'a, const N: usize> = Receiver<'a, QueuedScan, N>;
+#[derive(Debug)]
+pub struct ScanReceiver<'a, const N: usize> {
+    queue: &'a ScanQueue<N>,
+}
+
+impl<const N: usize> ScanReceiver<'_, N> {
+    /// Take the oldest available scan.
+    ///
+    /// # Errors
+    /// An empty queue returns [`ReceiveError::Empty`] while the sender is live
+    /// and [`ReceiveError::NoSender`] after the sender drops.
+    pub fn try_recv(&mut self) -> Result<QueuedScan, ReceiveError> {
+        self.queue.with_state(State::try_recv)
+    }
+
+    /// Wait for the oldest available scan. Cancelling releases the registered waker.
+    ///
+    /// # Errors
+    /// Returns [`ReceiveError::NoSender`] after the sender drops and the queue drains.
+    pub async fn recv(&mut self) -> Result<QueuedScan, ReceiveError> {
+        match self.try_recv() {
+            Err(ReceiveError::Empty) => {}
+            ready => return ready,
+        }
+
+        let registration = Registration(self.queue);
+        poll_fn(|cx| registration.poll(cx.waker().clone())).await
+    }
+
+    /// Has the sender dropped? Buffered scans can still be received.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.queue.with_state(|state| state.closed)
+    }
+
+    /// Are all slots occupied?
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.queue.with_state(|state| state.scans.is_full())
+    }
+
+    /// Is the queue empty?
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.queue.with_state(|state| state.scans.is_empty())
+    }
+}
+
+impl<const N: usize> Drop for ScanReceiver<'_, N> {
+    fn drop(&mut self) {
+        drop(self.queue.close());
+    }
+}
+
+// Mutable access to the receiver permits only one live receive at a time.
+struct Registration<'a, const N: usize>(&'a ScanQueue<N>);
+
+impl<const N: usize> Registration<'_, N> {
+    // Cloning a task waker may itself deliver a scan. Accept an owned clone
+    // and check again under the same mask used to install the waiter.
+    fn poll(&self, waker: Waker) -> Poll<Result<QueuedScan, ReceiveError>> {
+        let (poll, unused) = self.0.with_state(|state| match state.try_recv() {
+            Err(ReceiveError::Empty) => (Poll::Pending, state.waiter.replace(waker)),
+            ready => (Poll::Ready(ready), Some(waker)),
+        });
+        drop(unused);
+        poll
+    }
+}
+
+impl<const N: usize> Drop for Registration<'_, N> {
+    fn drop(&mut self) {
+        drop(self.0.with_state(|state| state.waiter.take()));
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -102,6 +238,15 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
         task::{Context, Poll, Waker},
     };
+
+    #[derive(Default)]
+    struct CountWakes(AtomicUsize);
+
+    impl Wake for CountWakes {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     #[test]
     fn full_queue_preserves_order_and_marks_only_the_first_scan_after_a_gap() {
@@ -153,16 +298,8 @@ mod tests {
 
     #[test]
     fn reopening_does_not_wake_the_previous_receiver() {
-        struct CountWakes(AtomicUsize);
-
-        impl Wake for CountWakes {
-            fn wake(self: Arc<Self>) {
-                self.0.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
         let mut queue = ScanQueue::<1>::new();
-        let previous = Arc::new(CountWakes(AtomicUsize::new(0)));
+        let previous = Arc::new(CountWakes::default());
         {
             let (mut panel, mut input) = queue.split();
             panel.try_send(Scan::default(), 1).expect("free slot");
@@ -179,5 +316,68 @@ mod tests {
         let (mut panel, _input) = queue.split();
         panel.try_send(Scan::default(), 2).expect("reopened slot");
         assert_eq!(previous.0.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_releases_the_task_and_preserves_the_next_scan() {
+        let mut queue = ScanQueue::<1>::new();
+        let (mut panel, mut input) = queue.split();
+        let task = Arc::new(CountWakes::default());
+        {
+            let waker = Waker::from(task.clone());
+            let mut next = pin!(input.recv());
+            assert!(
+                next.as_mut()
+                    .poll(&mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+        }
+        assert_eq!(Arc::strong_count(&task), 1);
+        panel.try_send(Scan::default(), 7).expect("free slot");
+        assert_eq!(task.0.load(Ordering::Relaxed), 0);
+        assert_eq!(input.try_recv().expect("queued scan").captured_at, 7);
+    }
+
+    #[test]
+    fn registration_observes_a_scan_delivered_after_the_empty_check() {
+        let mut queue = ScanQueue::<1>::new();
+        let (mut panel, mut input) = queue.split();
+        assert_eq!(input.try_recv(), Err(ReceiveError::Empty));
+        let task = Arc::new(CountWakes::default());
+        let waker = Waker::from(task.clone());
+        panel.try_send(Scan::default(), 42).expect("free slot");
+        drop(panel);
+
+        let registration = Registration(input.queue);
+        assert!(
+            matches!(registration.poll(waker), Poll::Ready(Ok(scan)) if scan.captured_at == 42)
+        );
+        assert_eq!(Arc::strong_count(&task), 1);
+        assert_eq!(input.try_recv(), Err(ReceiveError::NoSender));
+    }
+
+    #[test]
+    fn closing_wakes_only_the_latest_waiter() {
+        let mut queue = ScanQueue::<1>::new();
+        let (panel, mut input) = queue.split();
+        let old = Arc::new(CountWakes::default());
+        let new = Arc::new(CountWakes::default());
+        let mut next = pin!(input.recv());
+        for task in [&old, &new] {
+            let waker = Waker::from(task.clone());
+            assert!(
+                next.as_mut()
+                    .poll(&mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+        }
+        assert_eq!(Arc::strong_count(&old), 1);
+        drop(panel);
+        assert_eq!(old.0.load(Ordering::Relaxed), 0);
+        assert_eq!(new.0.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            next.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Err(ReceiveError::NoSender))
+        );
     }
 }
