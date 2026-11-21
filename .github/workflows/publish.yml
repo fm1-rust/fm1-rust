@@ -2,10 +2,11 @@ name: Publish to crates.io
 
 on:
   push:
-    # Publish a new crate once before configuring its trusted publisher.
-    # The backend needs the macro. fm1-rticx needs both the backend and the BSP.
     tags:
       - 'fm1/v*'
+      - 'fm1-audio/v*'
+      - 'fm1-controls/v*'
+      - 'fm1-graphics/v*'
       - 'fm1-rticx/v*'
       - 'rticx-pi32v2-macro/v*'
       - 'rticx-pi32v2/v*'
