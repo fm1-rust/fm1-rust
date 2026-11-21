@@ -4,17 +4,13 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(target_os = "none")]
-#[path = "common/screen.rs"]
-mod screen;
-
-#[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
-    use crate::screen::{Ink, Screen};
+    use fm1_graphics::{TextGrid, palette};
     use fm1_rticx::{
         bsp::{
             Board,
-            display::{Display, SpiClock},
+            display::{Display, SIZE, SpiClock},
             enter_download_mode,
             panel::{
                 Button, Controls, Encoder, Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan,
@@ -73,61 +69,64 @@ mod app {
             }
             changed
         }
-        fn layout(screen: &mut Screen) {
-            screen.text(0, 0, b"FM-1 CONTROL TEST", Ink::White);
-            screen.text(0, 1, b"MASTER", Ink::White);
-            screen.text(13, 1, b"/1023", Ink::Muted);
+        fn layout(screen: &mut TextGrid) {
+            screen.text(0, 0, b"FM-1 CONTROL TEST", palette::WHITE);
+            screen.text(0, 1, b"MASTER", palette::WHITE);
+            screen.text(13, 1, b"/1023", palette::MUTED);
             for (row, label) in [(2, &b"SELECT"[..]), (3, b"PRESETS"), (4, b"ALGORITHM")] {
-                screen.text(0, row, label, Ink::White);
+                screen.text(0, row, label, palette::WHITE);
             }
             for (row, label) in [(2, b"K1"), (3, b"K2"), (4, b"K3"), (5, b"K4")] {
-                screen.text(14, row, label, Ink::White);
+                screen.text(14, row, label, palette::WHITE);
             }
-            screen.text(0, 5, b"PLAY LED", Ink::White);
-            screen.text(0, 6, b"HELD", Ink::Green);
-            screen.text(6, 6, b"SEEN", Ink::Cyan);
-            screen.text(12, 6, b"PRESSES", Ink::Muted);
-            screen.text(0, 14, b"OCT-/+ 2S USB", Ink::Muted);
-            screen.text(14, 14, b"KEY", Ink::Muted);
+            screen.text(0, 5, b"PLAY LED", palette::WHITE);
+            screen.text(0, 6, b"HELD", palette::GREEN);
+            screen.text(6, 6, b"SEEN", palette::CYAN);
+            screen.text(12, 6, b"PRESSES", palette::MUTED);
+            screen.text(0, 14, b"OCT-/+ 2S USB", palette::MUTED);
+            screen.text(14, 14, b"KEY", palette::MUTED);
         }
 
         #[allow(
             clippy::arithmetic_side_effects,
             reason = "The fixed layout fits the 20 by 15 character screen."
         )]
-        fn show(&self, screen: &mut Screen) {
+        fn show(&self, screen: &mut TextGrid) {
             if let Some(value) = self.master.map(MasterLevel::raw) {
-                screen.number(9, 1, 4, u32::from(value), None, Ink::Cyan);
+                screen.number(9, 1, 4, u32::from(value), palette::CYAN);
             } else {
-                screen.text(9, 1, b" ERR", Ink::Amber);
+                screen.text(9, 1, b" ERR", palette::AMBER);
             }
             for (i, enc) in Encoder::ALL.into_iter().enumerate() {
                 let (x, y) = if i < 3 { (9, 2 + i) } else { (16, i - 1) };
                 let count = self.positions[enc as usize];
-                screen.number(
+                screen.signed_number(
                     x,
                     y,
                     4,
-                    count.unsigned_abs(),
-                    Some(if count < 0 { b'-' } else { b'+' }),
-                    if count < 0 { Ink::Amber } else { Ink::Cyan },
+                    count,
+                    if count < 0 {
+                        palette::AMBER
+                    } else {
+                        palette::CYAN
+                    },
                 );
             }
             let (name, color) = match self.leds.play() {
-                PlayLedState::Green => (&b"GREEN"[..], Ink::Green),
-                PlayLedState::Red => (&b"RED  "[..], Ink::Red),
-                PlayLedState::Both => (&b"BOTH "[..], Ink::Amber),
-                PlayLedState::Off => (&b"OFF  "[..], Ink::Muted),
+                PlayLedState::Green => (&b"GREEN"[..], palette::GREEN),
+                PlayLedState::Red => (&b"RED  "[..], palette::RED),
+                PlayLedState::Both => (&b"BOTH "[..], palette::AMBER),
+                PlayLedState::Off => (&b"OFF  "[..], palette::MUTED),
             };
             screen.text(9, 5, name, color);
             for (i, name) in LABELS.into_iter().enumerate() {
                 let (x, y) = (10 * (i % 2), 7 + i / 2);
                 let ink = if self.held[i] {
-                    Ink::Green
+                    palette::GREEN
                 } else if self.presses[i] != 0 {
-                    Ink::Cyan
+                    palette::CYAN
                 } else {
-                    Ink::Muted
+                    palette::MUTED
                 };
                 screen.text(x, y, name, ink);
                 let button = Button::ALL[i];
@@ -136,13 +135,13 @@ mod app {
                 } else {
                     self.leds.is_on(button)
                 };
-                screen.text(x + 4, y, if lamp { b"*" } else { b" " }, Ink::Amber);
-                screen.number(x + 6, y, 3, u32::from(self.presses[i]), None, ink);
+                screen.text(x + 4, y, if lamp { b"*" } else { b" " }, palette::AMBER);
+                screen.number(x + 6, y, 3, u32::from(self.presses[i]), ink);
             }
             if let Some(key) = self.last_key {
-                screen.number(18, 14, 2, u32::from(key.index()) + 1, None, Ink::Cyan);
+                screen.number(18, 14, 2, u32::from(key.index()) + 1, palette::CYAN);
             } else {
-                screen.text(18, 14, b"--", Ink::Muted);
+                screen.text(18, 14, b"--", palette::MUTED);
             }
         }
     }
@@ -212,8 +211,8 @@ mod app {
     impl RticAsyncTask for Draw {
         type SpawnInput = ();
         async fn exec(&mut self, (): ()) {
-            let mut screen = Screen::new();
-            if Screen::clear(&mut self.display).is_err() {
+            let mut screen = TextGrid::new();
+            if self.display.fill_rect(0, 0, SIZE, SIZE, 0).is_err() {
                 return;
             }
             View::layout(&mut screen);

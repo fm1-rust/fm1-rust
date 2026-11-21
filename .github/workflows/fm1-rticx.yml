@@ -5,6 +5,7 @@ on:
     paths: &fm1-rticx-paths
       - 'fm1-rticx/**'
       - 'fm1/**'
+      - 'fm1-graphics/**'
       - 'rticx-pi32v2/**'
       - 'rticx-pi32v2-macro/**'
       - Cargo.toml
