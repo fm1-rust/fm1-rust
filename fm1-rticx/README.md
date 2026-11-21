@@ -18,8 +18,7 @@ interrupt bindings. Both run without an allocator.
 ## Examples
 
 With the [firmware toolchain environment](../fm1/README.md#build-and-flash)
-set, run the example builds from the workspace root. The WaveGraph demo uses
-Git dependencies and is built from the repository checkout.
+set, run the example builds from the workspace root.
 
 ```sh
 ./fm1/scripts/build-example.sh rticx-blink
@@ -35,7 +34,7 @@ Git dependencies and is built from the repository checkout.
 | [rticx-tone](examples/rticx-tone.rs) | Starts with a stereo tone, green screen and green PLAY indicator. Tap PLAY/STOP for silence, a red screen and an amber indicator. Tap again to resume. Hold for two seconds to return to download mode. A magenta strip along the bottom records a late DMA refill. |
 | [rticx-controls](examples/rticx-controls.rs) | TIMER5 scans one column every 100 µs. An async task consumes completed sweeps and updates the controls while another task paints the LCD. Tap a button to toggle its lamp. PLAY cycles green, red, both and off. Each piano key lights its own indicator while held. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
-| [rticx-waveform][waveform-example] | Play the WaveGraph monosynth. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
+| [rticx-waveform](examples/rticx-waveform.rs) | Play a local four-waveform oscillator. FX switches between dry and half gain. The SEL button switches the scope between oscillator and DAC output. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
 
 The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
 frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
@@ -69,26 +68,23 @@ The waveform starts on A4 with the dry route and DAC tap selected. While a note
 sounds, press **FX** to insert a half-gain stage. Press the **SEL button** to
 see the oscillator at full amplitude while the speaker still plays at half
 level. Press FX again to bypass the stage. The SELECT encoder still transposes.
-The two programs are decoded once and share the same monosynth. A controller
-task awaits the first successful DMA submission for each edit. Its receipt
-carries the block’s first frame on the render timeline. A late render advances
-that timeline and the edit is acknowledged on its next successful submission.
+The audio interrupt reads the current gain and scope tap together at each refill.
 
 The scope shows 224 consecutive samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
-trace. A priority-2 async task renders one 128-frame block ahead from a copy
-of the current monosynth. The priority-4 audio interrupt accepts the prepared
-block when its first frame, voice controls and FX route match. Otherwise it
-renders that block inline from the last committed oscillator state. Both
-paths apply MASTER gain before submitting to DMA. The prepared block keeps
-the raw oscillator bus, so SEL can switch taps on the same refill.
+trace. A priority-2 async task renders one 128-frame mono block ahead. The
+priority-4 audio interrupt uses it when the block number, starting phase and
+voice controls still match. Otherwise it renders inline. It applies the current
+FX gain as it copies the oscillator into both stereo channels. The scope can
+therefore sample either the raw oscillator or the post-MASTER DAC output on
+that same refill.
 
 After a successful refill the interrupt offers the selected mono signal to a two-block queue.
 A priority-2 async task finds the trigger and assembles the trace. If the queue
 fills, a refill is late, or an edit takes effect, capture re-arms. The trace
-and its route and tap labels come from the same edit.
+and its gain and tap labels come from the same submitted audio blocks.
 On HOME, `EDIT` and `HIT` share a row and are in microseconds. `EDIT` is the
-peak time from a panel edit to successful DMA submission.
+peak time from an FX or SEL change to its first successful DMA submission.
 `AGE` is the peak time from submission of the trigger block to completion of
 its trace paint. `GAP` on that row is the longest interval between completed
 paints of distinct traces. Both display measurements are in milliseconds.
@@ -226,7 +222,6 @@ enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
 lists the drivers and their upstream sources.
 
 [RTICX]: https://github.com/rticx-rs/rticx
-[waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1-rticx/examples/rticx-waveform.rs
 [standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1/README.md#use-from-another-crate
 [target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.0/fm1/targets/pi32v2-none.json
 [crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
