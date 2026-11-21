@@ -273,7 +273,9 @@ mod app {
                 if stats.overruns != 0 {
                     text.text(9, 0, b"LATE", palette::RED);
                 }
-                text.paint(&mut lcd).expect("LCD labels");
+                text.paint_async(&mut lcd, &mut self.delay)
+                    .await
+                    .expect("LCD labels");
                 scope
                     .paint_async(&mut lcd, &trace, &mut self.delay)
                     .await
