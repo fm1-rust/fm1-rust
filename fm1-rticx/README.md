@@ -47,7 +47,7 @@ startup using the 24 MHz TIMER4 and are displayed in microseconds, rounded up.
 | `XR` | Serviced audio interrupts that reported a late refill, used a full period, or arrived at least two periods after the previous service. Several coalesced events can increment this counter once. |
 
 The examples exercise different priority orders on CPU0. In the waveform demo,
-audio (3) can interrupt the panel (2). In the piano demo, the panel (4) can
+audio (4) can interrupt the panel (3). In the piano demo, the panel (4) can
 interrupt audio (3), and up to 30 panel ticks can arrive in a 128-frame block. The
 piano's independent TIMER2 alarm also runs at 3 and can delay audio entry.
 These readings describe observed runs. A worst-case response-time bound also
@@ -57,8 +57,14 @@ long an interrupt was pending before the handler ran.
 
 The waveform starts on A4. The graph shows 224 consecutive left-channel samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
-trace. Audio runs at priority 3, panel scanning at 2 and drawing at 1. The
-renderer replaces changed tiles and prepares the next strip while SPI1 sends
+trace. The priority-4 audio interrupt submits each DAC refill synchronously.
+After a successful refill it offers the left channel to a two-block queue.
+A priority-2 async task finds the trigger and assembles the trace. If the queue
+fills or a refill is late, the next accepted block starts a new capture.
+The HOME view's `SCOPE DROP` counts submitted audio blocks the observer missed
+because its queue was full. Panel scanning runs at priority 3 and drawing at 1,
+so capture can continue during LCD startup and redraws. The renderer
+replaces changed tiles and prepares the next strip while SPI1 sends
 the previous one. When the strip is still in flight, the renderer awaits the
 SPI1 completion interrupt at priority 1. TIMER5 supplies its stall timeout.
 

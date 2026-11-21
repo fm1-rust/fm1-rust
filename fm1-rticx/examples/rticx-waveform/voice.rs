@@ -1,5 +1,5 @@
 //! A monophonic DDS oscillator and a rising-edge trigger on its submitted PCM.
-use fm1_audio::OutputBlock;
+use fm1_audio::{OUTPUT_FRAMES, OutputBlock};
 use fm1_rticx::bsp::panel::PianoKey;
 
 pub(super) const WIDTH: usize = 224;
@@ -137,6 +137,23 @@ impl Voice {
     }
 }
 
+/// An owned copy of the left channel from one successful DAC submission.
+pub(super) struct ScopeBlock {
+    pub(super) voice: Voice,
+    left: [i32; OUTPUT_FRAMES],
+    gap: bool,
+}
+
+impl ScopeBlock {
+    pub(super) fn new(block: &OutputBlock, voice: Voice, gap: bool) -> Self {
+        Self {
+            voice,
+            left: core::array::from_fn(|i| block[i][0]),
+            gap,
+        }
+    }
+}
+
 pub(super) struct Capture {
     pub(super) trace: Trace,
     count: usize,
@@ -156,13 +173,6 @@ impl Capture {
         }
     }
 
-    pub(super) fn discontinuity(&mut self) {
-        self.count = 0;
-        self.skip = 0;
-        self.previous = 0;
-        self.voice = None;
-    }
-
     /// Consume only blocks accepted by the DAC. A trace can span two or more refills.
     #[allow(
         clippy::arithmetic_side_effects,
@@ -170,7 +180,14 @@ impl Capture {
         clippy::cast_sign_loss,
         reason = "Block indices are bounded, samples are signed Q23 and the display coordinate is clamped to 0..=127 before conversion."
     )]
-    pub(super) fn push(&mut self, block: &OutputBlock, voice: Voice) -> bool {
+    pub(super) fn push(&mut self, block: &ScopeBlock) -> bool {
+        if block.gap {
+            // A dropped tap block or a late refill breaks sample continuity.
+            self.count = 0;
+            self.skip = 0;
+            self.previous = 0;
+        }
+        let voice = block.voice;
         if self.voice.replace(voice) != Some(voice) {
             // Controls can change every block. Finish any in-progress trace of the
             // transition, just as an oscilloscope would on the physical output.
@@ -178,11 +195,11 @@ impl Capture {
         }
         if self.skip != 0 {
             self.skip -= 1;
-            self.previous = block[block.len() - 1][0];
+            self.previous = block.left[OUTPUT_FRAMES - 1];
             return false;
         }
         let silent = !voice.playing || voice.velocity == 0;
-        for &[sample, _] in block {
+        for &sample in &block.left {
             let rising = self.previous < 0 && sample >= 0;
             self.previous = sample;
             if self.count == 0 && !silent && !rising {
@@ -195,7 +212,7 @@ impl Capture {
             if self.count == WIDTH {
                 self.count = 0;
                 self.skip = 10; // About 29 ms between traces at 128 frames per half.
-                self.previous = block[block.len() - 1][0];
+                self.previous = block.left[OUTPUT_FRAMES - 1];
                 return true;
             }
         }
@@ -206,7 +223,6 @@ impl Capture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fm1_audio::OUTPUT_FRAMES;
 
     #[test]
     fn preset_and_keyboard_controls_reach_the_oscillator() {
@@ -241,20 +257,44 @@ mod tests {
             velocity: 80,
             ..Voice::default()
         };
-        assert!(!capture.push(&block, voice));
+        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
         block.fill([16384; 2]);
         voice.velocity = 81;
-        assert!(!capture.push(&block, voice));
-        assert!(capture.push(&block, voice));
+        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
+        assert!(capture.push(&ScopeBlock::new(&block, voice, false)));
         assert_eq!(capture.trace[0], 63);
         assert_eq!(capture.trace[1..], [62; WIDTH - 1]);
-        capture.discontinuity();
-        assert!(!capture.push(&block, voice)); // Arm on a fresh crossing after a late refill.
+        assert!(!capture.push(&ScopeBlock::new(&block, voice, true))); // Arm on a fresh crossing.
         voice.playing = false;
         voice.render(0, &mut block);
-        assert!(!capture.push(&block, voice));
-        assert!(capture.push(&block, voice));
+        assert!(!capture.push(&ScopeBlock::new(&block, voice, false)));
+        assert!(capture.push(&ScopeBlock::new(&block, voice, false)));
         assert_eq!(usize::from(capture.trace[0]), HEIGHT / 2);
         assert_eq!(capture.trace, [64; WIDTH]);
+    }
+
+    #[test]
+    fn gap_discards_partial_trace_and_rearms_on_the_left_channel() {
+        let voice = Voice {
+            velocity: 80,
+            ..Voice::default()
+        };
+        let mut capture = Capture::new();
+        let mut pcm = [[8192, 0]; OUTPUT_FRAMES];
+        pcm[0][0] = -8192;
+        pcm[OUTPUT_FRAMES - 1][0] = -8192;
+        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+
+        // A rising edge on the right channel cannot complete the pre-gap trace.
+        pcm.fill([16384, 8192]);
+        pcm[0][1] = -8192;
+        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, true)));
+        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+
+        pcm[0][0] = -8192;
+        assert!(!capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        pcm[0][0] = 16384;
+        assert!(capture.push(&ScopeBlock::new(&pcm, voice, false)));
+        assert_eq!(capture.trace, [62; WIDTH]);
     }
 }
