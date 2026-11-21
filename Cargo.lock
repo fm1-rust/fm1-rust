@@ -150,6 +150,7 @@ dependencies = [
 name = "fm1-rticx"
 version = "0.0.0"
 dependencies = [
+ "critical-section",
  "fm1",
  "rtic-time",
  "rticx-pi32v2",

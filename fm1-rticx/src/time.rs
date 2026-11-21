@@ -1,4 +1,6 @@
-//! A 100 Hz clock for async delays, periodic deadlines and timeouts.
+//! Hardware clocks for async delays, periodic deadlines and timeouts.
+mod deadline;
+pub use deadline::{DeadlineClock, DeadlineDuration, DeadlineInstant};
 use fm1::time::Timers;
 pub use rtic_time::{Timebase, fugit::ExtU32};
 use rtic_time::{

@@ -30,3 +30,13 @@ _start:
 	goto 4b
 5:	call main
 6:	goto 6b
+
+/* The pi32v2 LLVM backend can lower a trap (e.g. in an async timeout) to
+   abort. A freestanding application may override this default halt. */
+	.section .text.abort,"ax",@progbits
+	.weak abort
+abort:
+	cli
+	csync
+1:	idle
+	goto 1b

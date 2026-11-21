@@ -64,6 +64,14 @@ pub(crate) fn write(addr: usize, mut value: u32) {
                 chip.latched.push(chip.shifted);
             }
         }
+        if addr == 0x10600 {
+            let pending = chip.regs.get(&addr).copied().unwrap_or_default() & (1 << 15);
+            let clear = value & (1 << 14) != 0;
+            value &= !0xc000;
+            if !clear {
+                value |= pending;
+            }
+        }
         if addr == 0x11d00 {
             if value & (1 << 14) != 0 {
                 chip.spi_done = false;
@@ -97,6 +105,27 @@ unsafe extern "C" fn fm1_spi1_dma(p: *const u8, n: u32) {
         assert!(chip.dma.replace((p, n as usize)).is_none());
         chip.spi_done = false;
     })
+}
+
+#[test]
+fn timer2_alarm_arms_acknowledges_and_leaves_other_timers_alone() {
+    let mut timers = time::Timers::start();
+    let clocks = (read(0x10800), read(0x10900));
+    let mut alarm = timers.take_alarm().expect("first claim");
+    assert!(timers.take_alarm().is_none());
+    alarm.arm_after(500_000);
+    assert_eq!(
+        (read(0x10600), read(0x10604), read(0x10608)),
+        (9, 0, 500_000)
+    );
+    alarm.arm_after(0);
+    assert_eq!(read(0x10608), 1);
+    CHIP.with_borrow_mut(|chip| {
+        chip.regs.insert(0x10600, 9 | (1 << 15));
+    });
+    drop(alarm);
+    assert_eq!(read(0x10600), 0);
+    assert_eq!((read(0x10800), read(0x10900)), clocks);
 }
 
 #[test]

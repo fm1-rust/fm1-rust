@@ -4,6 +4,9 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(any(target_os = "none", test))]
+#[path = "rticx-piano/clock.rs"]
+mod clock;
+#[cfg(any(target_os = "none", test))]
 #[path = "rticx-piano/midi.rs"]
 mod midi;
 #[cfg(any(target_os = "none", test))]
@@ -20,6 +23,7 @@ mod synth;
 #[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
 mod app {
     use crate::{
+        clock::MidiClock,
         midi::{Output, RemoteNotes},
         pitch::{midi_note, note_name},
         screen::{Ink, Screen},
@@ -31,15 +35,13 @@ mod app {
             audio::{BLOCK_FRAMES, Block, Refill, Stream},
             display::{DisplayPort, SpiClock},
             enter_download_mode,
-            panel::{Button, Controls, Event, Leds, MasterLevel, PianoKey, Scan, Switch},
+            panel::{
+                Button, Controls, Event, Leds, MasterLevel, PianoKey, PlayLedState, Scan, Switch,
+            },
             time::{Timers, ticks},
             usb_midi::{Identity, MidiDevice, PacketBuffer},
         },
-        rticx::asynchronous::{
-            channel::{Receiver, Sender},
-            make_channel,
-        },
-        time::{Clock, ExtU32, Timebase, Timer5},
+        time::{Clock, DeadlineClock, ExtU32, Timebase, Timer5},
     };
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -47,6 +49,8 @@ mod app {
         physical: u32,
         remote: RemoteNotes,
         online: bool,
+        clock_playing: bool,
+        clock_stats: (u32, u32),
         seen: u32,
         last: Option<PianoKey>,
         master: Option<MasterLevel>,
@@ -67,6 +71,9 @@ mod app {
                     }
                     Event::Released(Switch::Piano(key)) => {
                         self.physical &= !(1 << key.index());
+                    }
+                    Event::Pressed(Switch::Button(Button::Play)) => {
+                        self.clock_playing = !self.clock_playing
                     }
                     Event::MasterChanged(Some(level)) => self.master = Some(level),
                     _ => {}
@@ -99,6 +106,26 @@ mod app {
                 let i = usize::from(key.index());
                 screen.text((i % 5) * 4, 5 + i / 5, &note_name(midi_note(key)), ink);
             }
+            let (worst, missed) = self.clock_stats;
+            screen.text(
+                0,
+                11,
+                b"CLK120",
+                if self.clock_playing {
+                    Ink::Green
+                } else {
+                    Ink::Muted
+                },
+            );
+            screen.number(10, 11, 8, worst, None, Ink::White);
+            screen.number(
+                7,
+                13,
+                10,
+                missed,
+                None,
+                if missed == 0 { Ink::Muted } else { Ink::Red },
+            );
             if let Some(level) = self.master {
                 screen.number(7, 12, 4, u32::from(level.raw()), None, Ink::Amber);
             }
@@ -113,7 +140,7 @@ mod app {
 
     #[init]
     fn init() -> (Shared, TaskInits) {
-        let board = Board::take().expect("CPU0 board");
+        let mut board = Board::take().expect("CPU0 board");
         // pid.codes shared test VID/PID, for the diagnostic only.
         let device = board
             .take_usb()
@@ -124,11 +151,11 @@ mod app {
                 manufacturer: "fm1-rust",
                 product: "FM-1 MIDI Piano",
             });
+        DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
         let controls = board.panel.into_controls();
         let stream = board.audio.into_stream().expect("audio clock");
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         let keyboard = Keyboard::default();
-        let (wake, updates) = make_channel!((), 1);
         (
             Shared {
                 keyboard,
@@ -138,14 +165,13 @@ mod app {
                 panel: Panel {
                     controls,
                     timer,
-                    wake,
                     lit: 0,
                     leds: Leds::default(),
                     octave_since: None,
                 },
                 midi: Midi {
                     device,
-                    updates,
+                    clock: MidiClock::default(),
                     session: None,
                     remote: RemoteNotes::default(),
                     output: Output::new(),
@@ -173,7 +199,6 @@ mod app {
     struct Panel {
         controls: Controls,
         timer: Timer5,
-        wake: Sender<'static, (), 1>,
         lit: u32,
         leds: Leds,
         octave_since: Option<u32>,
@@ -184,9 +209,9 @@ mod app {
             let Some(scan) = self.controls.scan(&self.leds) else {
                 return;
             };
-            let held = self.shared().keyboard.lock(|keyboard| {
+            let (held, playing) = self.shared().keyboard.lock(|keyboard| {
                 keyboard.update(&scan);
-                keyboard.held()
+                (keyboard.held(), keyboard.clock_playing)
             });
             if held != self.lit {
                 for key in PianoKey::all() {
@@ -194,9 +219,11 @@ mod app {
                 }
                 self.lit = held;
             }
-            // A completed 11-column sweep wakes USB every 1.1 ms. A pending
-            // wake already covers this sweep; no USB access occurs in this ISR.
-            let _ = self.wake.try_send(());
+            self.leds.set_play(if playing {
+                PlayLedState::Green
+            } else {
+                PlayLedState::Off
+            });
             if scan.is_down(Button::OctaveDown) && scan.is_down(Button::OctaveUp) {
                 let now = ticks();
                 if now.wrapping_sub(*self.octave_since.get_or_insert(now)) > 2 * Timers::TICK_HZ {
@@ -239,7 +266,7 @@ mod app {
     #[async_task(priority = 2, shared = [keyboard])]
     struct Midi {
         device: MidiDevice,
-        updates: Receiver<'static, (), 1>,
+        clock: MidiClock,
         session: Option<u32>,
         remote: RemoteNotes,
         output: Output,
@@ -251,7 +278,7 @@ mod app {
         async fn exec(&mut self, (): ()) {
             let mut buffer = PacketBuffer::default();
             loop {
-                self.updates.recv().await.expect("panel owns the sender");
+                let woke = DeadlineClock::now();
                 self.device.poll();
                 let session = self.device.session();
                 let new_session = session != self.session;
@@ -259,6 +286,7 @@ mod app {
                 if new_session {
                     self.remote = RemoteNotes::default();
                     self.output = Output::new();
+                    self.clock = MidiClock::default();
                     self.session = session;
                 }
                 let mut last = None;
@@ -270,7 +298,9 @@ mod app {
                     }
                 }
                 let remote = self.remote;
-                let physical = self.shared().keyboard.lock(|k| {
+                let stats = (self.clock.worst_us, self.clock.missed);
+                let (physical, playing) = self.shared().keyboard.lock(|k| {
+                    k.clock_stats = stats;
                     if new_session || remote != previous || last.is_some() {
                         k.online = session.is_some();
                         k.remote = remote;
@@ -279,15 +309,18 @@ mod app {
                             k.last = last;
                         }
                     }
-                    k.physical
+                    (k.physical, k.clock_playing)
                 });
                 if session.is_some() {
                     // Host input never enters this queue, even when a physical
                     // key and an incoming note have the same pitch.
+                    self.clock
+                        .service(woke, playing, |event| self.device.send(&[event]) == 1);
                     self.output.observe(physical);
                     let n = self.device.send(self.output.pending());
                     self.output.sent(n);
                 }
+                DeadlineClock::delay_until(self.clock.wake_by(DeadlineClock::now(), playing)).await;
             }
         }
     }
@@ -315,7 +348,10 @@ mod app {
             screen.text(0, 3, b"HELD", Ink::Green);
             screen.text(10, 3, b"SEEN", Ink::Cyan);
             screen.text(17, 3, b"/27", Ink::Muted);
+            screen.text(7, 11, b"MAX", Ink::Muted);
+            screen.text(18, 11, b"US", Ink::Muted);
             screen.text(0, 12, b"MASTER", Ink::White);
+            screen.text(0, 13, b"MISSED", Ink::Muted);
             screen.text(11, 12, b"/1023", Ink::Muted);
             screen.text(0, 14, b"OCT-/+ 2S USB", Ink::Muted);
             loop {

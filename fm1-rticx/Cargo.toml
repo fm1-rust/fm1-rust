@@ -26,6 +26,7 @@ required-features = ["audio"]
 test = true
 
 [dependencies]
+critical-section = "1"
 fm1 = { version = "0.1.1", path = "../fm1" }
 rtic-time = "3"
 rticx-pi32v2 = { version = "0.1", path = "../rticx-pi32v2" }

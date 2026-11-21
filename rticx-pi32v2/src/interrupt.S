@@ -1,10 +1,10 @@
 /* CPU0 vector entries. Saving RETI allows a higher-priority interrupt to
  * nest. The C ABI preserves r4-r15; save the caller's registers here.
  * See pi32v2-isa/docs/ABI.md, sections 5 and 7. */
-.macro vector name
+.macro vector name, handler
     .section .text.__rticx_irq_\name,"ax",@progbits
     .global __rticx_irq_\name
-    .weak \name
+    .weak \handler
 __rticx_irq_\name:
     [--sp] = {psr, rets, reti}
     [--sp] = {r3-r0}
@@ -15,7 +15,7 @@ __rticx_irq_\name:
     r0 = 0x300
     icfg = r0
     csync
-    call \name
+    call \handler
     {r0} = [sp++]
     icfg = r0
     csync
@@ -26,8 +26,11 @@ __rticx_irq_\name:
 .endm
 
 .irp irq,ALNK0,SPI1,UART1,SARADC,SPI2,TIMER5,SOFT0,SOFT1,SOFT2,SOFT3,SOFT4,SOFT5,SOFT6,SOFT7
-    vector \irq
+    vector \irq, \irq
 .endr
+
+/* The board clock owns this vector independently of the application task names. */
+vector TIMER2, __fm1_rticx_deadline_irq
 
 .text
 .global __rticx_enable
