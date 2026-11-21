@@ -1,5 +1,9 @@
 # rticx-pi32v2
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
+[![Build status][ci-badge]][ci]
+
 A single-core [RTICX](https://github.com/rticx-rs/rticx) distribution for the
 JieLi AC791N interrupt controller. FM-1 applications can use the
 [fm1-rticx board crate](../fm1-rticx/). The distribution can also be used
@@ -31,5 +35,16 @@ passes. With the pinned 0.2 releases, it keeps each executor slot in the
 non-returning entry frame and projects shared fields through raw pointers
 before locking. Size task futures for the application's startup stack.
 
+## License
+
+Licensed under the [MIT License][mit].
+
+[crate-badge]: https://img.shields.io/crates/v/rticx-pi32v2?logo=rust
+[crate]: https://crates.io/crates/rticx-pi32v2
+[docs-badge]: https://docs.rs/rticx-pi32v2/badge.svg
+[docs]: https://docs.rs/rticx-pi32v2/
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/rticx-pi32v2.yml/badge.svg?branch=main&event=push
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/rticx-pi32v2.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/rticx-pi32v2/LICENSE
 [nesting]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/hw/fm1-2026-10-24-app3
 [abi]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/docs/ABI.md
