@@ -1,4 +1,5 @@
-use fm1_rticx::bsp::{audio::FRAME_RATE, panel::PianoKey};
+use fm1_audio::FRAME_RATE;
+use fm1_rticx::bsp::panel::PianoKey;
 
 pub(super) const FIRST_NOTE: u8 = 53;
 

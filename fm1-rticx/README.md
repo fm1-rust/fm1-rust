@@ -29,12 +29,17 @@ set, run the example builds from the workspace root.
 | [rticx-piano](examples/rticx-piano.rs) | Play F3 through G5 (MIDI notes 53–79), including chords. Each held key sounds and lights its own LED. MASTER sets the volume. Hold both octave buttons for two seconds to return to USB download mode. |
 | [rticx-waveform](examples/rticx-waveform.rs) | Play a monophonic oscillator and see the samples sent to the DAC. PRESETS cycles sine, triangle, sawtooth and square. Tap a piano key to latch F3–G5. SELECT transposes up to an octave either way, MASTER sets velocity (0–127), and PLAY/STOP mutes or resumes. Hold both octave buttons for two seconds to return to USB download mode. |
 
+The tone, piano and waveform use [`fm1-audio`](../fm1-audio/) with 128 stereo
+frames per DMA half (2.90 ms). Their LATE indicators latch when an audio
+interrupt overruns its budget or a refill deadline is missed. The piano also
+shows peak audio service time in microseconds (`AUD`) and observed audio
+overruns (`XR`). Its MIDI clock timing fields are independent.
+
 The waveform starts on A4. The graph shows 224 consecutive left-channel samples
 (about 5.1 ms) on a fixed vertical scale. A rising zero crossing triggers each
 trace. Audio runs at priority 3, panel scanning at 2 and drawing at 1. The
 renderer replaces changed tiles and prepares the next strip while SPI1 sends
-the previous one. A red LATE indicator records an audio DMA refill that crossed
-a buffer boundary.
+the previous one.
 
 The controls display shows MASTER, signed counts for all encoders, a press count
 for each button, and the last piano key (1–27). Green text means held, cyan means
@@ -42,8 +47,7 @@ previously pressed, and an asterisk marks an enabled lamp.
 
 On the piano display, held notes are green and notes played since boot stay
 cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent
-note name and MIDI number on screen. A red `LATE` records a DMA boundary
-crossed during an audio refill. `VEL` shows the last strike velocity. `PRESS`
+note name and MIDI number on screen. `VEL` shows the last strike velocity. `PRESS`
 shows how hard that note is being held, or `--` after release and for a physical
 key without pressure sensing. Pressing harder brings that voice up in the local
 stereo mix.

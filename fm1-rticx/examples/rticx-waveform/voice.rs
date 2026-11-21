@@ -1,5 +1,6 @@
 //! A monophonic DDS oscillator and a rising-edge trigger on its submitted PCM.
-use fm1_rticx::bsp::{audio::Block, panel::PianoKey};
+use fm1_audio::OutputBlock;
+use fm1_rticx::bsp::panel::PianoKey;
 
 pub(super) const WIDTH: usize = 224;
 const LAST_ROW: u8 = 127;
@@ -118,7 +119,7 @@ impl Voice {
         clippy::arithmetic_side_effects,
         reason = "Notes are 41..=91 and multiplying a Q15 waveform by a 7-bit velocity fits in i32."
     )]
-    pub(super) fn render(self, mut phase: u32, block: &mut Block) -> u32 {
+    pub(super) fn render(self, mut phase: u32, block: &mut OutputBlock) -> u32 {
         let note = self.note();
         let step = STEPS[usize::from(note - 41)];
         let gain = if self.playing {
@@ -169,7 +170,7 @@ impl Capture {
         clippy::cast_sign_loss,
         reason = "Block indices are bounded, samples are signed Q23 and the display coordinate is clamped to 0..=127 before conversion."
     )]
-    pub(super) fn push(&mut self, block: &Block, voice: Voice) -> bool {
+    pub(super) fn push(&mut self, block: &OutputBlock, voice: Voice) -> bool {
         if self.voice.replace(voice) != Some(voice) {
             // Controls can change every block. Finish any in-progress trace of the
             // transition, just as an oscilloscope would on the physical output.
@@ -193,7 +194,7 @@ impl Capture {
             self.count += 1;
             if self.count == WIDTH {
                 self.count = 0;
-                self.skip = 5;
+                self.skip = 10; // About 29 ms between traces at 128 frames per half.
                 self.previous = block[block.len() - 1][0];
                 return true;
             }
@@ -205,7 +206,7 @@ impl Capture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fm1_rticx::bsp::audio::BLOCK_FRAMES;
+    use fm1_audio::OUTPUT_FRAMES;
 
     #[test]
     fn preset_and_keyboard_controls_reach_the_oscillator() {
@@ -214,7 +215,7 @@ mod tests {
             ..Voice::default()
         };
         assert_eq!(crate::pitch::note_name(voice.note()), *b"A4 ");
-        let mut block = [[0; 2]; BLOCK_FRAMES];
+        let mut block = [[0; 2]; OUTPUT_FRAMES];
         for label in [b"SINE    ", b"TRIANGLE", b"SAWTOOTH", b"SQUARE  "] {
             assert_eq!(voice.wave.label(), label);
             voice.render(0, &mut block);
@@ -234,8 +235,8 @@ mod tests {
     #[test]
     fn capture_spans_blocks_even_during_a_velocity_change() {
         let mut capture = Capture::new();
-        let mut block = [[-8192; 2]; BLOCK_FRAMES];
-        block[BLOCK_FRAMES - 1] = [8192; 2];
+        let mut block = [[-8192; 2]; OUTPUT_FRAMES];
+        block[OUTPUT_FRAMES - 1] = [8192; 2];
         let mut voice = Voice {
             velocity: 80,
             ..Voice::default()
@@ -243,6 +244,7 @@ mod tests {
         assert!(!capture.push(&block, voice));
         block.fill([16384; 2]);
         voice.velocity = 81;
+        assert!(!capture.push(&block, voice));
         assert!(capture.push(&block, voice));
         assert_eq!(capture.trace[0], 63);
         assert_eq!(capture.trace[1..], [62; WIDTH - 1]);
@@ -250,6 +252,7 @@ mod tests {
         assert!(!capture.push(&block, voice)); // Arm on a fresh crossing after a late refill.
         voice.playing = false;
         voice.render(0, &mut block);
+        assert!(!capture.push(&block, voice));
         assert!(capture.push(&block, voice));
         assert_eq!(usize::from(capture.trace[0]), HEIGHT / 2);
         assert_eq!(capture.trace, [64; WIDTH]);

@@ -194,6 +194,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fm1-audio"
+version = "0.1.0"
+dependencies = [
+ "fm1",
+ "wavegraph-sample",
+]
+
+[[package]]
 name = "fm1-graphics"
 version = "0.1.0"
 dependencies = [
@@ -207,6 +215,7 @@ version = "0.0.0"
 dependencies = [
  "critical-section",
  "fm1",
+ "fm1-audio",
  "fm1-graphics",
  "rtic-time",
  "rticx-pi32v2",
@@ -591,6 +600,12 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "wavegraph-sample"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d7e04476790adc2ad2e2fbcddd8de74b81959cad3d15a4e19c59edbeecc77b4"
 
 [[package]]
 name = "windows-link"

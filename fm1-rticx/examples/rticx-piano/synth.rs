@@ -1,7 +1,5 @@
-use fm1_rticx::bsp::{
-    audio::{BLOCK_FRAMES, Block},
-    panel::{MasterLevel, PianoKey},
-};
+use fm1_audio::{OUTPUT_FRAMES, OutputBlock};
+use fm1_rticx::bsp::panel::PianoKey;
 
 // Equal-tempered F3 through G5 at A4 = 440 Hz.
 const STEPS: [u32; PianoKey::COUNT as usize] = crate::pitch::phase_steps(174.614_115_716_502);
@@ -15,16 +13,10 @@ pub(super) struct Synth {
 impl Synth {
     #[allow(
         clippy::arithmetic_side_effects,
-        reason = "One triangle is ±1024. The 256-frame ramp and 27 voices fit in i32, including the scaled MASTER multiplication."
+        reason = "One triangle is ±1024. The 128-frame ramp and 27 voices fit in i32 at maximum velocity."
     )]
-    pub(super) fn render(
-        &mut self,
-        levels: &crate::midi::Velocities,
-        master: MasterLevel,
-        block: &mut Block,
-    ) {
-        const { assert!(BLOCK_FRAMES == 256 && PianoKey::COUNT <= 32) };
-        block.fill([0; 2]);
+    pub(super) fn render(&mut self, levels: &crate::midi::Velocities, block: &mut OutputBlock) {
+        const { assert!(OUTPUT_FRAMES == 128 && PianoKey::COUNT <= 32) };
         for (i, (&step, phase)) in STEPS.iter().zip(&mut self.phases).enumerate() {
             let velocity = levels[i];
             let gain = velocity + (velocity >> 6); // 0..=128
@@ -38,21 +30,19 @@ impl Synth {
 
             // Ramp each voice over one block on attack and release. Held
             // voices keep their phase and amplitude when a chord changes.
-            let mut level = i32::from(previous) << 8;
+            let mut level = i32::from(previous) << 7;
             let delta = i32::from(gain) - i32::from(previous);
             let mut position = *phase;
             for frame in &mut *block {
                 let ramp = (position >> 20).cast_signed();
-                frame[0] += (1024 - (ramp - 2048).abs()) * (level >> 7);
+                frame[0] += (1024 - (ramp - 2048).abs()) * (level >> 6);
                 position = position.wrapping_add(step);
                 level += delta;
             }
             *phase = position;
         }
         for frame in block {
-            // Fixed headroom for all 27 voices at full MASTER, in stereo Q23.
-            let sample = ((frame[0] >> 2) * i32::from(master.raw())) >> 8;
-            *frame = [sample; 2];
+            frame[1] = frame[0];
         }
     }
 }
@@ -61,7 +51,7 @@ impl Synth {
 mod tests {
     use super::*;
     use crate::pitch::{midi_note, note_name};
-    use fm1_rticx::bsp::audio::FRAME_RATE;
+    use fm1_audio::FRAME_RATE;
 
     const SILENT: crate::midi::Velocities = [0; PianoKey::COUNT as usize];
 
@@ -87,22 +77,24 @@ mod tests {
     fn releasing_a_chord_preserves_the_remaining_voice() {
         let mut chord = Synth::default();
         let mut solo = Synth::default();
-        let mut block = [[0; 2]; BLOCK_FRAMES];
+        let mut block = [[0; 2]; OUTPUT_FRAMES];
         let mut reference = block;
         let all_keys = [127; PianoKey::COUNT as usize];
         let mut c4 = SILENT;
         c4[7] = 127;
         for keys in [all_keys, all_keys, c4, c4] {
-            chord.render(&keys, MasterLevel::MAX, &mut block);
-            solo.render(&c4, MasterLevel::MAX, &mut reference);
+            block.fill([0; 2]);
+            reference.fill([0; 2]);
+            chord.render(&keys, &mut block);
+            solo.render(&c4, &mut reference);
             assert!(block.iter().any(|f| f[0] != 0));
             assert!(block.iter().all(|f| f[0] == f[1] && f[0].abs() < (1 << 23)));
         }
         assert_eq!(block, reference);
-        chord.render(&SILENT, MasterLevel::MAX, &mut block); // Release ramp.
-        chord.render(&SILENT, MasterLevel::MAX, &mut block);
-        assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
-        chord.render(&all_keys, MasterLevel::MIN, &mut block);
-        assert_eq!(block, [[0; 2]; BLOCK_FRAMES]);
+        block.fill([0; 2]);
+        chord.render(&SILENT, &mut block); // Release ramp.
+        block.fill([0; 2]);
+        chord.render(&SILENT, &mut block);
+        assert_eq!(block, [[0; 2]; OUTPUT_FRAMES]);
     }
 }
