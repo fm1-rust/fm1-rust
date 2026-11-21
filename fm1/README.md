@@ -34,6 +34,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. Use `wrapping_sub` for elapsed time. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
+| `board.take_usb()` | Call `into_midi(identity)` on the returned port to enumerate as a full-speed USB-MIDI 1.0 device with one input and one output. Poll the owned handle, receive up to 16 event packets at once, and retry the unsent suffix when the host is busy. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
 Audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
@@ -174,6 +175,10 @@ The optional audio module ports its MPL-2.0 driver by Leo Kuroshita
 (Hügelton Instruments) and Kerem Kilic (Ellic Studio). Repository integration
 is MIT-licensed.
 
+The USB-MIDI module ports the device controller and endpoint handling from
+[Felucca’s MPL-2.0 USB driver][usb-driver]. Applications supply their own USB
+vendor and product IDs and descriptor strings.
+
 [blink-origin]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink-rust
 [c-blink]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/examples/fm1-blink
 [blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.1/fm1/examples/blink.rs
@@ -187,5 +192,6 @@ is MIT-licensed.
 [felucca]: https://github.com/hugelton/felucca-bsp/tree/2a5af3dfc8bccb92e37d48a3e7e0bf9a5827e51f/boards/fm1
 [play-green]: https://github.com/Wulgaren/Araminta/blob/62911ec19b1010b16d2ab508e91eed08775386e6/firmware/src/ui_input.c#L29-L30
 
+[usb-driver]: https://github.com/hugelton/felucca-bsp/blob/f869dfa8dc3c081f040407e370d303349e4444d5/chip/usb.c
 [panel-driver]: https://github.com/hugelton/felucca-bsp/tree/f869dfa8dc3c081f040407e370d303349e4444d5/boards/fm1
 [panel-labels]: https://github.com/charlesvestal/fm1-base/blob/7932dff6f1474cc8c3420e0df75eb75879e47319/device/panel.c

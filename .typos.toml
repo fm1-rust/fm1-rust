@@ -2,4 +2,5 @@
 extend-exclude = [".git"]
 
 [default.extend-words]
-"VAVE" = "VAVE"
+"SIE" = "SIE"   # USB Serial Interface Engine
+"VAVE" = "VAVE" # M-VAVE

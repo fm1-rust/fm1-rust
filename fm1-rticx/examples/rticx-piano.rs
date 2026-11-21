@@ -1,8 +1,11 @@
-//! Play the FM-1 keyboard. Hold both octave buttons for two seconds for USB download.
+//! Play the FM-1 keyboard locally or over USB MIDI. Hold both octave buttons for two seconds for USB download.
 #![allow(missing_docs, reason = "RTICX generates task traits and initialisers.")]
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
+#[cfg(any(target_os = "none", test))]
+#[path = "rticx-piano/midi.rs"]
+mod midi;
 #[cfg(any(target_os = "none", test))]
 #[path = "common/pitch.rs"]
 mod pitch;
@@ -14,9 +17,10 @@ mod screen;
 mod synth;
 
 #[cfg(target_os = "none")]
-#[fm1_rticx::app(dispatchers = [SOFT0])]
+#[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
 mod app {
     use crate::{
+        midi::{Output, RemoteNotes},
         pitch::{midi_note, note_name},
         screen::{Ink, Screen},
         synth::Synth,
@@ -29,31 +33,40 @@ mod app {
             enter_download_mode,
             panel::{Button, Controls, Event, Leds, MasterLevel, PianoKey, Scan, Switch},
             time::{Timers, ticks},
+            usb_midi::{Identity, MidiDevice, PacketBuffer},
+        },
+        rticx::asynchronous::{
+            channel::{Receiver, Sender},
+            make_channel,
         },
         time::{Clock, ExtU32, Timebase, Timer5},
     };
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Keyboard {
-        held: u32,
+        physical: u32,
+        remote: RemoteNotes,
+        online: bool,
         seen: u32,
         last: Option<PianoKey>,
         master: Option<MasterLevel>,
     }
 
     impl Keyboard {
-        fn update(&mut self, scan: &Scan, leds: &mut Leds) {
+        fn held(&self) -> u32 {
+            self.physical | self.remote.held
+        }
+
+        fn update(&mut self, scan: &Scan) {
             for event in scan.events() {
                 match event {
                     Event::Pressed(Switch::Piano(key)) => {
-                        self.held |= 1 << key.index();
+                        self.physical |= 1 << key.index();
                         self.seen |= 1 << key.index();
                         self.last = Some(key);
-                        leds.set(key, true);
                     }
                     Event::Released(Switch::Piano(key)) => {
-                        self.held &= !(1 << key.index());
-                        leds.set(key, false);
+                        self.physical &= !(1 << key.index());
                     }
                     Event::MasterChanged(Some(level)) => self.master = Some(level),
                     _ => {}
@@ -62,15 +75,21 @@ mod app {
         }
 
         fn draw(&self, screen: &mut Screen) {
+            screen.text(
+                11,
+                0,
+                b"USB",
+                if self.online { Ink::Green } else { Ink::Muted },
+            );
             if let Some(key) = self.last {
                 screen.text(5, 2, &note_name(midi_note(key)), Ink::White);
                 screen.number(16, 2, 2, u32::from(midi_note(key)), None, Ink::White);
             }
-            screen.number(5, 3, 2, self.held.count_ones(), None, Ink::Green);
+            screen.number(5, 3, 2, self.held().count_ones(), None, Ink::Green);
             screen.number(15, 3, 2, self.seen.count_ones(), None, Ink::Cyan);
             for key in PianoKey::all() {
                 let bit = 1 << key.index();
-                let ink = if self.held & bit != 0 {
+                let ink = if self.held() & bit != 0 {
                     Ink::Green
                 } else if self.seen & bit != 0 {
                     Ink::Cyan
@@ -95,10 +114,21 @@ mod app {
     #[init]
     fn init() -> (Shared, TaskInits) {
         let board = Board::take().expect("CPU0 board");
+        // pid.codes shared test VID/PID, for the diagnostic only.
+        let device = board
+            .take_usb()
+            .expect("one USB device")
+            .into_midi(Identity {
+                vendor_id: 0x1209,
+                product_id: 0x0001,
+                manufacturer: "fm1-rust",
+                product: "FM-1 MIDI Piano",
+            });
         let controls = board.panel.into_controls();
         let stream = board.audio.into_stream().expect("audio clock");
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         let keyboard = Keyboard::default();
+        let (wake, updates) = make_channel!((), 1);
         (
             Shared {
                 keyboard,
@@ -108,9 +138,17 @@ mod app {
                 panel: Panel {
                     controls,
                     timer,
-                    keyboard,
+                    wake,
+                    lit: 0,
                     leds: Leds::default(),
                     octave_since: None,
+                },
+                midi: Midi {
+                    device,
+                    updates,
+                    session: None,
+                    remote: RemoteNotes::default(),
+                    output: Output::new(),
                 },
                 audio: Audio {
                     stream,
@@ -126,6 +164,7 @@ mod app {
 
     #[post_init]
     fn start() {
+        Midi::spawn(()).expect("one USB task");
         Draw::spawn(()).expect("one screen task");
     }
 
@@ -134,7 +173,8 @@ mod app {
     struct Panel {
         controls: Controls,
         timer: Timer5,
-        keyboard: Keyboard,
+        wake: Sender<'static, (), 1>,
+        lit: u32,
         leds: Leds,
         octave_since: Option<u32>,
     }
@@ -144,12 +184,19 @@ mod app {
             let Some(scan) = self.controls.scan(&self.leds) else {
                 return;
             };
-            let previous = self.keyboard;
-            self.keyboard.update(&scan, &mut self.leds);
-            if self.keyboard != previous {
-                let next = self.keyboard;
-                self.shared().keyboard.lock(|keyboard| *keyboard = next);
+            let held = self.shared().keyboard.lock(|keyboard| {
+                keyboard.update(&scan);
+                keyboard.held()
+            });
+            if held != self.lit {
+                for key in PianoKey::all() {
+                    self.leds.set(key, held & (1 << key.index()) != 0);
+                }
+                self.lit = held;
             }
+            // A completed 11-column sweep wakes USB every 1.1 ms. A pending
+            // wake already covers this sweep; no USB access occurs in this ISR.
+            let _ = self.wake.try_send(());
             if scan.is_down(Button::OctaveDown) && scan.is_down(Button::OctaveUp) {
                 let now = ticks();
                 if now.wrapping_sub(*self.octave_since.get_or_insert(now)) > 2 * Timers::TICK_HZ {
@@ -169,15 +216,79 @@ mod app {
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
-            let (held, master) = self.shared().keyboard.lock(|k| (k.held, k.master));
+            let (physical, remote, master) = self
+                .shared()
+                .keyboard
+                .lock(|k| (k.physical, k.remote.velocities, k.master));
             let mut synth = self.synth;
-            synth.render(held, master.unwrap_or(MasterLevel::MIN), &mut self.block);
+            synth.render(
+                physical,
+                &remote,
+                master.unwrap_or(MasterLevel::MIN),
+                &mut self.block,
+            );
             match self.stream.try_write(&self.block) {
                 Refill::Written => {}
                 Refill::WouldBlock => return,
                 Refill::Late => self.shared().late.lock(|late| *late = true),
             }
             self.synth = synth;
+        }
+    }
+
+    #[async_task(priority = 2, shared = [keyboard])]
+    struct Midi {
+        device: MidiDevice,
+        updates: Receiver<'static, (), 1>,
+        session: Option<u32>,
+        remote: RemoteNotes,
+        output: Output,
+    }
+
+    impl RticAsyncTask for Midi {
+        type SpawnInput = ();
+
+        async fn exec(&mut self, (): ()) {
+            let mut buffer = PacketBuffer::default();
+            loop {
+                self.updates.recv().await.expect("panel owns the sender");
+                self.device.poll();
+                let session = self.device.session();
+                let new_session = session != self.session;
+                let previous = self.remote;
+                if new_session {
+                    self.remote = RemoteNotes::default();
+                    self.output = Output::new();
+                    self.session = session;
+                }
+                let mut last = None;
+                let mut seen = 0;
+                for &event in self.device.receive(&mut buffer) {
+                    if let Some(key) = self.remote.apply(event) {
+                        last = Some(key);
+                        seen |= 1 << key.index();
+                    }
+                }
+                let remote = self.remote;
+                let physical = self.shared().keyboard.lock(|k| {
+                    if new_session || remote != previous || last.is_some() {
+                        k.online = session.is_some();
+                        k.remote = remote;
+                        k.seen |= seen;
+                        if last.is_some() {
+                            k.last = last;
+                        }
+                    }
+                    k.physical
+                });
+                if session.is_some() {
+                    // Host input never enters this queue, even when a physical
+                    // key and an incoming note have the same pitch.
+                    self.output.observe(physical);
+                    let n = self.device.send(self.output.pending());
+                    self.output.sent(n);
+                }
+            }
         }
     }
 

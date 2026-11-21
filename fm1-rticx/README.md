@@ -42,7 +42,27 @@ On the piano display, held notes are green and notes played since boot stay
 cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent
 note name and MIDI number on screen. A red `LATE` records a DMA boundary
 crossed during an audio refill. The piano uses digital key events at fixed
-velocity and produces stereo audio locally.
+velocity 127 and produces stereo audio locally.
+
+### Record and play a MIDI clip
+
+Connect the piano to a computer with a USB data cable. The USB indicator turns
+green when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, record and play back a chord.
+
+1. Under **Settings → Link, Tempo & MIDI**, enable **Track** for the FM-1 input
+   and output ports.
+2. On an empty MIDI track, choose **MIDI From → FM-1 MIDI Piano → Ch. 1**.
+   Leave **MIDI To** set to **No Output**, arm the track, and record a chord.
+   The FM-1 plays the keys locally while Live records their lengths.
+3. Stop recording, disarm the track, choose **MIDI To → FM-1 MIDI Piano →
+   Ch. 1**, and play the clip. The matching key LEDs light up and the FM-1's
+   speaker or headphones play the chord. Edit a note's velocity to change its
+   playback level.
+
+Incoming notes span MIDI numbers 53–79. Incoming notes and physical keys
+have independent lifetimes, including at the same pitch. The MIDI task runs
+once per panel sweep below the audio interrupt. The example uses the shared
+[pid.codes test identity](https://pid.codes/1209/0001/) for bench use. A distributed product needs its own USB identity.
 
 The packages are written to `target/firmware/`. Download the `.fwsc` files from the `fm1-rticx-firmware`
 artifact on a successful [fm1-rticx workflow run][ci].
