@@ -25,7 +25,7 @@ fn app(mut board: Board) -> ! {
 With an external runtime, acquire the peripherals once with `Board::take()`
 in its CPU0 initializer. This starts the timers and leaves interrupt setup to
 the caller. Bind TIMER5 and call `board.timers.on_interrupt()` in its handler
-to maintain the tick count. [The FM-1 RTICX crate](../fm1-rticx/) uses this
+to maintain the tick count. [The FM-1 RTICX crate][fm1-rticx] uses this
 entry path.
 
 ## Board peripherals
@@ -87,7 +87,7 @@ Call `service` even with empty input to retry a busy endpoint. The reader
 sends `F0 7D F7` on cable zero and prints the text between `F0 7D 01` and
 `F7`. Reading preserves the history. For a custom MIDI port name, pass
 `--port "WaveGraph"` (or another matching name) to
-[`read-usb-log.py`](scripts/read-usb-log.py).
+[`read-usb-log.py`][usb-log-reader].
 
 ## Asynchronous LCD writes
 
@@ -101,7 +101,7 @@ Borrow the LCD with `lcd.as_async(&mut delay)?`, where `delay` implements
 `write_rect_buffered(...).await?` copies the pixels into the BSP's SRAM and
 leaves the last strip in flight. Prepare the next rectangle while it sends,
 then call `flush().await?` after the final rectangle. The timer wakes the task
-if SPI1 stalls for 50 ms. See the [RTICX waveform example](../fm1-rticx/examples/rticx-waveform.rs).
+if SPI1 stalls for 50 ms. See the [RTICX waveform example][waveform-example].
 
 ## Drawing with embedded-graphics
 
@@ -364,6 +364,8 @@ checkout.
 
 Original BSP code is licensed under the [MIT License][mit].
 
+### Upstream sources
+
 Julius Vitkauskas’s [Rust blink example][blink-origin] and its [C predecessor][c-blink]
 supply the startup assembly, linker layout, pi32v2 target, timer interrupt,
 PLAY wiring, return-to-bootloader sequence and ST7789 bring-up. His [MIT-0
@@ -382,12 +384,21 @@ The green PLAY indicator uses the position measured by [Araminta][play-green].
 Piano expression uses Felucca’s row-drive and probe wiring and the strike curves
 from Charles Vestal’s [MPL-2.0 `fm1-base` touch library][touch-driver].
 
+### Contribution
+
+Changes to files with their own license notices follow those notices. Unless
+you explicitly state otherwise, you license other contributions you
+intentionally submit to this crate under the [MIT License][mit].
+
 [crate-badge]: https://img.shields.io/crates/v/fm1?logo=rust
 [crate]: https://crates.io/crates/fm1
 [docs-badge]: https://docs.rs/fm1/badge.svg
 [docs]: https://docs.rs/fm1/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
+[fm1-rticx]: https://docs.rs/fm1-rticx/
+[usb-log-reader]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.3/fm1/scripts/read-usb-log.py
+[waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.3/fm1-rticx/examples/rticx-waveform.rs
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/LICENSE
 [mit-0]: https://spdx.org/licenses/MIT-0.html
 [mpl]: https://www.mozilla.org/MPL/2.0/

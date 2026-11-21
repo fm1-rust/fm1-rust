@@ -60,6 +60,7 @@ Downstream projects can cross-build with the [reusable GitHub Actions workflow](
 ## License
 
 Original code in the workspace crates is licensed under the [MIT License](fm1/LICENSE).
+Julius Vitkauskas’s [blink example][blink-origin] is licensed under MIT-0.
 The `fm1` BSP incorporates MPL-2.0 code from Felucca’s C headers and USB driver
 and from the `fm1-base` piano touch library. See the [BSP license section](fm1/README.md#license)
 for the upstream sources and credits.

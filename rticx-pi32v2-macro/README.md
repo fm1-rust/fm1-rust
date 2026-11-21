@@ -12,6 +12,11 @@ Use `#[rticx_pi32v2::app]` through the [pi32v2 runtime][runtime] or
 
 Licensed under the [MIT License][mit].
 
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
+
 [crate-badge]: https://img.shields.io/crates/v/rticx-pi32v2-macro?logo=rust
 [crate]: https://crates.io/crates/rticx-pi32v2-macro
 [docs-badge]: https://docs.rs/rticx-pi32v2-macro/badge.svg
@@ -20,4 +25,4 @@ Licensed under the [MIT License][mit].
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/rticx-pi32v2.yml
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/rticx-pi32v2-macro/LICENSE
 [runtime]: https://docs.rs/rticx-pi32v2/
-[board]: https://github.com/fm1-rust/fm1-rust/tree/main/fm1-rticx
+[board]: https://docs.rs/fm1-rticx/
