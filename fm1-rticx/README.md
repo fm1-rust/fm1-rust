@@ -35,12 +35,12 @@ These screenshots show the examples running in [fm1-emu](https://github.com/joak
 
 | Screenshot | Example and controls |
 | --- | --- |
-| ![Front panel with the PLAY lamp lit](../docs/images/rticx-blink.png) | [`rticx-blink`](examples/rticx-blink.rs)<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
-| ![Tone playing with a green LCD above, muted with a red LCD below](../docs/images/rticx-tone.png) | [`rticx-tone`](examples/rticx-tone.rs)<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
-| ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](../docs/images/rticx-controls.png) | [`rticx-controls`](examples/rticx-controls.rs)<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
-| ![Piano display with C4, E4 and G4 held and USB connected](../docs/images/rticx-piano.png) | [`rticx-piano`](examples/rticx-piano.rs)<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
-| ![Oscilloscope showing an A4 sine wave at the DAC output](../docs/images/rticx-waveform.png) | [`rticx-waveform`](examples/rticx-waveform.rs)<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
-| ![Host terminal showing ready followed by two play+ and play- pairs](../docs/images/usb-log.png) | [`usb-log`](examples/usb-log.rs)<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
+| ![Front panel with the PLAY lamp lit](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-blink.png) | [`rticx-blink`](examples/rticx-blink.rs)<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
+| ![Tone playing with a green LCD above, muted with a red LCD below](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-tone.png) | [`rticx-tone`](examples/rticx-tone.rs)<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
+| ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-controls.png) | [`rticx-controls`](examples/rticx-controls.rs)<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
+| ![Piano display with C4, E4 and G4 held and USB connected](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-piano.png) | [`rticx-piano`](examples/rticx-piano.rs)<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
+| ![Oscilloscope showing an A4 sine wave at the DAC output](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-waveform.png) | [`rticx-waveform`](examples/rticx-waveform.rs)<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
+| ![Host terminal showing ready followed by two play+ and play- pairs](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/usb-log.png) | [`usb-log`](examples/usb-log.rs)<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
 
 To return to download mode, hold **PLAY** for two seconds in Blink, Tone or USB
 Log. In Controls, Piano or Waveform, hold **OCT-** and **OCT+** together for
@@ -201,7 +201,7 @@ Enable its `audio` feature to use the ALNK0 driver.
 
 ```toml
 [dependencies]
-fm1-rticx = "0.1.0"
+fm1-rticx = "0.1.1"
 ```
 
 Annotate the application module with `#[fm1_rticx::app]`. In `#[init]`, call
@@ -254,8 +254,8 @@ enables the BSP’s MPL-2.0 audio driver. The [BSP license section][bsp-license]
 lists the drivers and their upstream sources.
 
 [RTICX]: https://github.com/rticx-rs/rticx
-[standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.0/fm1/README.md#use-from-another-crate
-[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.0/fm1/targets/pi32v2-none.json
+[standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#use-from-another-crate
+[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/fm1/targets/pi32v2-none.json
 [crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
 [crate]: https://crates.io/crates/fm1-rticx
 [docs-badge]: https://docs.rs/fm1-rticx/badge.svg
