@@ -8,7 +8,7 @@ use crate::{
     time::{Timers, cycles},
 };
 
-const CON0: usize = 0x11800;
+pub(super) const CON0: usize = 0x11800;
 const CON1: usize = 0x11804;
 const EP0_CNT: usize = 0x11808;
 const EP1_CNT: usize = 0x1180c;
@@ -26,6 +26,10 @@ const POWER: u8 = 1;
 const TX_ENABLE: u8 = 7;
 const RX_ENABLE: u8 = 9;
 const USB_ENABLE: u8 = 11;
+pub(super) const SUSPEND: u8 = 1;
+pub(super) const RESUME: u8 = 1 << 1;
+pub(super) const RESET: u8 = 1 << 2;
+pub(super) const DISCONNECT: u8 = 1 << 5;
 const FRAME: u8 = 12;
 pub(super) const INDEX: u8 = 14;
 pub(super) const CSR0: u8 = 17;
@@ -100,7 +104,7 @@ pub(super) fn reset() -> Result<()> {
     set(CON0, 0x1e << 19);
     clear(CON0, 1 << 19);
     wr(FADDR, 0)?;
-    wr(USB_ENABLE, 7)?; // suspend, resume and reset
+    wr(USB_ENABLE, SUSPEND | RESUME | RESET | DISCONNECT)?;
     wr(TX_ENABLE, 1)?; // EP0
     wr(RX_ENABLE, 0)
 }
@@ -108,6 +112,7 @@ pub(super) fn reset() -> Result<()> {
 pub(super) fn configure(enabled: bool) -> Result<()> {
     if !enabled {
         set(CON0, 1 << 20);
+        wr(TX_ENABLE, 1)?;
         return wr(RX_ENABLE, 0);
     }
     write(EP1_TX, bus_address(&raw mut TX));
@@ -119,6 +124,7 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
     wr(RX_MAX, 0xff)?;
     wr(RXCSR, 0x90)?;
     wr(RXCSR + 1, 0)?;
+    wr(TX_ENABLE, 3)?; // EP0 and completion of a queued EP1 IN packet.
     wr(RX_ENABLE, 2)?;
     clear(CON0, 1 << 20);
     Ok(())

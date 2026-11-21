@@ -235,6 +235,7 @@ dependencies = [
  "fm1-audio",
  "fm1-controls",
  "fm1-graphics",
+ "futures-util",
  "rtic-time",
  "rticx-pi32v2",
  "rticx-pi32v2-macro",

@@ -8,7 +8,8 @@ case "$example" in
     graphics) set -- --features embedded-graphics ;;
     tone) set -- --features audio ;;
     rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
-    rticx-piano|rticx-tone|rticx-waveform) package=fm1-rticx; set -- --features audio ;;
+    rticx-piano) package=fm1-rticx; set -- --features audio,async-usb ;;
+    rticx-tone|rticx-waveform) package=fm1-rticx; set -- --features audio ;;
     *) echo "usage: $0 [blink|display|graphics|tone|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
