@@ -1,6 +1,6 @@
 [package]
 name = "rticx-pi32v2"
-version = "0.2.0-pre"
+version = "0.1.2"
 edition = "2024"
 description = "RTICX for CPU0 of the JieLi AC791N"
 license = "MIT"
