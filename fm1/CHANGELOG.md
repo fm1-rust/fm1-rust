@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.3 (2026-11-21)
+
+### Added
+- Add `usb_midi::UsbLog` behind the `usb-log` feature. It keeps complete ASCII
+  lines in a 44-byte buffer. Read a snapshot over USB-MIDI SysEx with
+  `scripts/read-usb-log.py`.
+
+### Fixed
+- Drop the unused waker outside the critical section when USB0 has already
+  signalled activity.
+- Give the USB controller buffers and the SPI display staging buffer an
+  explicit layout so their byte arrays start at the four-byte-aligned DMA address.
+
 ## 0.1.2 (2026-11-21)
 ### Added
 - Add typed front-panel scanning for buttons, piano keys, encoders, LEDs, and the
