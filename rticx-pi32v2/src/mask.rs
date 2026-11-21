@@ -1,5 +1,5 @@
 //! CPU0 interrupt enable bits for a resource ceiling.
-use crate::Interrupt;
+use crate::{Interrupt, registers::config_word};
 use core::ptr::{read_volatile, write_volatile};
 
 pub(crate) const WORDS: usize = 16;
@@ -38,7 +38,7 @@ impl SourceMask {
         for (word, &bits) in self.0.iter().enumerate() {
             if bits != 0 {
                 unsafe {
-                    let reg = config.wrapping_add(word);
+                    let reg = config_word(config, word);
                     let old = read_volatile(reg);
                     saved.0[word] = old & bits;
                     write_volatile(reg, old & !bits);
@@ -52,7 +52,7 @@ impl SourceMask {
         for (word, bits) in self.0.into_iter().enumerate() {
             if bits != 0 {
                 unsafe {
-                    let reg = config.wrapping_add(word);
+                    let reg = config_word(config, word);
                     write_volatile(reg, read_volatile(reg) | bits);
                 }
             }
