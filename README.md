@@ -38,6 +38,7 @@ repainting the LCD.
 
 For development on a host, run `cargo test --workspace --all-features` with a
 standard Rust toolchain. Building firmware uses the community pi32v2 toolchain.
+Downstream projects can cross-build with the [reusable GitHub Actions workflow](fm1/README.md#github-actions-ci).
 
 ## License
 

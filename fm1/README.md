@@ -271,6 +271,58 @@ python3 "$PI32V2_ISA/tools/hwtest/fm1app.py" my-app.fwsc \
 For a different binary name, replace `my-app` in the packaging command.
 Select the resulting `.fwsc` file in [M-Flasher][flasher].
 
+### GitHub Actions CI
+
+Add this workflow to your repository as `.github/workflows/fm1.yml`. It
+builds your project's default Cargo targets in release mode and links firmware
+binaries for the FM-1. The workflow supplies the target specification and
+patched toolchain. Run host unit tests in a separate job with `cargo test`.
+
+```yaml
+name: FM-1
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    uses: fm1-rust/fm1-rust/.github/workflows/pi32v2-build.yml@main
+```
+
+For reproducible CI, replace `main` with the full commit SHA of the workflow
+you tested. The first run with empty caches builds host LLVM and patched
+rustc. Later runs restore rustc directly from your repository's Actions
+cache. If only rustc needs rebuilding, the workflow reuses cached host LLVM.
+
+For a workspace member such as `wavegraph-fm1`, add the following `with`
+block to the `firmware` job. This example uses a committed `Cargo.lock` and
+uploads the linked ELF for a binary named `wavegraph-fm1`.
+
+```yaml
+    with:
+      args: |
+        --locked
+        --package=wavegraph-fm1
+      artifact-name: wavegraph-fm1-elf
+      artifact-path: target/pi32v2-none/release/wavegraph-fm1
+```
+
+`args` takes one Cargo argument per line. For example, add `--example=blink`
+to select a firmware example or `--features=audio` to enable a project
+feature. Library crates can omit both artifact inputs.
+
+For a custom build or a flashable `.fwsc`, set `script` to a checked-in
+executable, for example `ci/firmware.sh`. It runs from your checkout root
+with `args` as positional arguments. The workflow sets `RUSTC`,
+`RUSTC_BOOTSTRAP`, `PI32V2_BIN`, `PI32V2_TARGET`, `PI32V2_ISA` and the
+target linker and linker flags. Use `"$PI32V2_TARGET"` in the Cargo command
+above and `"$PI32V2_ISA/tools/hwtest/fm1app.py"` to package the ELF. Set
+`artifact-path` to the resulting file or a single glob relative to your
+checkout.
+
 ## License
 
 Original BSP code is licensed under the [MIT License][mit].

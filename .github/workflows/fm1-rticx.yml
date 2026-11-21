@@ -12,9 +12,11 @@ on:
       - Cargo.toml
       - Cargo.lock
       - '.cargo/**'
+      - .github/scripts/build-firmware.sh
       - .github/scripts/build-llvm.sh
       - .github/scripts/build-rustc.sh
       - .github/workflows/fm1-rticx.yml
+      - .github/workflows/pi32v2-build.yml
       - .github/workflows/pi32v2-firmware.yml
   push:
     branches: [main]
