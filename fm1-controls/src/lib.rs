@@ -34,6 +34,8 @@ impl<const N: usize> ScanQueue<N> {
 
     /// Start an empty queue. The producer never waits and the receiver can await a scan.
     pub fn split(&mut self) -> (ScanSender<'_, N>, ScanReceiver<'_, N>) {
+        // rtic-sync 1.6.1 retains the previous receiver's waker across splits.
+        self.channel = Channel::new();
         let (sender, receiver) = self.channel.split();
         (ScanSender { sender, missed: 0 }, receiver)
     }
@@ -90,10 +92,14 @@ pub type ScanReceiver<'a, const N: usize> = Receiver<'a, QueuedScan, N>;
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
     use super::*;
+    use alloc::{sync::Arc, task::Wake};
     use core::{
         future::Future,
         pin::pin,
+        sync::atomic::{AtomicUsize, Ordering},
         task::{Context, Poll, Waker},
     };
 
@@ -143,5 +149,35 @@ mod tests {
             };
             assert_eq!(next.as_mut().poll(&mut cx), Poll::Ready(Ok(expected)));
         }
+    }
+
+    #[test]
+    fn reopening_does_not_wake_the_previous_receiver() {
+        struct CountWakes(AtomicUsize);
+
+        impl Wake for CountWakes {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let mut queue = ScanQueue::<1>::new();
+        let previous = Arc::new(CountWakes(AtomicUsize::new(0)));
+        {
+            let (mut panel, mut input) = queue.split();
+            panel.try_send(Scan::default(), 1).expect("free slot");
+            drop(panel);
+
+            let waker = Waker::from(Arc::clone(&previous));
+            let mut next = pin!(input.recv());
+            assert!(matches!(
+                next.as_mut().poll(&mut Context::from_waker(&waker)),
+                Poll::Ready(Ok(_))
+            ));
+        }
+
+        let (mut panel, _input) = queue.split();
+        panel.try_send(Scan::default(), 2).expect("reopened slot");
+        assert_eq!(previous.0.load(Ordering::Relaxed), 0);
     }
 }
