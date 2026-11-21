@@ -9,7 +9,7 @@ keywords = ["fm1", "async", "controls"]
 categories = ["asynchronous", "embedded", "no-std"]
 
 [dependencies]
-fm1 = { version = "0.1.1", path = "../fm1" }
+fm1 = "0.1.2"
 rticx-async = "0.2"
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
