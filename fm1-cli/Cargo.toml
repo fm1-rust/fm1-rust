@@ -1,0 +1,20 @@
+[package]
+name = "fm1-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Read M-VAVE FM-1 logs and timing reports over USB-MIDI"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["fm1", "usb", "midi"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "fm1"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+fm1-usb = "0.1.0"
+
+[lints]
+workspace = true
