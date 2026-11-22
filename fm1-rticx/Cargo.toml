@@ -49,6 +49,11 @@ name = "rticx-waveform"
 required-features = ["audio"]
 test = true
 
+[[example]]
+name = "rticx-timing"
+required-features = ["audio", "async-usb", "usb-log"]
+test = true
+
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
 

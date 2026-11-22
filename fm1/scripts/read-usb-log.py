@@ -12,12 +12,14 @@ import rtmidi
 
 def find_ports(inputs, outputs, labels):
     for label in labels:
-        rx = [i for i, name in enumerate(inputs) if label in name]
-        tx = [i for i, name in enumerate(outputs) if label in name]
+        needle = label.casefold()
+        rx = [i for i, name in enumerate(inputs) if needle in name.casefold()]
+        tx = [i for i, name in enumerate(outputs) if needle in name.casefold()]
         if len(rx) == len(tx) == 1:
             return rx[0], tx[0]
         if rx and tx:
-            raise SystemExit(f"Multiple ports named {label}. Select a unique pair with --port.")
+            raise SystemExit(f"Multiple ports match {label!r}. Inputs: {inputs}. Outputs: {outputs}. "
+                             "Use --port to select a unique pair, or disconnect duplicate devices.")
     raise SystemExit(f"No matching FM-1 port pair. Inputs: {inputs}. Outputs: {outputs}.")
 
 
@@ -25,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="match this text in the MIDI input and output port names")
     port = parser.parse_args().port
-    labels = [port] if port else ["FM-1 USB Log", "FM-1 MIDI Piano"]
+    labels = [port] if port else ["FM-1 USB Log", "FM-1"]
     rx, tx = rtmidi.MidiIn(), rtmidi.MidiOut()
     rx.ignore_types(sysex=False)
     rx_port, tx_port = find_ports(rx.get_ports(), tx.get_ports(), labels)
