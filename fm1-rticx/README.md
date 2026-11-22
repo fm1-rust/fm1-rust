@@ -26,6 +26,7 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh rticx-controls
 ./fm1/scripts/build-example.sh rticx-piano
 ./fm1/scripts/build-example.sh rticx-waveform
+./fm1/scripts/build-example.sh rticx-timing
 ./fm1/scripts/build-example.sh usb-log
 ```
 
@@ -46,8 +47,11 @@ These screenshots show the examples running in [fm1-emu](https://github.com/joak
 | ![Oscilloscope showing an A4 sine wave at the DAC output](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-waveform.png) | [`rticx-waveform`][rticx-waveform-example]<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
 | ![Host terminal showing ready followed by two play+ and play- pairs](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/usb-log.png) | [`usb-log`][usb-log-example]<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
 
+The [`rticx-timing`][rticx-timing-example] diagnostic is a hardware-only timing
+benchmark. It displays summary counters and [exports detailed results over USB](#hardware-timing-diagnostic).
+
 To return to download mode, hold **PLAY** for two seconds in Blink, Tone or USB
-Log. In Controls, Piano or Waveform, hold **OCT-** and **OCT+** together for
+Log. In Controls, Piano, Waveform or Timing, hold **OCT-** and **OCT+** together for
 two seconds.
 
 The tone, piano and waveform use [`fm1-audio`][audio] with 128 stereo
@@ -141,13 +145,88 @@ python3 -m venv .venv
 
 The example leaves the screen dark. Startup logs `ready`, a press logs
 `play+`, and release logs `play-`. Hold PLAY for two seconds to return to
-download mode. The reader accepts both `FM-1 USB Log` and `FM-1 MIDI Piano`
-because the examples share a USB identity.
+download mode. The reader prefers `FM-1 USB Log` and also recognizes a single
+`FM-1` input/output pair, including the `FM-1 MIDI Piano` name used by macOS.
 
 The `usb-log` feature forwards to the [BSP USB log][bsp-usb-log].
 The independent `rtt` feature provides `fm1_rticx::rtt::init()`, which
 allocates a 256-byte nonblocking RTT up-channel. This example uses both and
 the host reader communicates entirely over USB-MIDI.
+
+### Hardware timing diagnostic
+
+In M-Flasher, choose **Install firmware (.fwsc)** and select `rticx-timing.fwsc`.
+To build the image yourself, set up the [firmware toolchain][build-and-flash]
+and run this command from the workspace root. The output is in `target/firmware/`.
+
+```sh
+./fm1/scripts/build-example.sh rticx-timing
+```
+
+On real hardware, this runs a one-second warmup followed by three five-second
+measurements: **IDLE** (audio, 10 kHz panel scanning and periodic USB service,
+LCD left alone), **DRAW** (the same interrupts while the low-priority task
+repaints all 300 text cells), and **BUSY** (7 ms of preemptible spin work per
+10 ms slot at the lowest priority). The output is silent. The screen labels
+the current stage, shows the last completed stage's peak audio and panel
+service times, gaps, input dispatch latency and loss counts, and finally shows
+**DONE - USB REPORT**.
+
+On macOS or Linux, run these two commands once from the workspace root to set up
+the USB-MIDI reader.
+
+```sh
+python3 -m venv .venv-timing
+.venv-timing/bin/python -m pip install python-rtmidi
+```
+
+Connect the FM-1 with a USB data cable. When the LCD shows **DONE - USB REPORT**,
+run the reader. If you already installed `python-rtmidi` for the USB log example,
+you can use that environment’s `bin/python` here.
+
+```sh
+.venv-timing/bin/python fm1/scripts/read-timing.py
+```
+
+The first line should read `24MHZ AUDIO 128F PANEL 10KHZ`. Timing, Piano and USB Log
+share a USB vendor and product ID, so a Mac may show an earlier port name. The
+reader prefers `FM-1 Timing`, otherwise looks for a single `FM-1` input/output
+pair, and checks the timing firmware’s reply. With multiple FM-1 devices, pass
+enough of the port name to select one. For example, if the timing app appears
+as `FM-1 MIDI Piano` on your Mac, use this command.
+
+```sh
+.venv-timing/bin/python fm1/scripts/read-timing.py --port 'FM-1 MIDI Piano'
+```
+
+The reader uses MIDI CC 112 to select each of 25 report pages, then requests
+that page using the existing USB log SysEx protocol. `UsbLog` retains at most
+43 ASCII characters, so unpaged logging would silently evict measurements.
+Times are reported in microseconds. `XR` counts a late refill, service lasting
+at least one audio block, or an entry-to-entry gap of at least two blocks.
+`JIT` measures the largest absolute difference between observed and nominal
+**entry-to-entry** intervals. The timestamps come from software inside each
+handler. `G2` counts intervals at least twice the nominal period. `DROP`
+counts full input FIFO rejections. `W` reports TIMER2 async wake
+lateness, and `M` counts wakes at least one full 5 ms period late. `LCD`
+durations include DMA waits and interrupt preemption. The audio task refills a
+silent buffer. Full synth DSP has a different workload. Peaks describe this
+run, and a guaranteed worst-case bound needs a separate analysis.
+
+To measure how long a scan queue operation masks interrupts, timestamp the
+outermost disable and restore around enqueue and dequeue. To measure interrupt
+response latency, capture the hardware event and entry into its handler on the
+same time base.
+
+USB receive DMA has a separate memory-safety requirement. The driver reserves
+68 bytes and advertises 64-byte OUT packets. It programs `RX_MAX` to `0xff`
+and clamps the count when copying from RAM, after DMA completes. Establish the
+controller's maximum write span for that setting, including any padding, and
+verify it fits the allocation. An instrumented receive buffer can check a
+documented bound on the board. `USB MAX` measures service time in microseconds.
+
+The report stays in RAM until the FM-1 restarts. Hold **OCT-** and **OCT+**
+for two seconds to return to download mode.
 
 ### Record and play a MIDI clip
 
@@ -272,6 +351,7 @@ intentionally submit to this crate under the [MIT License][mit].
 [rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-controls.rs
 [rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-piano.rs
 [rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-waveform.rs
+[rticx-timing-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-timing.rs
 [usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/usb-log.rs
 [standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#use-from-another-crate
 [target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/fm1/targets/pi32v2-none.json
