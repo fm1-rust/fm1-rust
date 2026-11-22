@@ -1,0 +1,50 @@
+RXD3 BULK READY
+enum=4 retries=0 phase=0 completed=16 retained=16 last_aborted=0
+#1 token=1 alt=1 requested=0 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=- first_guard=- guard_byte=-
+#2 token=2 alt=1 requested=64 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=65 first_guard=- guard_byte=-
+#3 token=3 alt=1 requested=128 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,4) gate=(0x00,0,502)
+  highest=65 first_guard=- guard_byte=-
+#4 token=4 alt=1 requested=128 RX_MAX=0xff/0xff fill=0xa5 delayed=true
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,54) gate=(0x00,0,502)
+  highest=65 first_guard=- guard_byte=-
+#5 token=5 alt=1 requested=0 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,509)
+  highest=- first_guard=- guard_byte=-
+#6 token=6 alt=1 requested=32 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,32,4) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=33 first_guard=- guard_byte=-
+#7 token=7 alt=1 requested=33 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,33,4) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=34 first_guard=- guard_byte=-
+#8 token=8 alt=1 requested=64 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,4) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=65 first_guard=- guard_byte=-
+#9 token=9 alt=1 requested=0 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=- first_guard=- guard_byte=-
+#10 token=10 alt=1 requested=64 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=65 first_guard=- guard_byte=-
+#11 token=11 alt=1 requested=128 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,4) gate=(0x00,0,500)
+  highest=65 first_guard=- guard_byte=-
+#12 token=12 alt=1 requested=128 RX_MAX=0xff/0xff fill=0x5a delayed=true
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,54) gate=(0x00,0,504)
+  highest=65 first_guard=- guard_byte=-
+#13 token=13 alt=1 requested=0 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=- first_guard=- guard_byte=-
+#14 token=14 alt=1 requested=32 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,32,4) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=33 first_guard=- guard_byte=-
+#15 token=15 alt=1 requested=33 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,33,4) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=34 first_guard=- guard_byte=-
+#16 token=16 alt=1 requested=64 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,4) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=65 first_guard=- guard_byte=-

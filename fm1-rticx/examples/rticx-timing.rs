@@ -10,6 +10,9 @@
 #[cfg(any(target_os = "none", test))]
 #[path = "rticx-timing/measure.rs"]
 mod measure;
+#[cfg(all(target_os = "none", feature = "usb-dma-probe"))]
+#[path = "rticx-timing/probe_screen.rs"]
+mod probe_screen;
 
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
@@ -40,6 +43,12 @@ mod app {
     static ACTIVE: AtomicU8 = AtomicU8::new(0);
     static FINISHED: AtomicBool = AtomicBool::new(false);
     const SCANS: usize = 8;
+    #[cfg(feature = "usb-dma-probe")]
+    static DASHBOARD: critical_section::Mutex<
+        core::cell::Cell<Option<fm1_rticx::bsp::usb_midi::ProbeDisplay>>,
+    > = critical_section::Mutex::new(core::cell::Cell::new(None));
+    #[cfg(feature = "usb-dma-probe")]
+    static LISTEN: AtomicBool = AtomicBool::new(false);
 
     #[shared]
     struct Shared {
@@ -57,15 +66,46 @@ mod app {
         static QUEUE: ConstStaticCell<ScanQueue<SCANS>> = ConstStaticCell::new(ScanQueue::new());
         let (send, recv) = QUEUE.take().split();
         let mut board = Board::take().expect("CPU0 board");
-        let usb = board
-            .take_usb()
-            .expect("one USB device")
-            .into_midi(Identity {
-                vendor_id: 0x1209,
-                product_id: 0x0001, // pid.codes shared development identity
-                manufacturer: "fm1-rust",
-                product: "FM-1 Timing",
-            });
+        let port = board.take_usb().expect("one USB device");
+        let id = Identity {
+            vendor_id: 0x1209,
+            product_id: 0x0001, // pid.codes shared development identity
+            manufacturer: "fm1-rust",
+            product: "FM-1 Timing",
+        };
+        // SAFETY: run this bench image on a controlled USB bus. The timing
+        // host sends legal USB-MIDI, and the RXD3 tool sends the qualified
+        // sequence of single packets (at most 1023 bytes) into a 2 KiB arena.
+        // Keep that physical constraint across reconnects for the run.
+        let usb = unsafe {
+            #[cfg(not(feature = "usb-dma-probe"))]
+            {
+                port.into_midi(id)
+            }
+            #[cfg(feature = "usb-dma-probe")]
+            {
+                use fm1_rticx::bsp::usb_midi::ProbeProfile;
+                match option_env!("FM1_DMA_PROFILE") {
+                    None => port.into_midi(id),
+                    Some("midi") => port.into_dma_probe(id, ProbeProfile::Midi),
+                    Some("bulk") => port.into_dma_probe(
+                        Identity {
+                            product: "FM-1 DMA Bulk",
+                            ..id
+                        },
+                        ProbeProfile::Bulk,
+                    ),
+                    Some("iso") => port.into_dma_probe(
+                        Identity {
+                            product: "FM-1 DMA Iso",
+                            ..id
+                        },
+                        ProbeProfile::Iso,
+                    ),
+                    Some(_) => unreachable!("unknown DMA probe profile"),
+                }
+            }
+        };
         DeadlineClock::start::<3>(board.timers.take_alarm().expect("TIMER2 alarm"));
         let timer = Clock::start(board.timers.with_panel_scan_rate());
         let delay = timer.clock();
@@ -182,6 +222,10 @@ mod app {
             self.timer.on_interrupt();
             if let Some(scan) = self.controls.scan(&self.leds) {
                 let captured = cycles();
+                #[cfg(feature = "usb-dma-probe")]
+                if option_env!("FM1_DMA_PROFILE") == Some("midi") && scan.pressed(Button::Play) {
+                    LISTEN.store(true, Relaxed);
+                }
                 if scan.is_down(Button::OctaveDown) && scan.is_down(Button::OctaveUp) {
                     let now = ticks();
                     if now.wrapping_sub(*self.octave_since.get_or_insert(now))
@@ -304,6 +348,14 @@ mod app {
                 }
                 let started = cycles();
                 self.device.poll();
+                #[cfg(feature = "usb-dma-probe")]
+                if option_env!("FM1_DMA_PROFILE").is_some() {
+                    if LISTEN.swap(false, Relaxed) {
+                        self.device.probe_listen();
+                    }
+                    let display = self.device.probe_display();
+                    critical_section::with(|cs| DASHBOARD.borrow(cs).set(display));
+                }
                 let packets = self.device.receive(&mut rx);
                 for packet in packets {
                     // MIDI channel-1 CC 112 selects the 0..24 diagnostic page.
@@ -316,18 +368,48 @@ mod app {
                     }
                 }
                 if packets.contains(&[0x07, 0xf0, 0x7d, 0xf7]) {
-                    let report = Report {
-                        audio: self.shared().audio.lock(|v| *v),
-                        panel: self.shared().panel.lock(|v| *v),
-                        input: self.shared().input.lock(|v| *v),
-                        wake: self.shared().wake.lock(|v| *v),
-                        lcd: self.shared().lcd.lock(|v| *v),
-                        cpu: self.shared().cpu.lock(|v| *v),
-                        usb: self.shared().usb.lock(|v| *v),
-                    };
-                    let line = report.page(self.page, FINISHED.load(Relaxed));
                     self.log = UsbLog::new();
-                    self.log.record(line.as_str()).expect("short ASCII page");
+                    if cfg!(feature = "usb-dma-probe") && option_env!("FM1_DMA_PROFILE").is_some() {
+                        self.log
+                            .record("RXD3 MIDI READY")
+                            .expect("short ASCII marker");
+                        #[cfg(feature = "usb-dma-probe")]
+                        if let Some(d) = self.device.probe_display()
+                            && !d.active
+                            && let Some(r) = d.reading
+                        {
+                            use core::fmt::Write;
+                            let mut line = crate::measure::Line::new();
+                            if let Some(g) = r.first_guard {
+                                let _ = write!(
+                                    line,
+                                    "#{} HI{} G{}",
+                                    r.token,
+                                    r.highest.unwrap_or(g),
+                                    g
+                                );
+                            } else if let Some(h) = r.highest {
+                                let _ = write!(line, "#{} HI{} G-", r.token, h);
+                            } else {
+                                let _ = write!(line, "#{} HI- G-", r.token);
+                            }
+                            self.log
+                                .record(line.as_str())
+                                .expect("short offset summary");
+                        }
+                    } else {
+                        let report = Report {
+                            audio: self.shared().audio.lock(|v| *v),
+                            panel: self.shared().panel.lock(|v| *v),
+                            input: self.shared().input.lock(|v| *v),
+                            wake: self.shared().wake.lock(|v| *v),
+                            lcd: self.shared().lcd.lock(|v| *v),
+                            cpu: self.shared().cpu.lock(|v| *v),
+                            usb: self.shared().usb.lock(|v| *v),
+                        };
+                        let line = report.page(self.page, FINISHED.load(Relaxed));
+                        self.log.record(line.as_str()).expect("short ASCII page");
+                    }
                 }
                 self.log.service(&mut self.device, packets);
                 if stage != 0 {
@@ -408,6 +490,22 @@ mod app {
             let mut text = TextGrid::new();
             if lcd.fill_rect(0, 0, SIZE, SIZE, 0).is_err() {
                 return;
+            }
+            #[cfg(feature = "usb-dma-probe")]
+            if let Some(profile) = option_env!("FM1_DMA_PROFILE") {
+                let mut previous = None;
+                loop {
+                    let state =
+                        critical_section::with(|cs| DASHBOARD.borrow(cs).get()).unwrap_or_default();
+                    if previous != Some(state) {
+                        crate::probe_screen::draw(&mut text, profile, state);
+                        if text.paint(&mut lcd).is_err() {
+                            return;
+                        }
+                        previous = Some(state);
+                    }
+                    Clock::delay(100.millis()).await;
+                }
             }
             heading(&mut text, b"WARMUP");
             if text.paint(&mut lcd).is_err() {

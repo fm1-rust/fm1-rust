@@ -30,6 +30,7 @@ audio = ["fm1/audio"]
 embedded-graphics = ["fm1/embedded-graphics"]
 rtt = ["dep:rtt-target"]
 usb-log = ["fm1/usb-log"]
+usb-dma-probe = ["fm1/usb-dma-probe"]
 
 [[example]]
 name = "rticx-piano"

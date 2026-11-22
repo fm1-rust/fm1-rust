@@ -50,6 +50,9 @@ These screenshots show the examples running in [fm1-emu](https://github.com/joak
 The [`rticx-timing`][rticx-timing-example] diagnostic is a hardware-only timing
 benchmark. It displays summary counters and [exports detailed results over USB](#hardware-timing-diagnostic).
 
+Use the USB examples on a controlled USB bus. They activate USB0 under the
+BSP's unsafe receive-DMA contract. [Physical measurements and deployment requirements](../docs/usb-dma/README.md#fix-and-remaining-hardware-contract)
+
 To return to download mode, hold **PLAY** for two seconds in Blink, Tone or USB
 Log. In Controls, Piano, Waveform or Timing, hold **OCT-** and **OCT+** together for
 two seconds.

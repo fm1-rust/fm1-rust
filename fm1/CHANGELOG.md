@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Starting USB-MIDI now requires an unsafe call to `UsbPort::into_midi`.
+  USB0's EP1 OUT DMA exceeded the original 68-byte allocation on hardware.
+  EP0 and normal EP1 now have separate 2 KiB receive destinations. The
+  caller must establish the controller's receive DMA bounds and handoffs.
+  [Measurements and migration](../docs/usb-dma/README.md#fix-and-remaining-hardware-contract)
+
 ## 0.1.3 (2026-11-21)
 
 ### Added

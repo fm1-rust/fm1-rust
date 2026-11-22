@@ -1,21 +1,23 @@
 //! Read FM-1 diagnostics from the host.
 
+mod dma_probe;
+
 use clap::{Parser, Subcommand};
 use core::time::Duration;
-use fm1_usb::Device;
+use fm1_usb::{Device, dma_probe::read_log};
 use std::{
     io::{self, Write},
     process::ExitCode,
 };
 
 #[derive(Parser)]
-#[command(name = "fm1", version, about = "Read FM-1 diagnostics over USB-MIDI")]
+#[command(name = "fm1", version, about = "Read FM-1 diagnostics over USB")]
 struct Args {
     /// Match a unique substring in both MIDI port names.
     #[arg(long, global = true)]
     port: Option<String>,
 
-    /// Seconds to wait for each MIDI reply.
+    /// Seconds to wait for each control or MIDI reply.
     #[arg(long, global = true, default_value = "2", value_parser = parse_timeout, value_name = "SECONDS")]
     timeout: Duration,
 
@@ -25,10 +27,19 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print one USB log snapshot, preserving its line endings.
+    /// Read the probe's trial history or the firmware's USB-MIDI log.
     Log,
     /// Read the 25-page rticx-timing report after the LCD shows DONE.
     Timing,
+    /// Measure EP1 OUT DMA on a board running an rticx-dma image.
+    DmaProbe {
+        /// Board identification to record with the measurements.
+        #[arg(long)]
+        board_revision: String,
+        /// New directory for report.json and all 2 KiB snapshots.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 fn parse_timeout(s: &str) -> Result<Duration, &'static str> {
@@ -51,10 +62,53 @@ fn run(args: Args) -> io::Result<()> {
         info.bus_id(),
         info.device_address()
     );
-    let (ports, snapshot) = device.log_ports(args.port.as_deref(), args.timeout)?;
+    let log_ports = || device.log_ports(args.port.as_deref(), args.timeout);
     let text = match args.command {
-        Command::Log => snapshot,
-        Command::Timing => ports.connect(|_, _| {})?.read_timing(args.timeout)?,
+        Command::Log => {
+            // Probe history is read only over EP0, even while EP1 is armed.
+            let vendor = matches!(
+                info.product_string(),
+                Some("FM-1 DMA Iso" | "FM-1 DMA Bulk")
+            ) || info.interfaces().any(|i| i.class() == 0xff);
+            if vendor {
+                match read_log(&device, args.timeout)? {
+                    Some(history) => history,
+                    None => log_ports()?.1,
+                }
+            } else if info.product_string() == Some("FM-1 Timing") {
+                match read_log(&device, args.timeout) {
+                    Ok(Some(history)) => history,
+                    // Stock timing and MIDI-only installations can still use UsbLog.
+                    _ => log_ports()?.1,
+                }
+            } else {
+                let snapshot = log_ports()?.1;
+                if snapshot.lines().next() == Some("RXD3 MIDI READY") {
+                    read_log(&device, args.timeout)
+                        .ok()
+                        .flatten()
+                        .unwrap_or(snapshot)
+                } else {
+                    snapshot
+                }
+            }
+        }
+        Command::Timing => log_ports()?
+            .0
+            .connect(|_, _| {})?
+            .read_timing(args.timeout)?,
+        Command::DmaProbe {
+            board_revision,
+            out,
+        } => {
+            return dma_probe::run(
+                &device,
+                &board_revision,
+                out,
+                args.port.as_deref(),
+                args.timeout,
+            );
+        }
     };
     io::stdout().lock().write_all(text.as_bytes())
 }

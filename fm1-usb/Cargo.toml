@@ -11,6 +11,10 @@ categories = ["hardware-support", "multimedia::audio"]
 [dependencies]
 midir = "0.11.1"
 nusb = "0.2.9"
+rusb = { version = "0.9.4", optional = true, features = ["vendored"] }
+
+[features]
+dma-probe = ["dep:rusb"]
 
 [lints]
 workspace = true

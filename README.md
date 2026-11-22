@@ -59,6 +59,9 @@ For development on a host, run `cargo test --workspace --all-features` with a
 standard Rust toolchain. Building firmware uses the community pi32v2 toolchain.
 Downstream projects can cross-build with the [reusable GitHub Actions workflow](fm1/README.md#github-actions-ci).
 
+The [USB OUT DMA investigation](docs/usb-dma/README.md) records the physical
+FM-1 measurements, the receiver's safety requirements and how to reproduce them.
+
 ## License
 
 Original code in the workspace crates is licensed under the [MIT License](fm1/LICENSE).

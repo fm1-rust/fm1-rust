@@ -1,0 +1,58 @@
+diff --git a/crates/fm1-soc/src/usb.rs b/crates/fm1-soc/src/usb.rs
+index 37c1447..b29ba7a 100644
+--- a/crates/fm1-soc/src/usb.rs
++++ b/crates/fm1-soc/src/usb.rs
+@@ -223,6 +223,10 @@ pub enum UsbEvent {
+
+ #[derive(Default)]
+ pub struct Usb {
++    /// EP0 completion, queued raw EP1 OUT packets and optional suppressed RX indication.
++    pub test_ctl: Option<Result<Vec<u8>, String>>,
++    pub test_q: VecDeque<Vec<u8>>,
++    pub test_silent: bool,
+     /// A cable to a host: without it the SIE never answers and nothing happens on the bus.
+     pub cable: bool,
+     /// CPU cycles per SIE round trip.
+@@ -756,6 +760,23 @@ impl Usb {
+             }
+             HostState::Enum(step) => self.enumerate(dma, step),
+             HostState::Configured => {
++                if self.ctl.is_some() && self.audio_want.is_none() {
++                    match self.control(dma) {
++                        Ok(None) => (),
++                        Ok(Some(data)) => self.test_ctl = Some(Ok(data)),
++                        Err(e) => self.test_ctl = Some(Err(e)),
++                    }
++                }
++                if let Some(packet) = self.test_q.pop_front() {
++                    if self.dev_out(dma, self.addr, 1, &packet) != Reply::Ack {
++                        self.test_q.push_front(packet);
++                    } else if self.test_silent {
++                        // The model already wrote SRAM. Hide the indication to exercise the timed scan.
++                        self.ep[1].rx_rdy = false;
++                        self.ep[1].rx_count = 0;
++                        self.intrrx &= !2;
++                    }
++                }
+                 self.midi_frame(dma);
+                 self.audio_frame(dma);
+             }
+@@ -763,6 +784,18 @@ impl Usb {
+         }
+     }
+
++    pub fn test_request(&mut self, setup: [u8; 8]) {
++        assert!(self.ctl.is_none());
++        self.test_ctl = None;
++        self.ctl = Some(Ctl {
++            setup,
++            want: usize::from(u16::from_le_bytes([setup[6], setup[7]])),
++            ..Default::default()
++        });
++    }
++    pub fn test_config(&self) -> &[u8] {
++        &self.conf
++    }
+     fn start_step(&mut self, step: Step) {
+         let (req, wv, wi, len): (u16, u16, u16, u16) = match step {
+             Step::DevDesc8 => (0x8006, 0x0100, 0, 64),

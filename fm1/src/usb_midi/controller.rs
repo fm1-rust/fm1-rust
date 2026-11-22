@@ -39,21 +39,30 @@ const TX_MAX: u8 = 16;
 const RX_MAX: u8 = 19;
 pub(super) const COUNT: u8 = 22;
 pub(super) const MAX_PACKET: usize = 64;
+// Capacity of each normal USB0 receive destination, independent of the MIDI
+// payload size. At RX_MAX=0xff the black FM-1 changed EP1 offsets 0..=65 for
+// a legal transfer and reached offset 1023 under the oversized-packet probe.
+// 2 KiB is the tested staging allocation. See UsbPort::into_midi for the
+// separate platform obligation on the maximum DMA write before Rust can poll.
+const RX_DMA_BYTES: usize = 2048;
 
 // The controller receives the wrapper address and the CPU accesses its first field.
 #[repr(C, align(4))]
 struct Buffer<const N: usize>([u8; N]);
-// The AC79 SDK reserves one extra word after every receive buffer.
-static mut CONTROL: Buffer<68> = Buffer([0; 68]);
-static mut TX: Buffer<64> = Buffer([0; 64]);
-static mut RX: Buffer<68> = Buffer([0; 68]);
+// EP0 shares its RX and TX address. Give it the same capacity for incoming
+// traffic; the footprint measurements in docs/usb-dma cover EP1 only.
+static mut CONTROL: Buffer<RX_DMA_BYTES> = Buffer([0; RX_DMA_BYTES]);
+static mut TX: Buffer<MAX_PACKET> = Buffer([0; MAX_PACKET]);
+static mut RX: Buffer<RX_DMA_BYTES> = Buffer([0; RX_DMA_BYTES]);
 
 #[derive(Debug)]
 pub(super) struct Timeout;
 pub(super) type Result<T> = core::result::Result<T, Timeout>;
 
-fn sync_tx() {
+pub(super) fn sync_tx() {
     #[cfg(fm1)]
+    // SAFETY: the target shim executes the pi32v2 CSYNC instruction. It has
+    // no arguments or pointer preconditions.
     unsafe {
         unsafe extern "C" {
             fn fm1_csync();
@@ -62,8 +71,10 @@ fn sync_tx() {
     }
 }
 
-fn sync_rx() {
+pub(super) fn sync_rx() {
     #[cfg(fm1)]
+    // SAFETY: the target shim executes SSYNC. Bus ownership and the device's
+    // write bounds are established separately before the CPU accesses SRAM.
     unsafe {
         unsafe extern "C" {
             fn fm1_ssync();
@@ -82,7 +93,7 @@ pub(super) fn attach() -> Result<()> {
     clear(CLOCK, 3); // USB clock comes from the 48 MHz PLL.
     write(EP0_ADR, bus_address(&raw mut CONTROL));
     for reg in [EP1_RX, 0x11828, 0x11830, 0x1183c] {
-        write(reg, bus_address(&raw mut RX));
+        write(reg, bus_address(RxBuffer::Normal.ptr()));
     }
     set(IO, (1 << 10) | (1 << 9));
     clear(IO, 1 << 11);
@@ -110,6 +121,22 @@ pub(super) fn reset() -> Result<()> {
     wr(RX_ENABLE, 0)
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum RxBuffer {
+    Normal,
+    #[cfg(feature = "usb-dma-probe")]
+    Live,
+}
+impl RxBuffer {
+    pub(super) fn ptr(self) -> *mut u8 {
+        match self {
+            Self::Normal => (&raw mut RX).cast(),
+            #[cfg(feature = "usb-dma-probe")]
+            Self::Live => (&raw mut probe::LIVE).cast(),
+        }
+    }
+}
+
 pub(super) fn configure(enabled: bool) -> Result<()> {
     if !enabled {
         set(CON0, 1 << 20);
@@ -117,7 +144,10 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
         return wr(RX_ENABLE, 0);
     }
     write(EP1_TX, bus_address(&raw mut TX));
-    write(EP1_RX, bus_address(&raw mut RX));
+    // The port owner validated the USB0 DMA contract at activation. Both
+    // destinations are word-aligned static SRAM. Set addresses before opening
+    // the EP1 gate. RX_MAX=0x40 allowed changes through byte 511 on this board.
+    write(EP1_RX, bus_address(RxBuffer::Normal.ptr()));
     wr(INDEX, 1)?;
     wr(TX_MAX, 0xff)?; // AC79 maximum packet register, as in the SDK.
     wr(TXCSR, 0x48)?; // Flush FIFO and reset data toggle.
@@ -193,16 +223,67 @@ pub(super) fn receive(events: &mut super::PacketBuffer) -> Result<usize> {
     if csr & 1 == 0 {
         return Ok(0);
     }
-    let count = u16::from_le_bytes([rd(COUNT)?, rd(COUNT + 1)?]);
+    let count = rx_count()?;
+    service_packet(events, RxBuffer::Normal, csr, count)
+}
+
+fn rx_count() -> Result<u16> {
+    Ok(u16::from_le_bytes([rd(COUNT)?, rd(COUNT + 1)?]))
+}
+
+// Both callers supply the currently programmed static DMA buffer with RXPKTRDY set.
+pub(super) fn service_packet(
+    events: &mut super::PacketBuffer,
+    buffer: RxBuffer,
+    csr: u8,
+    count: u16,
+) -> Result<usize> {
     let n = usize::from(count).min(MAX_PACKET) / 4;
     sync_rx();
     for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
-        // SAFETY: RXPKTRDY holds the DMA buffer until the acknowledgement below.
-        *b = unsafe { (&raw mut RX.0).cast::<u8>().add(i).read_volatile() };
+        // SAFETY: the sole USB owner sampled RXPKTRDY for this destination.
+        // Hardware holds it until the acknowledgement below. SSYNC precedes
+        // the volatile reads; each index is below 64 in an aligned static
+        // allocation of at least 64 bytes. This clamp bounds only CPU reads.
+        *b = unsafe { buffer.ptr().add(i).read_volatile() };
     }
     wr(RXCSR, (csr & !0x64) | 0x10)?;
     wr(RXCSR + 1, 0)?;
     Ok(n)
+}
+
+#[cfg(feature = "usb-dma-probe")]
+pub(super) mod probe {
+    use super::*;
+
+    use super::super::dma_probe::BYTES;
+    pub(super) static mut LIVE: Buffer<BYTES> = Buffer([0; BYTES]);
+
+    pub(in super::super) fn gate() {
+        set(CON0, 1 << 20); // Same endpoint gate as configure(false). EP0 stays live.
+        sync_tx();
+    }
+
+    pub(in super::super) fn enable() {
+        clear(CON0, 1 << 20);
+        sync_tx();
+    }
+
+    pub(in super::super) fn point_at(buffer: RxBuffer) {
+        write(EP1_RX, bus_address(buffer.ptr()));
+        sync_tx();
+    }
+
+    pub(in super::super) fn rx_max(value: u8) -> Result<u8> {
+        wr(INDEX, 1)?;
+        wr(RX_MAX, value)?;
+        rd(RX_MAX)
+    }
+
+    pub(in super::super) fn observe() -> Result<(u8, u16)> {
+        wr(INDEX, 1)?;
+        Ok((rd(RXCSR)?, rx_count()?))
+    }
 }
 
 pub(super) fn discard_rx() -> Result<()> {
@@ -233,10 +314,13 @@ pub(super) fn send(events: &[super::EventPacket]) -> Result<usize> {
     Ok(n)
 }
 
-// The caller owns at least MAX_PACKET bytes of writable, idle, aligned DMA memory.
+// SAFETY contract: buffer addresses at least MAX_PACKET writable bytes in
+// aligned static SRAM. The caller exclusively owns the idle endpoint until
+// the count/CSR handoff. address_reg and count_reg belong to that endpoint.
 unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: &[u8]) {
     assert!(bytes.len() <= MAX_PACKET);
     for (i, &byte) in bytes.iter().enumerate() {
+        // SAFETY: i < bytes.len() <= MAX_PACKET; the caller owns the destination.
         unsafe { buffer.add(i).write_volatile(byte) };
     }
     sync_tx();
@@ -250,6 +334,17 @@ unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receive_destinations_have_space_for_full_speed_data_and_its_trailer() {
+        fn capacity<const N: usize>(_: *const Buffer<N>) -> usize {
+            N
+        }
+        for size in [capacity(&raw const CONTROL), capacity(&raw const RX)] {
+            assert!(size >= 1023 + 2);
+        }
+        assert_eq!(MAX_PACKET, 64); // Keep the advertised MIDI payload independent.
+    }
 
     #[test]
     fn a_completed_sie_read_wins_after_preemption() {

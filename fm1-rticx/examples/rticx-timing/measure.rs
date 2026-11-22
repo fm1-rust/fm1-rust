@@ -151,7 +151,7 @@ pub struct Line {
 }
 
 impl Line {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             bytes: [0; LINE_CAPACITY],
             len: 0,

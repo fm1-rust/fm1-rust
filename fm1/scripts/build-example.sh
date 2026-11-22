@@ -3,6 +3,8 @@
 set -eu
 example=${1:-blink}
 package=fm1
+image=$example
+unset FM1_DMA_PROFILE
 case "$example" in
     blink|display) set -- ;;
     graphics) set -- --features embedded-graphics ;;
@@ -11,8 +13,13 @@ case "$example" in
     rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
     rticx-piano) package=fm1-rticx; set -- --features audio,async-usb ;;
     rticx-tone|rticx-waveform) package=fm1-rticx; set -- --features audio ;;
+    rticx-dma-midi|rticx-dma-bulk|rticx-dma-iso)
+        export FM1_DMA_PROFILE=${example#rticx-dma-}
+        example=rticx-timing
+        package=fm1-rticx
+        set -- --features audio,async-usb,usb-log,usb-dma-probe ;;
     rticx-timing) package=fm1-rticx; set -- --features audio,async-usb,usb-log ;;
-    *) echo "usage: $0 [blink|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso}]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"
@@ -20,6 +27,9 @@ esac
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 target="$root/../target"
 out=${FM1_OUT:-"$target/firmware"}
+# All three diagnostics compile the timing example with different descriptors.
+# Independent invocations must never package another profile's ELF.
+if [ "$image" != "$example" ]; then target="$target/$image"; fi
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 PI32V2_BIN=$(cd "$PI32V2_BIN" && pwd)
@@ -32,5 +42,5 @@ cargo build --locked -p "$package" --manifest-path "$root/../Cargo.toml" --profi
     --target "$root/targets/pi32v2-none.json" --target-dir "$target" \
     -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec "$@"
 elf="$target/pi32v2-none/firmware/examples/$example"
-python3 "$packager" "$out/$example.fwsc" --from-elf "$elf"
-cp "$elf" "$out/$example.elf"
+python3 "$packager" "$out/$image.fwsc" --from-elf "$elf"
+cp "$elf" "$out/$image.elf"

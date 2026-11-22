@@ -12,6 +12,10 @@ mod asynchronous;
 pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
+#[cfg(feature = "usb-dma-probe")]
+mod dma_probe;
+#[cfg(feature = "usb-dma-probe")]
+pub use dma_probe::{ProbeDisplay, ProbeProfile, ProbeReading};
 #[cfg(feature = "usb-log")]
 mod log;
 use crate::{
@@ -68,13 +72,63 @@ impl Drop for UsbPort {
 }
 
 impl UsbPort {
+    /// Start a timing diagnostic with separate EP1 OUT arenas. The MIDI profile
+    /// uses the normal class descriptors and receive handling between trials.
+    ///
+    /// # Safety
+    /// The caller must uphold the receive DMA contract of [`Self::into_midi`]
+    /// for both the normal destinations and the probe's 2048-byte EP1 arena.
+    /// On the qualified board, a gate and retarget must stop writes to the
+    /// old EP1 destination within the three-millisecond drain used for capture
+    /// and reuse. A controlled bench can use the RXD3 runner, which sends at
+    /// most one 1023-byte full-speed packet per isochronous transfer.
+    ///
+    /// ```compile_fail,E0133
+    /// # use fm1::usb_midi::{Identity, ProbeProfile, UsbPort};
+    /// fn arm_probe(port: UsbPort, id: Identity) {
+    ///     let _device = port.into_dma_probe(id, ProbeProfile::Iso);
+    /// }
+    /// ```
+    #[cfg(feature = "usb-dma-probe")]
+    #[must_use]
+    pub unsafe fn into_dma_probe(self, identity: Identity, profile: ProbeProfile) -> MidiDevice {
+        // SAFETY: this constructor passes the full DMA obligation to its caller.
+        // No endpoint is attached until a later service pass.
+        let mut device = unsafe { self.into_midi(identity) };
+        device.probe = Some(dma_probe::Probe::new(profile));
+        device
+    }
+
     /// Start attachment as a USB-MIDI device. The first service pass after 25 ms
     /// enables the D+ pull-up, giving the host time to forget the bootloader.
+    ///
+    /// # Safety
+    /// The board and its USB environment must confine every USB0 receive DMA
+    /// write to the currently programmed destination (2048 bytes per buffer),
+    /// including trailers, rejected packets and writes without an interrupt.
+    /// The controller must also honor the endpoint ownership handoffs when
+    /// the CPU reads a ready packet or fills an idle buffer. These conditions
+    /// must hold on attachment, reset, suspend and reconnect, until USB0 is
+    /// detached and its outstanding writes have stopped. A leaked handle can
+    /// keep USB0 active indefinitely. A bus with a validated hardware write
+    /// limit or a controlled host restricted to qualified traffic can provide
+    /// this invariant. Packet descriptors and the post-DMA COUNT clamp cannot.
+    ///
+    /// [`Board::take_usb`] only acquires the port and does not start DMA.
+    ///
+    /// ```compile_fail,E0133
+    /// # use fm1::usb_midi::{Identity, UsbPort};
+    /// fn start(port: UsbPort, identity: Identity) {
+    ///     let _device = port.into_midi(identity);
+    /// }
+    /// ```
     #[must_use]
-    pub fn into_midi(self, identity: Identity) -> MidiDevice {
+    pub unsafe fn into_midi(self, identity: Identity) -> MidiDevice {
         controller::detach();
         MidiDevice {
             _port: self,
+            #[cfg(feature = "usb-dma-probe")]
+            probe: None,
             identity,
             wait: Some((cycles(), Timers::CRYSTAL_HZ / 40)),
             control: Control::new(),
@@ -95,6 +149,8 @@ impl UsbPort {
 #[derive(Debug)]
 pub struct MidiDevice {
     _port: UsbPort,
+    #[cfg(feature = "usb-dma-probe")]
+    probe: Option<dma_probe::Probe>,
     identity: Identity,
     wait: Option<(u32, u32)>,
     control: Control,
@@ -109,6 +165,41 @@ pub struct MidiDevice {
 }
 
 impl MidiDevice {
+    /// Read the on-board display values without a host transaction.
+    #[cfg(feature = "usb-dma-probe")]
+    #[must_use]
+    pub fn probe_display(&self) -> Option<ProbeDisplay> {
+        self.probe
+            .as_ref()
+            .map(|p| p.display(self.session().is_some()))
+    }
+
+    /// On the MIDI diagnostic, arm a local three-second capture at the
+    /// production RX_MAX. Captures the first ready packet or the quiet timeout.
+    #[cfg(feature = "usb-dma-probe")]
+    pub fn probe_listen(&mut self) {
+        if self.session().is_none() || self.interface.out_halted {
+            return;
+        }
+        if let Some(p) = &mut self.probe
+            && p.profile == ProbeProfile::Midi
+            && !p.active()
+        {
+            let token = p.next_token();
+            self.rx_pending = false;
+            if p.arm(
+                token,
+                0xff,
+                token.to_le_bytes()[0].wrapping_sub(1) & 1,
+                None,
+            )
+            .is_err()
+            {
+                self.retry();
+            }
+        }
+    }
+
     /// Run one bounded service pass. Attach, enumeration, suspend and cable
     /// reconnection progress even when the application has no MIDI to send.
     pub fn poll(&mut self) {
@@ -128,6 +219,14 @@ impl MidiDevice {
     /// Receive up to 16 events from the host. Returns the initialized prefix.
     /// An empty slice means there is currently no transfer to deliver.
     pub fn receive<'a>(&mut self, buffer: &'a mut PacketBuffer) -> &'a [EventPacket] {
+        #[cfg(feature = "usb-dma-probe")]
+        if self
+            .probe
+            .as_ref()
+            .is_some_and(|p| p.active() || p.profile != ProbeProfile::Midi)
+        {
+            return &[];
+        }
         let mut n = 0;
         if self.session().is_some() && !self.interface.out_halted && self.rx_pending {
             self.rx_pending = false;
@@ -156,12 +255,20 @@ impl MidiDevice {
     }
 
     fn retry(&mut self) {
+        #[cfg(feature = "usb-dma-probe")]
+        if let Some(p) = &mut self.probe {
+            p.retries = p.retries.saturating_add(1);
+        }
         controller::detach();
         self.bus_reset();
         self.wait = Some((cycles(), Timers::CRYSTAL_HZ / 4));
     }
 
     fn bus_reset(&mut self) {
+        #[cfg(feature = "usb-dma-probe")]
+        if let Some(p) = &mut self.probe {
+            p.reset();
+        }
         self.interface = Interface::default();
         self.rx_pending = false;
         self.suspended = false;
@@ -176,6 +283,10 @@ impl MidiDevice {
                 return Ok(());
             }
             controller::attach()?;
+            #[cfg(feature = "usb-dma-probe")]
+            if let Some(p) = &mut self.probe {
+                p.stage = p.stage.max(1);
+            }
             self.wait = None;
         }
         let flags = rd(controller::INTR_USB)?;
@@ -189,14 +300,14 @@ impl MidiDevice {
             }
         }
         if flags & controller::SUSPEND != 0 {
-            self.suspend(true);
+            self.suspend(true)?;
             if sample_frames {
                 self.frame = controller::frame_number()?;
             }
             self.frame_sample = now;
         }
         if flags & controller::RESUME != 0 {
-            self.suspend(false);
+            self.suspend(false)?;
         }
         self.rx_pending |= rx;
         if ep0 {
@@ -212,13 +323,19 @@ impl MidiDevice {
             if frame != self.frame {
                 self.frame = frame;
                 self.frame_changed = now;
-                self.suspend(false);
+                self.suspend(false)?;
             } else if elapsed >= 2 * Timers::CRYSTAL_HZ {
                 // Allow for the 2.048 s frame-counter wrap when sampling resumes after a gap.
                 self.frame_changed = now;
             } else if now.wrapping_sub(self.frame_changed) >= Timers::CRYSTAL_HZ / 10 {
-                self.suspend(true);
+                self.suspend(true)?;
             }
+        }
+        #[cfg(feature = "usb-dma-probe")]
+        if let Some(p) = &mut self.probe
+            && p.active()
+        {
+            p.advance(cycles(), &mut self.rx_pending)?;
         }
         if self.suspended && self.rx_pending && !self.interface.out_halted {
             // A packet already in the FIFO belongs to the old session. Free
@@ -229,11 +346,16 @@ impl MidiDevice {
         Ok(())
     }
 
-    fn suspend(&mut self, suspended: bool) {
+    fn suspend(&mut self, suspended: bool) -> controller::Result<()> {
         if suspended && !self.suspended {
+            #[cfg(feature = "usb-dma-probe")]
+            if let Some(p) = &mut self.probe {
+                p.cancel()?;
+            }
             self.epoch = self.epoch.wrapping_add(1);
         }
         self.suspended = suspended;
+        Ok(())
     }
 
     fn endpoint_zero(&mut self, now: u32) -> controller::Result<()> {
@@ -246,6 +368,10 @@ impl MidiDevice {
         } else if let Some(address) = self.address.take() {
             // The host completed SET_ADDRESS's IN status stage at the old address.
             wr(controller::FADDR, address)?;
+            #[cfg(feature = "usb-dma-probe")]
+            if let Some(p) = &mut self.probe {
+                p.stage = p.stage.max(3);
+            }
         }
         if csr & 4 != 0 {
             wr(CSR0, 0)?;
@@ -264,7 +390,16 @@ impl MidiDevice {
         let setup = controller::setup();
         let requested = u16::from_le_bytes([setup[6], setup[7]]);
         self.control.sending = false;
-        match self.control.request(&self.identity, self.interface, setup) {
+        #[cfg(not(feature = "usb-dma-probe"))]
+        let diagnostic_reply = None;
+        #[cfg(feature = "usb-dma-probe")]
+        let diagnostic_reply = self.probe.as_mut().and_then(|p| {
+            p.stage = p.stage.max(2);
+            p.request(&mut self.control, &self.identity, self.interface, setup)
+        });
+        let reply = diagnostic_reply
+            .unwrap_or_else(|| self.control.request(&self.identity, self.interface, setup));
+        match reply {
             Reply::Data(available) if requested != 0 => {
                 wr(CSR0, 0x40)?;
                 self.control.start(available, requested);
@@ -273,7 +408,16 @@ impl MidiDevice {
             }
             Reply::Address(address) => self.address = Some(address),
             Reply::Configure(configured) => {
-                controller::configure(configured)?;
+                let enabled = configured;
+                #[cfg(feature = "usb-dma-probe")]
+                let enabled = if let Some(p) = &mut self.probe {
+                    controller::probe::gate();
+                    p.reset();
+                    configured && p.endpoint_enabled()
+                } else {
+                    enabled
+                };
+                controller::configure(enabled)?;
                 self.interface = Interface {
                     configured,
                     ..Interface::default()
@@ -286,7 +430,39 @@ impl MidiDevice {
                 self.frame_sample = now;
                 wr(INDEX, 0)?;
             }
+            #[cfg(feature = "usb-dma-probe")]
+            Reply::Arm {
+                token,
+                max,
+                flags,
+                requested,
+            } => {
+                self.probe.as_mut().expect("diagnostic arm").arm(
+                    token,
+                    max,
+                    flags,
+                    Some(requested),
+                )?;
+                self.rx_pending = false;
+                wr(INDEX, 0)?; // ARM selected EP1. EP0 owns the control status stage.
+            }
+            #[cfg(feature = "usb-dma-probe")]
+            Reply::Alternate(alt) => {
+                let p = self.probe.as_mut().expect("diagnostic alternate");
+                controller::probe::gate();
+                p.reset();
+                p.alt = alt;
+                controller::configure(alt != 0)?;
+                self.rx_pending = false;
+                self.interface.in_halted = false;
+                self.interface.out_halted = false;
+                wr(INDEX, 0)?;
+            }
             Reply::Halt { input, halted } => {
+                #[cfg(feature = "usb-dma-probe")]
+                if let Some(p) = &mut self.probe {
+                    p.cancel()?;
+                }
                 controller::halt(input, halted)?;
                 if input {
                     self.interface.in_halted = halted;
@@ -298,7 +474,14 @@ impl MidiDevice {
             Reply::Ack | Reply::Data(_) => {}
             Reply::Stall => return wr(CSR0, 0x60),
         }
-        wr(CSR0, 0x48) // ServicedRxPktRdy | DataEnd, status IN sent by hardware.
+        wr(CSR0, 0x48)?; // ServicedRxPktRdy | DataEnd, status IN sent by hardware.
+        #[cfg(feature = "usb-dma-probe")]
+        if reply == Reply::Configure(true)
+            && let Some(p) = &mut self.probe
+        {
+            p.stage = 4;
+        }
+        Ok(())
     }
 }
 
