@@ -1,5 +1,5 @@
 //! FM-1 physical timing diagnostic: audio, panel, input dispatch, LCD and CPU load.
-//! Read the frozen, paged report using fm1/scripts/read-timing.py over USB-MIDI.
+//! Read the frozen, paged report using `fm1 timing` over USB-MIDI.
 #![allow(
     missing_docs,
     reason = "RTICX generates public task traits and initialisers."

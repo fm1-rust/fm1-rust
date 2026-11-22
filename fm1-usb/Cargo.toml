@@ -1,0 +1,16 @@
+[package]
+name = "fm1-usb"
+version = "0.1.0"
+edition = "2024"
+description = "Host-side USB discovery, MIDI and log snapshots for the M-VAVE FM-1"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+keywords = ["fm1", "usb", "midi"]
+categories = ["hardware-support", "multimedia::audio"]
+
+[dependencies]
+midir = "0.11.1"
+nusb = "0.2.9"
+
+[lints]
+workspace = true

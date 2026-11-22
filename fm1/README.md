@@ -85,9 +85,9 @@ A snapshot fits in one USB transfer and retains the newest 44 bytes of complete
 lines, including newlines. One record can contain up to 43 printable bytes.
 Call `service` even with empty input to retry a busy endpoint. The reader
 sends `F0 7D F7` on cable zero and prints the text between `F0 7D 01` and
-`F7`. Reading preserves the history. For a custom MIDI port name, pass
-`--port "WaveGraph"` (or another matching name) to
-[`read-usb-log.py`][usb-log-reader].
+`F7`. Reading preserves the history. From the workspace root, run
+`cargo run -q -p fm1-cli -- log`. To restrict discovery to a custom MIDI port
+name, pass `--port "WaveGraph"` to [`fm1 log`][usb-log-reader].
 
 ## Asynchronous LCD writes
 
@@ -397,7 +397,7 @@ intentionally submit to this crate under the [MIT License][mit].
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
 [fm1-rticx]: https://docs.rs/fm1-rticx/
-[usb-log-reader]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.3/fm1/scripts/read-usb-log.py
+[usb-log-reader]: https://github.com/fm1-rust/fm1-rust/tree/main/fm1-cli
 [waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.1.3/fm1-rticx/examples/rticx-waveform.rs
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/LICENSE
 [mit-0]: https://spdx.org/licenses/MIT-0.html

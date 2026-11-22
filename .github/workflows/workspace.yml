@@ -21,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo check --workspace --locked
 
   clippy:
@@ -31,6 +32,7 @@ jobs:
         with:
           toolchain: 1.100.0
           components: clippy
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo clippy --workspace --all-features --lib --bins --tests -- -Dwarnings
 
   rustfmt:
@@ -64,8 +66,8 @@ jobs:
         run: |
           cargo install --locked --git https://github.com/obi1kenobi/cargo-semver-checks \
             --rev "$SEMVER_CHECKS_REV" cargo-semver-checks
-      # fm1-rticx, fm1-audio, fm1-controls and fm1-graphics have no release on crates.io to compare against yet.
-      - run: cargo semver-checks --workspace --exclude fm1-rticx --exclude fm1-audio --exclude fm1-controls --exclude fm1-graphics --all-features
+      # Exclude crates without a semver baseline.
+      - run: cargo semver-checks --workspace --exclude fm1-rticx --exclude fm1-audio --exclude fm1-controls --exclude fm1-graphics --exclude fm1-usb --exclude fm1-cli --all-features
 
   typos:
     runs-on: ubuntu-latest
@@ -107,4 +109,5 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
       - run: cargo install --locked --version 0.4.10 cargo-careful
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo careful test --workspace --all-features --locked

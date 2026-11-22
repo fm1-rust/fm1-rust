@@ -135,18 +135,16 @@ stereo mix.
 
 Run `./fm1/scripts/build-example.sh usb-log` and install
 `target/firmware/usb-log.fwsc` with M-Flasher. Connect the USB data cable and
-tap PLAY. Run the reader from the workspace root.
+tap PLAY. Run the host reader from the workspace root.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install python-rtmidi
-.venv/bin/python fm1/scripts/read-usb-log.py
+cargo run -q -p fm1-cli -- log
 ```
 
-The example leaves the screen dark. Startup logs `ready`, a press logs
-`play+`, and release logs `play-`. Hold PLAY for two seconds to return to
-download mode. The reader prefers `FM-1 USB Log` and also recognizes a single
-`FM-1` input/output pair, including the `FM-1 MIDI Piano` name used by macOS.
+Startup logs `ready`, a press logs `play+`, and release logs `play-`. The
+screen stays dark. Hold PLAY for two seconds to return to download mode.
+The reader checks the development USB ID and finds the MIDI pair that answers
+the log request, even when macOS shows an earlier port name.
 
 The `usb-log` feature forwards to the [BSP USB log][bsp-usb-log].
 The independent `rtt` feature provides `fm1_rticx::rtt::init()`, which
@@ -172,32 +170,22 @@ the current stage, shows the last completed stage's peak audio and panel
 service times, gaps, input dispatch latency and loss counts, and finally shows
 **DONE - USB REPORT**.
 
-On macOS or Linux, run these two commands once from the workspace root to set up
-the USB-MIDI reader.
-
-```sh
-python3 -m venv .venv-timing
-.venv-timing/bin/python -m pip install python-rtmidi
-```
-
 Connect the FM-1 with a USB data cable. When the LCD shows **DONE - USB REPORT**,
-run the reader. If you already installed `python-rtmidi` for the USB log example,
-you can use that environment’s `bin/python` here.
+read the report from the workspace root.
 
 ```sh
-.venv-timing/bin/python fm1/scripts/read-timing.py
+cargo run -q -p fm1-cli -- timing
 ```
 
-The first line should read `24MHZ AUDIO 128F PANEL 10KHZ`. Timing, Piano and USB Log
-share a USB vendor and product ID, so a Mac may show an earlier port name. The
-reader prefers `FM-1 Timing`, otherwise looks for a single `FM-1` input/output
-pair, and checks the timing firmware’s reply. With multiple FM-1 devices, pass
-enough of the port name to select one. For example, if the timing app appears
-as `FM-1 MIDI Piano` on your Mac, use this command.
+The first line should read `24MHZ AUDIO 128F PANEL 10KHZ`. With one FM-1 on
+USB, the reader can find it even if macOS retained the name of another
+example. To restrict the MIDI ports it tries, pass a unique name substring.
 
 ```sh
-.venv-timing/bin/python fm1/scripts/read-timing.py --port 'FM-1 MIDI Piano'
+cargo run -q -p fm1-cli -- timing --port 'FM-1 MIDI Piano'
 ```
+
+See [fm1-cli][host-cli] for standalone installation and Linux build prerequisites.
 
 The reader uses MIDI CC 112 to select each of 25 report pages, then requests
 that page using the existing USB log SysEx protocol. `UsbLog` retains at most
@@ -363,3 +351,5 @@ intentionally submit to this crate under the [MIT License][mit].
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-rticx.yml
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/LICENSE
 [bsp-license]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1/README.md#license
+
+[host-cli]: https://github.com/fm1-rust/fm1-rust/tree/main/fm1-cli

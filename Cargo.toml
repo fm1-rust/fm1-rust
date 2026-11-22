@@ -3,11 +3,23 @@ resolver = "3"
 members = [
     "fm1",
     "fm1-audio",
+    "fm1-cli",
+    "fm1-controls",
+    "fm1-graphics",
+    "fm1-rticx",
+    "fm1-usb",
+    "rticx-pi32v2",
+    "rticx-pi32v2-macro"
+]
+# Keep the default firmware workspace build independent of the host MIDI stack.
+default-members = [
+    "fm1",
+    "fm1-audio",
     "fm1-controls",
     "fm1-graphics",
     "fm1-rticx",
     "rticx-pi32v2",
-    "rticx-pi32v2-macro"
+    "rticx-pi32v2-macro",
 ]
 
 [patch.crates-io]
@@ -15,6 +27,7 @@ fm1 = { path = "fm1" }
 fm1-audio = { path = "fm1-audio" }
 fm1-controls = { path = "fm1-controls" }
 fm1-graphics = { path = "fm1-graphics" }
+fm1-usb = { path = "fm1-usb" }
 rticx-pi32v2 = { path = "rticx-pi32v2" }
 rticx-pi32v2-macro = { path = "rticx-pi32v2-macro" }
 
