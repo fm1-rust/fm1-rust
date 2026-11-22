@@ -1,0 +1,14 @@
+RXD3 MIDI READY
+enum=4 retries=0 phase=3 completed=4 retained=4 last_aborted=0
+#1 token=1 alt=0 requested=0 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=- first_guard=- guard_byte=-
+#2 token=2 alt=0 requested=64 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,3) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=65 first_guard=- guard_byte=-
+#3 token=3 alt=0 requested=0 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,509)
+  highest=- first_guard=- guard_byte=-
+#4 token=4 alt=0 requested=64 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,3) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=65 first_guard=- guard_byte=-

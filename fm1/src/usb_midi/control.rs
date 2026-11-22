@@ -27,7 +27,19 @@ pub(super) enum Reply {
     Data(usize),
     Address(u8),
     Configure(bool),
-    Halt { input: bool, halted: bool },
+    #[cfg(feature = "usb-dma-probe")]
+    Alternate(u8),
+    #[cfg(feature = "usb-dma-probe")]
+    Arm {
+        token: u16,
+        max: u8,
+        flags: u8,
+        requested: u16,
+    },
+    Halt {
+        input: bool,
+        halted: bool,
+    },
     Ack,
     Stall,
 }
@@ -59,7 +71,7 @@ impl Control {
         }
     }
 
-    fn data(&mut self, bytes: &[u8]) -> Reply {
+    pub(super) fn data(&mut self, bytes: &[u8]) -> Reply {
         self.bytes[..bytes.len()].copy_from_slice(bytes);
         Reply::Data(bytes.len())
     }
@@ -93,15 +105,17 @@ impl Control {
         Reply::Data(len)
     }
 
+    pub(super) fn device(&mut self, id: &Identity, revision: u8) -> Reply {
+        let [vl, vh] = id.vendor_id.to_le_bytes();
+        let [pl, ph] = id.product_id.to_le_bytes();
+        self.data(&[
+            18, 1, 0x10, 1, 0, 0, 0, 64, vl, vh, pl, ph, revision, 1, 1, 2, 0, 1,
+        ])
+    }
+
     fn descriptor(&mut self, id: &Identity, value: u16, index: u16) -> Reply {
         match (value, index) {
-            (0x0100, 0) => {
-                let [vl, vh] = id.vendor_id.to_le_bytes();
-                let [pl, ph] = id.product_id.to_le_bytes();
-                self.data(&[
-                    18, 1, 0x10, 1, 0, 0, 0, 64, vl, vh, pl, ph, 0, 1, 1, 2, 0, 1,
-                ])
-            }
+            (0x0100, 0) => self.device(id, 0),
             (0x0200, 0) => self.data(&CONFIG),
             (0x0300, _) => self.data(&[4, 3, 0x09, 0x04]),
             (0x0301, 0x0409 | 0) => self.string(id.manufacturer),

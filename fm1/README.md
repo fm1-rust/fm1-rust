@@ -50,7 +50,13 @@ LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a missed deadline during preparation or copying.
 
 When initializing USB-MIDI, supply your application's USB vendor ID, product
-ID and descriptor strings to `into_midi`. With `async-usb`, bind
+ID and descriptor strings to `into_midi`. Starting USB0 DMA now requires
+`unsafe`. The caller must establish that the board and its connected hosts
+keep DMA within the programmed receive buffers, including across reconnects.
+On a black FM-1 the controller wrote through offset 1023 of the EP1 buffer
+despite a 64-byte MIDI payload limit. EP0 and normal EP1 each reserve 2048
+bytes. See the [board measurements and hardware preconditions](../docs/usb-dma/README.md).
+With `async-usb`, bind
 `fm1::usb_midi::on_usb0_interrupt` to CPU0's USB0 controller interrupt (IRQ 9)
 and call `device.wait_for_activity(&mut delay).await` in the owning task.
 The `embedded_hal_async::delay::DelayNs` provider handles attachment and retry.

@@ -197,15 +197,18 @@ mod app {
     fn init() -> (Shared, TaskInits) {
         let mut board = Board::take().expect("CPU0 board");
         // pid.codes shared test VID/PID, for the diagnostic only.
-        let device = board
-            .take_usb()
-            .expect("one USB device")
-            .into_midi(Identity {
+        let port = board.take_usb().expect("one USB device");
+        // SAFETY: this bench example requires a controlled host for the whole
+        // connection, including reconnects. Its MIDI class driver sends only
+        // the advertised control and 64-byte bulk traffic into the 2 KiB buffers.
+        let device = unsafe {
+            port.into_midi(Identity {
                 vendor_id: 0x1209,
                 product_id: 0x0001,
                 manufacturer: "fm1-rust",
                 product: "FM-1 MIDI Piano",
-            });
+            })
+        };
         DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
         let controls = board.panel.into_touch_controls();
         let audio_output = AudioOutput::start(board.audio).expect("audio clock");

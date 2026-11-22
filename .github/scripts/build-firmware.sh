@@ -16,6 +16,9 @@ for example in "$package"/examples/*.rs; do
 done
 
 if [[ $package == fm1-rticx ]]; then
+    for profile in midi bulk iso; do
+        ./fm1/scripts/build-example.sh "rticx-dma-$profile"
+    done
     # Use the same macro, controller and target ABI as the firmware examples.
     layout=(cargo rustc --color never --locked -p rticx-pi32v2 --example shared-layout --profile firmware
         --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins

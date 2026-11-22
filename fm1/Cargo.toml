@@ -28,6 +28,7 @@ async-usb = ["dep:critical-section", "dep:embedded-hal-async"]
 audio = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
+usb-dma-probe = []
 
 [[example]]
 name = "graphics"

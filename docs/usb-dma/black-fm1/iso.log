@@ -1,0 +1,182 @@
+RXD3 ISO READY
+enum=4 retries=0 phase=0 completed=60 retained=60 last_aborted=0
+#1 token=1 alt=1 requested=0 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=- first_guard=- guard_byte=-
+#2 token=2 alt=1 requested=64 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=65 first_guard=- guard_byte=-
+#3 token=3 alt=1 requested=128 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,4) gate=(0x00,0,503)
+  highest=65 first_guard=- guard_byte=-
+#4 token=4 alt=1 requested=128 RX_MAX=0xff/0xff fill=0xa5 delayed=true
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,54) gate=(0x00,0,503)
+  highest=65 first_guard=- guard_byte=-
+#5 token=5 alt=1 requested=0 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=- first_guard=- guard_byte=-
+#6 token=6 alt=1 requested=32 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,32,4) second=(0x00,0,0) gate=(0x00,0,509)
+  highest=33 first_guard=- guard_byte=-
+#7 token=7 alt=1 requested=33 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,33,4) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=34 first_guard=- guard_byte=-
+#8 token=8 alt=1 requested=64 RX_MAX=0x20/0x20 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,4) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=65 first_guard=- guard_byte=-
+#9 token=9 alt=1 requested=0 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=- first_guard=- guard_byte=-
+#10 token=10 alt=1 requested=64 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=65 first_guard=- guard_byte=-
+#11 token=11 alt=1 requested=128 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,4) gate=(0x00,0,504)
+  highest=65 first_guard=- guard_byte=-
+#12 token=12 alt=1 requested=128 RX_MAX=0xff/0xff fill=0x5a delayed=true
+  ready=2 irq=true first(csr,count,ms)=(0x03,64,4) second=(0x03,64,54) gate=(0x00,0,503)
+  highest=65 first_guard=- guard_byte=-
+#13 token=13 alt=1 requested=0 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=- first_guard=- guard_byte=-
+#14 token=14 alt=1 requested=32 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,32,4) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=33 first_guard=- guard_byte=-
+#15 token=15 alt=1 requested=33 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,33,4) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=34 first_guard=- guard_byte=-
+#16 token=16 alt=1 requested=64 RX_MAX=0x20/0x20 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,4) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=65 first_guard=- guard_byte=-
+#17 token=17 alt=2 requested=0 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=- first_guard=- guard_byte=-
+#18 token=18 alt=2 requested=64 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,7) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=65 first_guard=- guard_byte=-
+#19 token=19 alt=2 requested=65 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,65,7) second=(0x00,0,0) gate=(0x00,0,504)
+  highest=66 first_guard=- guard_byte=-
+#20 token=20 alt=2 requested=68 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,68,7) second=(0x00,0,0) gate=(0x00,0,504)
+  highest=69 first_guard=68 guard_byte=0x5d
+#21 token=21 alt=2 requested=69 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,69,7) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=70 first_guard=68 guard_byte=0x14
+#22 token=22 alt=2 requested=96 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,96,7) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=97 first_guard=68 guard_byte=0x14
+#23 token=23 alt=2 requested=128 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,128,8) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=129 first_guard=68 guard_byte=0x14
+#24 token=24 alt=2 requested=255 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,255,8) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=256 first_guard=68 guard_byte=0x14
+#25 token=25 alt=2 requested=256 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,256,8) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=257 first_guard=68 guard_byte=0x14
+#26 token=26 alt=2 requested=512 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,512,8) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=513 first_guard=68 guard_byte=0x14
+#27 token=27 alt=2 requested=1023 RX_MAX=0xff/0xff fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,1023,8) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=1023 first_guard=68 guard_byte=0x14
+#28 token=28 alt=2 requested=0 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=- first_guard=- guard_byte=-
+#29 token=29 alt=2 requested=64 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,64,7) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=65 first_guard=- guard_byte=-
+#30 token=30 alt=2 requested=65 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,65,7) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=66 first_guard=- guard_byte=-
+#31 token=31 alt=2 requested=68 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,68,7) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=69 first_guard=68 guard_byte=0x5d
+#32 token=32 alt=2 requested=69 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,69,7) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=70 first_guard=68 guard_byte=0x14
+#33 token=33 alt=2 requested=96 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,96,7) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=97 first_guard=68 guard_byte=0x14
+#34 token=34 alt=2 requested=128 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,128,8) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=129 first_guard=68 guard_byte=0x14
+#35 token=35 alt=2 requested=255 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,255,8) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=256 first_guard=68 guard_byte=0x14
+#36 token=36 alt=2 requested=256 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,256,8) second=(0x00,0,0) gate=(0x00,0,503)
+  highest=257 first_guard=68 guard_byte=0x14
+#37 token=37 alt=2 requested=512 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,512,8) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=513 first_guard=68 guard_byte=0x14
+#38 token=38 alt=2 requested=1023 RX_MAX=0xff/0xff fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x03,1023,8) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=1023 first_guard=68 guard_byte=0x14
+#39 token=39 alt=2 requested=0 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=- first_guard=- guard_byte=-
+#40 token=40 alt=2 requested=64 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,7) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=65 first_guard=- guard_byte=-
+#41 token=41 alt=2 requested=65 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,65,7) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=66 first_guard=- guard_byte=-
+#42 token=42 alt=2 requested=68 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,68,7) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=69 first_guard=68 guard_byte=0x5d
+#43 token=43 alt=2 requested=69 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,69,7) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=70 first_guard=68 guard_byte=0x14
+#44 token=44 alt=2 requested=96 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,96,7) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=97 first_guard=68 guard_byte=0x14
+#45 token=45 alt=2 requested=128 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,128,8) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=129 first_guard=68 guard_byte=0x14
+#46 token=46 alt=2 requested=255 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,255,8) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=256 first_guard=68 guard_byte=0x14
+#47 token=47 alt=2 requested=256 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,256,8) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=257 first_guard=68 guard_byte=0x14
+#48 token=48 alt=2 requested=512 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,512,8) second=(0x00,0,0) gate=(0x00,0,507)
+  highest=511 first_guard=68 guard_byte=0x14
+#49 token=49 alt=2 requested=1023 RX_MAX=0x40/0x40 fill=0xa5 delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,504)
+  highest=511 first_guard=68 guard_byte=0x14
+#50 token=50 alt=2 requested=0 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=- first_guard=- guard_byte=-
+#51 token=51 alt=2 requested=64 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,64,7) second=(0x00,0,0) gate=(0x00,0,506)
+  highest=65 first_guard=- guard_byte=-
+#52 token=52 alt=2 requested=65 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,65,7) second=(0x00,0,0) gate=(0x00,0,505)
+  highest=66 first_guard=- guard_byte=-
+#53 token=53 alt=2 requested=68 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,68,7) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=69 first_guard=68 guard_byte=0x5d
+#54 token=54 alt=2 requested=69 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,69,7) second=(0x00,0,0) gate=(0x00,0,500)
+  highest=70 first_guard=68 guard_byte=0x14
+#55 token=55 alt=2 requested=96 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,96,8) second=(0x00,0,0) gate=(0x00,0,502)
+  highest=97 first_guard=68 guard_byte=0x14
+#56 token=56 alt=2 requested=128 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,128,8) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=129 first_guard=68 guard_byte=0x14
+#57 token=57 alt=2 requested=255 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,255,8) second=(0x00,0,0) gate=(0x00,0,501)
+  highest=256 first_guard=68 guard_byte=0x14
+#58 token=58 alt=2 requested=256 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,256,8) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=257 first_guard=68 guard_byte=0x14
+#59 token=59 alt=2 requested=512 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=1 irq=true first(csr,count,ms)=(0x01,512,8) second=(0x00,0,0) gate=(0x00,0,509)
+  highest=511 first_guard=68 guard_byte=0x14
+#60 token=60 alt=2 requested=1023 RX_MAX=0x40/0x40 fill=0x5a delayed=false
+  ready=0 irq=false first(csr,count,ms)=(0x00,0,0) second=(0x00,0,0) gate=(0x00,0,508)
+  highest=511 first_guard=68 guard_byte=0x14

@@ -1,5 +1,8 @@
 [files]
-extend-exclude = [".git"]
+extend-exclude = [
+    ".git",
+    "tools/usb-dma-probe/emulator/usb-host.patch"
+]
 
 [default.extend-words]
 "SIE" = "SIE"   # USB Serial Interface Engine

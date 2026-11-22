@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "dma-probe")]
+pub mod dma_probe;
 mod log;
 mod midi;
 mod timing;
