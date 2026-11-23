@@ -104,6 +104,16 @@ impl VisitMut for Startup<'_> {
                 call.args[0] = parse_quote!(#ty { _dispatch: unsafe { self::__rticx_dispatch::startup_token() } });
                 return;
             }
+            if call.method == "exec"
+                && call.args.is_empty()
+                && let Expr::MethodCall(receiver) = call.receiver.as_ref()
+                && receiver.method == "assume_init_mut"
+            {
+                // Bind the trait's short receiver lifetime even if user code
+                // also defines an inherent method that wants a static borrow.
+                *expr = parse_quote!(RticIdleTask::exec(#receiver));
+                return;
+            }
         }
         syn::visit_mut::visit_expr_mut(self, expr);
     }
