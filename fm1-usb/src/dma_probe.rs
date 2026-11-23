@@ -20,6 +20,8 @@ pub enum Profile {
     Bulk,
     /// Vendor interface with bulk and isochronous alternates.
     Iso,
+    /// RXS1 with an 8 KiB arena and a 2 KiB comparison boundary.
+    Stress,
 }
 
 /// One packet's libusb completion, including both independent status fields.
@@ -86,7 +88,9 @@ pub struct Status {
     pub saw_rx_irq: bool,
 }
 impl Status {
-    pub(super) fn decode(raw: [u8; 24]) -> Self {
+    /// Decode the register samples from a live or archived 24-byte diagnostic status.
+    #[must_use]
+    pub fn decode(raw: [u8; 24]) -> Self {
         let [_, _, phase, sentinel, max, delay, packets, alt, rest @ ..] = raw;
         let (samples, _) = rest.as_chunks::<5>();
         Self {
@@ -147,16 +151,22 @@ impl DmaProbe {
                     "RXD3 handshake failed ({e}). Check the image and its LCD enumeration stage"
                 ))
             })?;
-        if len != hello.len() || &hello[..4] != b"RXD3" || hello[6..] != [0, 8, 68, 0, 0xf4, 1] {
-            return Err(invalid(
-                "unsupported RXD3 report layout or acquisition window",
-            ));
+        if len != hello.len() {
+            return Err(invalid("short diagnostic handshake"));
         }
-        let profile = match hello[4] {
-            0 => Profile::Midi,
-            1 => Profile::Bulk,
-            2 => Profile::Iso,
-            _ => return Err(invalid("unknown DMA firmware profile")),
+        let profile = match (&hello[..4], hello[4], &hello[6..]) {
+            (b"RXD3", n, [0, 8, 68, 0, 0xf4, 1]) => match n {
+                0 => Profile::Midi,
+                1 => Profile::Bulk,
+                2 => Profile::Iso,
+                _ => return Err(invalid("unknown RXD3 profile")),
+            },
+            (b"RXS1", 3, [0, 32, 0, 8, 0xf4, 1]) => Profile::Stress,
+            _ => {
+                return Err(invalid(
+                    "unsupported diagnostic profile, arena, boundary or window",
+                ));
+            }
         };
         if profile != Profile::Midi {
             handle.claim_interface(0).map_err(io::Error::other)?;
@@ -181,8 +191,8 @@ impl DmaProbe {
     /// Returns an error for a missing/wrong endpoint or failed SET_INTERFACE.
     pub fn select(&mut self, alt: u8) -> io::Result<()> {
         let (kind, max) = match (self.profile, alt) {
-            (Profile::Bulk | Profile::Iso, 1) => (TransferType::Bulk, 64),
-            (Profile::Iso, 2) => (TransferType::Isochronous, 1023),
+            (Profile::Bulk | Profile::Iso | Profile::Stress, 1) => (TransferType::Bulk, 64),
+            (Profile::Iso | Profile::Stress, 2) => (TransferType::Isochronous, 1023),
             _ => return Err(invalid("unsupported EP1 alternate")),
         };
         let config = self
@@ -233,6 +243,32 @@ impl DmaProbe {
             0x5a => 1,
             _ => return Err(invalid("invalid sentinel")),
         };
+        if self.profile == Profile::Stress {
+            let request: u8 = match max {
+                0xff => 0x60,
+                0x40 => 0x62,
+                0x08 => 0x64,
+                0x09 => 0x66,
+                0x20 => 0x68,
+                _ => return Err(invalid("unsupported stress RX_MAX")),
+            };
+            let length = u16::try_from(bytes)
+                .ok()
+                .filter(|n| *n <= 4096)
+                .ok_or_else(|| invalid("stress payload exceeds 4096 bytes"))?;
+            let request = request | u8::from(delayed);
+            self.handle
+                .write_control(
+                    0x40,
+                    request,
+                    length | (u16::from(polarity) << 15),
+                    token,
+                    &[],
+                    self.timeout,
+                )
+                .map_err(io::Error::other)?;
+            return Ok(token);
+        }
         let flags = polarity | (u8::from(delayed) << 1);
         let register: u16 = match max {
             0xff => 0,
@@ -275,12 +311,19 @@ impl DmaProbe {
         Ok(Status::decode(status))
     }
 
-    /// Download all 32 pages of the CPU-owned frozen snapshot for this token.
+    /// Download every page of the CPU-owned frozen snapshot for this token.
     ///
     /// # Errors
     /// Returns an error if the snapshot expires, the session resets or a page is short.
     pub fn snapshot(&self, token: u16) -> io::Result<Vec<u8>> {
-        let mut bytes = vec![0; ARENA];
+        let mut bytes = vec![
+            0;
+            if self.profile == Profile::Stress {
+                8192
+            } else {
+                ARENA
+            }
+        ];
         for (page, dest) in (0u16..).zip(bytes.as_chunks_mut::<PAGE>().0) {
             self.read(0x53, page, token, dest)?;
         }
@@ -303,6 +346,14 @@ impl DmaProbe {
     /// # Errors
     /// Returns an error on invalid length, submission failure or event backend failure.
     pub fn iso(&mut self, bytes: &[u8]) -> io::Result<IsoCompletion> {
-        iso::send(&self.handle, bytes)
+        Ok(iso::send(&self.handle, &[bytes])?[0])
+    }
+
+    /// Schedule up to four full-speed OUT packets in consecutive service intervals.
+    ///
+    /// # Errors
+    /// Returns an error on invalid packet lengths or a libusb submission or dispatch failure.
+    pub fn iso_train(&mut self, packets: &[&[u8]]) -> io::Result<Vec<IsoCompletion>> {
+        iso::send(&self.handle, packets)
     }
 }

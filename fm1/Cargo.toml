@@ -29,6 +29,7 @@ audio = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
 usb-dma-probe = []
+usb-dma-stress = ["usb-dma-probe"]
 
 [[example]]
 name = "graphics"

@@ -109,6 +109,23 @@ completion and full arena snapshots are in the `dma-probe` output directory.
 On the MIDI image, a MIDI-only log reader can also read a compact latest
 result after a capture.
 
+## Stress the production 2 KiB boundary
+
+Flash `rticx-dma-stress.fwsc` to capture 8192 bytes from EP1, including
+changes past the normal 2048-byte data area. The LCD retains the first
+crossing if USB drops out. The command saves the detailed USB journal,
+packet counts, per-packet host completions and every captured SRAM image.
+
+```sh
+fm1 dma-stress --board-revision "black FM-1" --out stress-results --reconnect
+fm1 dma-stress --replay stress-results
+```
+
+Replay also accepts the original black FM-1 capture bundled with the
+source. Normal `rticx-timing` uses the production guards and the `fm1 timing`
+command. [Board results and reproduction](../docs/usb-dma/stress.md) ·
+[Production guard behavior](../docs/usb-dma/README.md#when-the-firmware-stops)
+
 ## License
 
 Licensed under the [MIT License](LICENSE).

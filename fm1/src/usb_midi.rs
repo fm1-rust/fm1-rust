@@ -5,6 +5,8 @@
 //! Move the board's USB port into one task. Enable `async-usb` to wait for USB0
 //! interrupts, or call [`MidiDevice::poll`] about every millisecond. Both paths
 //! receive and send complete four-byte event packets without an allocator.
+//! A board integration can qualify its [`UsbPort`] once and pass a
+//! [`QualifiedMidiPort`] to ordinary safe application code.
 
 #[cfg(feature = "async-usb")]
 mod asynchronous;
@@ -53,6 +55,12 @@ pub struct Identity {
 #[derive(Debug)]
 pub struct UsbPort(Token);
 
+/// An exclusive port whose owner has established the normal MIDI RX DMA contract.
+/// It has no public fields and can be consumed once to start a MIDI device.
+/// Dropping it unused releases the port without starting USB0.
+#[derive(Debug)]
+pub struct QualifiedMidiPort(UsbPort);
+
 static CLAIMED: AtomicBool = AtomicBool::new(false);
 
 impl Board {
@@ -72,16 +80,44 @@ impl Drop for UsbPort {
 }
 
 impl UsbPort {
+    /// Pass the board's DMA assurance to code that chooses the MIDI identity
+    /// and starts USB later. This only moves the owned port.
+    ///
+    /// # Safety
+    /// Establish the complete [`Self::into_midi`] contract before calling.
+    /// Safe code can hold this port through a cable change, start it later, or
+    /// forget the active device. Keep the assurance valid for every such use.
+    /// Restricting traffic through a controlled fixture requires control of
+    /// the physical connection and the host stack throughout that interval.
+    ///
+    /// ```compile_fail,E0133
+    /// # use fm1::usb_midi::UsbPort;
+    /// fn qualify(raw: UsbPort) {
+    ///     let _port = raw.assume_midi_dma();
+    /// }
+    /// ```
+    #[must_use]
+    pub unsafe fn assume_midi_dma(self) -> QualifiedMidiPort {
+        QualifiedMidiPort(self)
+    }
+
     /// Start a timing diagnostic with separate EP1 OUT arenas. The MIDI profile
     /// uses the normal class descriptors and receive handling between trials.
     ///
+    /// # Panics
+    /// A changed staging guard retained from a previous session is fatal.
+    ///
     /// # Safety
     /// The caller must uphold the receive DMA contract of [`Self::into_midi`]
-    /// for both the normal destinations and the probe's 2048-byte EP1 arena.
+    /// for all normal destinations and the probe's EP1 arena (2048 bytes for
+    /// RXD3, 8192 for RXS1). With the stress image, an isolated fixture must
+    /// finish its bounded EP1 traffic before the snapshot gate.
     /// On the qualified board, a gate and retarget must stop writes to the
     /// old EP1 destination within the three-millisecond drain used for capture
-    /// and reuse. A controlled bench can use the RXD3 runner, which sends at
-    /// most one 1023-byte full-speed packet per isochronous transfer.
+    /// and reuse. RXD3 uses one isochronous packet per transfer. RXS1's
+    /// host and raw fixture submit at most 4096 payload bytes per acquisition.
+    /// This stimulus limit bounds the experiment, subject to the board's
+    /// behavior with retries, trailers and writes already in progress.
     ///
     /// ```compile_fail,E0133
     /// # use fm1::usb_midi::{Identity, ProbeProfile, UsbPort};
@@ -102,17 +138,29 @@ impl UsbPort {
     /// Start attachment as a USB-MIDI device. The first service pass after 25 ms
     /// enables the D+ pull-up, giving the host time to forget the bootloader.
     ///
+    /// # Panics
+    /// A changed receive guard retained from a previous session is fatal.
+    ///
     /// # Safety
-    /// The board and its USB environment must confine every USB0 receive DMA
-    /// write to the currently programmed destination (2048 bytes per buffer),
-    /// including trailers, rejected packets and writes without an interrupt.
-    /// The controller must also honor the endpoint ownership handoffs when
-    /// the CPU reads a ready packet or fills an idle buffer. These conditions
-    /// must hold on attachment, reset, suspend and reconnect, until USB0 is
-    /// detached and its outstanding writes have stopped. A leaked handle can
-    /// keep USB0 active indefinitely. A bus with a validated hardware write
-    /// limit or a controlled host restricted to qualified traffic can provide
-    /// this invariant. Packet descriptors and the post-DMA COUNT clamp cannot.
+    /// Every USB0 RX store must land in its programmed data area (2048 bytes
+    /// each for normal EP0 and EP1, 8192 in the stress build), including CRC,
+    /// padding, rejected packets and stores without an interrupt. The trailing
+    /// guard words belong to the CPU. A ready EP0 SETUP or EP1
+    /// prefix read by the CPU must remain stable until the acknowledgement.
+    /// USB0 must leave CPU-owned bytes alone while the CPU prepares a response,
+    /// and old transfers must be quiescent before the storage is reused.
+    /// These requirements start before enumeration and include reset, suspend,
+    /// reconnect and outstanding writes after detach. A forgotten device
+    /// can leave USB0 active indefinitely.
+    ///
+    /// A controlled setup can rely on a qualified board, an OS and host
+    /// controller restricted to ordinary control and 64-byte MIDI bulk
+    /// traffic, and a physical connection that preserves those assumptions.
+    /// A host application such as `fm1-usb` controls the messages it submits.
+    /// Wire packetization and the USB0 SRAM write extent are separate steps.
+    /// For an unrestricted cable, establish the controller's hardware bounds
+    /// and handoffs, or enforce equivalent isolation before enabling DMA.
+    /// A changed guard or an oversized COUNT can first be visible after a store.
     ///
     /// [`Board::take_usb`] only acquires the port and does not start DMA.
     ///
@@ -124,9 +172,32 @@ impl UsbPort {
     /// ```
     #[must_use]
     pub unsafe fn into_midi(self, identity: Identity) -> MidiDevice {
+        // SAFETY: the caller establishes the same RX contract for this device.
+        // Consume the qualified port immediately.
+        unsafe { self.assume_midi_dma() }.into_midi(identity)
+    }
+}
+
+impl QualifiedMidiPort {
+    /// Start the normal USB-MIDI device on the previously qualified port.
+    /// The diagnostic alternate settings require a separate unsafe activation.
+    ///
+    /// # Panics
+    /// A changed receive guard retained from a previous session is fatal.
+    ///
+    /// ```
+    /// use fm1::usb_midi::{Identity, MidiDevice, QualifiedMidiPort};
+    ///
+    /// fn start_instrument(port: QualifiedMidiPort, identity: Identity) -> MidiDevice {
+    ///     port.into_midi(identity)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn into_midi(self, identity: Identity) -> MidiDevice {
         controller::detach();
+        controller::init_rx_guards();
         MidiDevice {
-            _port: self,
+            _port: self.0,
             #[cfg(feature = "usb-dma-probe")]
             probe: None,
             identity,
@@ -202,6 +273,10 @@ impl MidiDevice {
 
     /// Run one bounded service pass. Attach, enumeration, suspend and cable
     /// reconnection progress even when the application has no MIDI to send.
+    ///
+    /// # Panics
+    /// Detaches and panics on a changed receive guard or an oversized packet
+    /// count observed on a normal endpoint.
     pub fn poll(&mut self) {
         if self.service(true).is_err() {
             self.retry();
@@ -218,6 +293,10 @@ impl MidiDevice {
 
     /// Receive up to 16 events from the host. Returns the initialized prefix.
     /// An empty slice means there is currently no transfer to deliver.
+    ///
+    /// # Panics
+    /// A changed receive guard or a ready normal MIDI packet over 64 bytes
+    /// is fatal before its payload is copied.
     pub fn receive<'a>(&mut self, buffer: &'a mut PacketBuffer) -> &'a [EventPacket] {
         #[cfg(feature = "usb-dma-probe")]
         if self
@@ -229,6 +308,7 @@ impl MidiDevice {
         }
         let mut n = 0;
         if self.session().is_some() && !self.interface.out_halted && self.rx_pending {
+            controller::check_rx_guards();
             self.rx_pending = false;
             match controller::receive(buffer) {
                 Ok(count) => n = count,
@@ -240,11 +320,15 @@ impl MidiDevice {
 
     /// Queue the longest prefix that fits in one bulk transfer. Retain and
     /// retry the suffix. Returns zero when disconnected or the endpoint is busy.
+    ///
+    /// # Panics
+    /// A changed receive guard is fatal before queuing an IN transfer.
     #[must_use]
     pub fn send(&mut self, events: &[EventPacket]) -> usize {
         if self.session().is_none() || self.interface.in_halted {
             return 0;
         }
+        controller::check_rx_guards();
         match controller::send(events) {
             Ok(n) => n,
             Err(_) => {
@@ -277,6 +361,7 @@ impl MidiDevice {
     }
 
     fn service(&mut self, sample_frames: bool) -> controller::Result<()> {
+        controller::check_rx_guards();
         let now = cycles();
         if let Some((since, delay)) = self.wait {
             if now.wrapping_sub(since) < delay {
@@ -310,6 +395,13 @@ impl MidiDevice {
             self.suspend(false)?;
         }
         self.rx_pending |= rx;
+        #[cfg(feature = "usb-dma-probe")]
+        let normal_midi = self.probe.is_none();
+        #[cfg(not(feature = "usb-dma-probe"))]
+        let normal_midi = true;
+        if rx && normal_midi && self.interface.configured {
+            controller::check_ready_midi_count()?;
+        }
         if ep0 {
             self.endpoint_zero(now)?;
         }
@@ -384,7 +476,9 @@ impl MidiDevice {
             }
             return Ok(());
         }
-        if rd(controller::COUNT)? != 8 {
+        let count = rd(controller::COUNT)?;
+        controller::check_packet_count("EP0 byte count", u16::from(count));
+        if count != 8 {
             return wr(CSR0, 0x60);
         }
         let setup = controller::setup();
@@ -487,6 +581,8 @@ impl MidiDevice {
 
 impl Drop for MidiDevice {
     fn drop(&mut self) {
+        // Disabling USB0 requests detach. The activation contract also
+        // covers outstanding writes before a later owner can reuse the buffers.
         controller::detach();
     }
 }

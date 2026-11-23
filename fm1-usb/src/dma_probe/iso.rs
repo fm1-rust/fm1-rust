@@ -12,39 +12,59 @@ struct Pending {
     // libusb can retain all three until it dispatches completion, even after cancellation.
     _handle: Arc<DeviceHandle<Context>>,
     bytes: Vec<u8>,
-    reply: mpsc::Sender<IsoCompletion>,
+    packets: usize,
+    reply: mpsc::Sender<Vec<IsoCompletion>>,
 }
 
 extern "system" fn complete(transfer: *mut ffi::libusb_transfer) {
-    // SAFETY: send installs this callback exactly once with one packet and one
+    // SAFETY: send installs this callback exactly once with the allocated packet count and one
     // owned Pending. libusb frees the transfer after this callback returns.
     unsafe {
         let pending = Box::from_raw((*transfer).user_data.cast::<Pending>());
-        let packet =
-            &*(&raw const (*transfer).iso_packet_desc).cast::<ffi::libusb_iso_packet_descriptor>();
-        let _ = pending.reply.send(IsoCompletion {
-            transfer_status: (*transfer).status,
-            packet_status: packet.status,
-            actual: packet.actual_length,
-        });
+        let first =
+            (&raw const (*transfer).iso_packet_desc).cast::<ffi::libusb_iso_packet_descriptor>();
+        // libusb allocates its flexible array with exactly num_iso_packets entries.
+        let packets = core::slice::from_raw_parts(first, pending.packets);
+        let results = packets
+            .iter()
+            .map(|packet| IsoCompletion {
+                transfer_status: (*transfer).status,
+                packet_status: packet.status,
+                actual: packet.actual_length,
+            })
+            .collect();
+        let _ = pending.reply.send(results);
     }
 }
 
-pub(super) fn send(handle: &Arc<DeviceHandle<Context>>, data: &[u8]) -> io::Result<IsoCompletion> {
-    let len = u16::try_from(data.len())
-        .ok()
-        .filter(|len| (1..=1023).contains(len))
-        .ok_or_else(|| invalid("one full-speed isochronous packet must fit in 1023 bytes"))?;
+pub(super) fn send(
+    handle: &Arc<DeviceHandle<Context>>,
+    packets: &[&[u8]],
+) -> io::Result<Vec<IsoCompletion>> {
+    if !(1..=4).contains(&packets.len()) || packets.iter().any(|p| !(1..=1023).contains(&p.len())) {
+        return Err(invalid(
+            "expected one to four full-speed packets of 1..=1023 bytes each",
+        ));
+    }
+    let count = i32::try_from(packets.len()).map_err(|_| invalid("invalid packet count"))?;
+    let lengths: Vec<u32> = packets
+        .iter()
+        .map(|p| u32::try_from(p.len()))
+        .collect::<Result<_, _>>()
+        .map_err(|_| invalid("invalid ISO packet length"))?;
+    let bytes = packets.concat();
+    let len = i32::try_from(bytes.len()).map_err(|_| invalid("invalid ISO transfer length"))?;
     let (reply, done) = mpsc::channel();
     let pending = Box::into_raw(Box::new(Pending {
         _handle: Arc::clone(handle),
-        bytes: data.to_vec(),
+        bytes,
+        packets: packets.len(),
         reply,
     }));
     // SAFETY: this private context is serviced exclusively by the caller. The
     // transfer, handle, payload and completion state outlive every submission.
     let transfer = unsafe {
-        let transfer = ffi::libusb_alloc_transfer(1);
+        let transfer = ffi::libusb_alloc_transfer(count);
         if transfer.is_null() {
             drop(Box::from_raw(pending));
             return Err(io::ErrorKind::OutOfMemory.into());
@@ -54,13 +74,17 @@ pub(super) fn send(handle: &Arc<DeviceHandle<Context>>, data: &[u8]) -> io::Resu
             handle.as_raw(),
             1,
             (*pending).bytes.as_mut_ptr(),
-            i32::from(len),
-            1,
+            len,
+            count,
             complete,
             pending.cast(),
             200,
         );
-        ffi::libusb_set_iso_packet_lengths(transfer, u32::from(len));
+        let first =
+            (&raw mut (*transfer).iso_packet_desc).cast::<ffi::libusb_iso_packet_descriptor>();
+        for (i, length) in lengths.into_iter().enumerate() {
+            (*first.add(i)).length = length;
+        }
         (*transfer).flags = LIBUSB_TRANSFER_FREE_TRANSFER;
         let result = ffi::libusb_submit_transfer(transfer);
         if result != 0 {

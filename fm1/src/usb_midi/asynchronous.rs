@@ -1,4 +1,7 @@
-use super::{MidiDevice, controller::CON0};
+use super::{
+    MidiDevice,
+    controller::{self, CON0},
+};
 use crate::{
     registers::{clear, read, set},
     time::{Timers, cycles},
@@ -6,6 +9,7 @@ use crate::{
 use core::{
     cell::Cell,
     future::poll_fn,
+    pin::pin,
     task::{Poll, Waker},
 };
 use critical_section::Mutex;
@@ -38,13 +42,18 @@ impl MidiDevice {
     /// Inspect [`Self::session`], receive pending packets and retry queued output
     /// after each wake. A local producer can race this future with its own input.
     ///
-    /// The delay is used only for initial attachment and retry after a controller
-    /// timeout. An attached, idle bus needs no timer or start-of-frame interrupt.
+    /// While attached, the delay also wakes the guard checker every 100 ms
+    /// so a silent DMA write can be detected without an endpoint interrupt.
+    /// An intact guard leaves the application waiting for USB activity.
     /// Suspend or disconnect can signal loss of the data host. For a cable pull
     /// that raises neither interrupt, callers can use [`Self::poll`] to sample
     /// frame progress while a missed disconnect matters (e.g. a sounding note).
     ///
     /// Cancelling this wait leaves endpoint data and the attachment deadline intact.
+    ///
+    /// # Panics
+    /// Detecting a changed receive guard or an oversized normal endpoint count
+    /// detaches USB0 and panics, as in [`Self::poll`].
     pub async fn wait_for_activity(&mut self, delay: &mut impl DelayNs) {
         if let Some((since, ticks)) = self.wait {
             let remaining = ticks.saturating_sub(cycles().wrapping_sub(since));
@@ -54,7 +63,23 @@ impl MidiDevice {
                     .await;
             }
         } else {
-            wait_for_irq().await;
+            controller::check_rx_guards();
+            let mut irq = pin!(wait_for_irq());
+            loop {
+                let mut timer = pin!(delay.delay_ms(100));
+                let signaled = poll_fn(|cx| {
+                    if irq.as_mut().poll(cx).is_ready() {
+                        Poll::Ready(true)
+                    } else {
+                        timer.as_mut().poll(cx).map(|()| false)
+                    }
+                })
+                .await;
+                if signaled {
+                    break;
+                }
+                controller::check_rx_guards();
+            }
         }
         if self.service(false).is_err() {
             self.retry();

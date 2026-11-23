@@ -328,6 +328,9 @@ pub(super) fn run(
 ) -> io::Result<()> {
     let mut probe = DmaProbe::open(device, timeout)?;
     let profile = probe.profile();
+    if profile == Profile::Stress {
+        return Err(io::Error::other("use fm1 dma-stress for RXS1"));
+    }
     let mut midi = if profile == Profile::Midi {
         let (ports, marker) = device.log_ports(port, timeout)?;
         if marker.lines().next() != Some("RXD3 MIDI READY") {
@@ -370,6 +373,7 @@ pub(super) fn run(
         Profile::Midi => &[Pipe::Midi],
         Profile::Bulk => &[Pipe::Bulk],
         Profile::Iso => &[Pipe::Bulk, Pipe::Iso],
+        Profile::Stress => unreachable!("validated above"),
     };
     for &pipe in pipes {
         let maxima: &[_] = if pipe == Pipe::Iso {

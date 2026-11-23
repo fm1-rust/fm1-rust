@@ -73,10 +73,13 @@ mod app {
             manufacturer: "fm1-rust",
             product: "FM-1 Timing",
         };
-        // SAFETY: run this bench image on a controlled USB bus. The timing
-        // host sends legal USB-MIDI, and the RXD3 tool sends the qualified
-        // sequence of single packets (at most 1023 bytes) into a 2 KiB arena.
-        // Keep that physical constraint across reconnects for the run.
+        // SAFETY: run on the controlled bench, including on reconnect. The OS
+        // enumerates EP0 and packetizes normal MIDI. Only the selected test
+        // runner sends diagnostic EP1 traffic after ARM. RXS1's schedule sends
+        // at most 4096 payload bytes per acquisition into an 8 KiB arena.
+        // The board must confine each RX store and respect CPU handoffs,
+        // including the three-millisecond drain on diagnostics. ARM records intent.
+        // the operator controls the traffic that actually reaches the cable.
         let usb = unsafe {
             #[cfg(not(feature = "usb-dma-probe"))]
             {
@@ -94,6 +97,14 @@ mod app {
                             ..id
                         },
                         ProbeProfile::Bulk,
+                    ),
+                    #[cfg(feature = "usb-dma-stress")]
+                    Some("stress") => port.into_dma_probe(
+                        Identity {
+                            product: "FM-1 DMA Stress",
+                            ..id
+                        },
+                        ProbeProfile::Stress,
                     ),
                     Some("iso") => port.into_dma_probe(
                         Identity {

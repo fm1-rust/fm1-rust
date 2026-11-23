@@ -42,6 +42,17 @@ midi.send(&[0x80, 60, 0])?;
 On Debian or Ubuntu, install `pkg-config` and `libasound2-dev` to build the
 ALSA backend. macOS uses CoreMIDI.
 
+### USB packet sizes on the FM-1
+
+The normal MIDI API passes messages to the OS MIDI driver. The FM-1
+advertises 64-byte bulk data packets. A longer SysEx message can span many
+USB packets. The OS and host controller perform that packetization and
+enumerate endpoint zero before this application connects. The optional
+DMA diagnostic transport can deliberately send a 1023-byte packet on a
+test alternate setting. The host API cannot set the device's maximum SRAM
+write address. See the [FM-1 board qualification](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1)
+for the physical and software assumptions behind a controlled setup.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).

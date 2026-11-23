@@ -63,17 +63,19 @@ Offsets 66 and 67 retained their original fills. [USB 2.0, §8.3.5.2](https://ww
 | MIDI trial 004 | 48 | 5f | 5a | 5a |
 | Bulk trial 002 | 8a | cd | a5 | a5 |
 
-These logs and three byte excerpts are the physical evidence supplied for
-this record. Re-running produces the full JSON and 2048-byte snapshots.
-The largest observed offset gives a **lower bound** on what this hardware
-can overwrite. The 512-byte result with `RX_MAX=0x40` is consistent with
-64 units of eight bytes for this case. The test does not establish the
-register encoding, a maximum for malformed traffic, or results on other
-steppings. A received interrupt is unnecessary for memory corruption.
+These logs and three byte excerpts are the evidence retained from RXD3.
+The follow-up RXS1 archive includes all 65 raw snapshots from the same
+black FM-1. Its 73-byte packets reached offset 74 at both `RX_MAX=0x08`
+and `0x09`, ruling out a hard SRAM limit of eight times the register. Its
+1023-byte packets at all three lower settings produced identifiable payload
+and CRC bytes even with zero ready events and no RX IRQ. Across the full
+run, offsets 1024 through 8191 retained the original fill. The highest
+observed offset is a lower bound on the hardware's possible write extent.
+[Black FM-1 stress results and offline replay](stress.md#results-from-the-black-fm-1)
 
 ## Fix and remaining hardware contract
 
-This patch reserves **2048 bytes each** for normal EP1 OUT and the shared
+The BSP at `2462b9817` already reserves **2048 bytes each** for normal EP1 OUT and the shared
 EP0 receive/transmit destination. The normal MIDI limit remains 64 bytes
 and the original receiver register values are preserved. An enlarged EP1
 destination contains every write observed here and has room for a 1023-byte
@@ -106,6 +108,119 @@ reconnect. No range monitor is enabled by this patch. Its blocking semantics
 would need independent validation before using it to justify safe activation.
 [WL82 range setup](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/cpu/wl82/debug.c#L836-L890) ·
 [WL82 bus-master IDs](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/include_lib/driver/cpu/wl82/asm/debug.h#L6-L11)
+
+## Qualifying normal MIDI on the FM-1
+
+Board setup takes the idle `UsbPort` safely. At the point where the physical
+setup is known it can call `unsafe { port.assume_midi_dma() }`. This consumes
+the raw port without touching USB0. Application code that receives the
+result needs no unsafe block to choose its identity and start normal MIDI.
+
+```rust
+use fm1::usb_midi::{Identity, MidiDevice, QualifiedMidiPort};
+
+fn start_instrument(port: QualifiedMidiPort, id: Identity) -> MidiDevice {
+    port.into_midi(id)
+}
+```
+
+The qualified port has a private field, cannot be duplicated and gives access
+only to the MIDI personality. Raw `UsbPort::into_midi` and the diagnostic
+constructor retain their unsafe contracts. If board setup already knows the
+identity, it can pass a ready `MidiDevice` directly. The obligation covers
+arbitrary delays before starting, enumeration on EP0, ordinary EP1 traffic,
+reset, suspend, host replacement and any DMA outstanding at detach. Safe
+code can forget an active handle. Its destructor cannot be the only thing
+keeping the bus within the qualified operating conditions.
+[Worked board initialization](../../fm1-rticx/examples/usb-log.rs) ·
+[Rust Reference on soundness](https://doc.rust-lang.org/reference/behavior-considered-undefined.html#undefinedsoundness)
+
+**A controlled host is a useful restriction.** On the ordinary MIDI profile
+`fm1-usb` sends MIDI messages through `midir`. For example, the log request
+is the three-byte SysEx message `f0 7d f7`. The OS driver and host controller
+divide traffic into USB packets. The descriptors advertise EP1 bulk at 64
+bytes and EP0 has 64-byte maximum data packets and an eight-byte SETUP.
+A large application message may use many such packets. Standard enumeration
+precedes the application opening its MIDI port. The board integration can
+trust a specific OS, controller and controlled physical cable, together with
+the FM-1's write extent and CPU/DMA handoffs for that traffic. Installing
+the host crate or exchanging a handshake cannot establish that premise on a
+general USB port. Other raw clients or a replacement host can change the traffic.
+[Host MIDI send](../../fm1-usb/src/midi.rs) ·
+[Log request](../../fm1-usb/src/log.rs) ·
+[USB 2.0 §§5.5.3, 5.8.3, 8.5.3](https://bitsavers.trailing-edge.com/components/usb/USB_2.0_2000.pdf)
+
+**The raw diagnostics have a different traffic envelope.** The CLI checks the
+vendor alternate setting. Its isochronous helper accepts 1–4 packets of
+1–1023 bytes each. RXS1's largest bulk trial is a 4096-byte transfer split
+into 64 legal packets. `DmaProbe::bulk` takes a byte slice of arbitrary
+length, and an ARM request declares an intended length. The bounds of the
+supplied test schedule apply to that runner's submissions. They cannot
+constrain independent senders, the controller's CRC stores or its write
+pointer between packets. [Host transport](../../fm1-usb/src/dma_probe.rs) ·
+[ISO validation](../../fm1-usb/src/dma_probe/iso.rs) ·
+[libusb packetization](https://libusb.sourceforge.io/api-1.0/libusb_packetoverflow.html)
+
+### When the firmware stops
+
+The normal EP0 and EP1 receive allocations each have a 16-byte trailing
+guard immediately after the 2048-byte data area. The first forbidden word
+is reserved storage in the same enclosing object. Four different words are
+seeded while detached at the first activation after startup. A later owner
+checks the existing guards. USB bus resets, endpoint configuration and
+controller retries retain them. In RXS1 these two staging areas
+are larger and their guards start at 8192. The live diagnostic's independent
+8192-byte arena still records every byte, including crossings of 2048.
+
+The USB task checks both guards on every service pass, before consuming
+pending MIDI and before publishing MIDI output. The async IRQ wait also
+checks them at 100 ms intervals if the executor runs and its delay advances.
+This catches a persistent change even without RXPKTRDY, COUNT or an RX IRQ.
+A changed guard or an observed normal EP1 ready count above 64 makes the
+driver detach USB0, synchronize and panic. The EP0 handler also rejects
+a reported COUNT0 above 64 this way. The normal 65-byte case panics while
+the data still fit in staging. Armed diagnostic packets go through a separate
+path so they can be measured. The example panic handlers enter download
+mode. Only the application controls its panic handler.
+
+A changed guard is evidence of an earlier store. It can trigger an orderly
+stop if the affected bytes are confined to the reserved guard and the CPU
+can still run the check. An overwrite that skips it, preserves its value or
+hits a live object first may escape detection. Even a perfect final snapshot
+can miss a transient write. Silent writes wholly inside 2048 bytes, such as
+the observed 512-byte footprint, fit the staging area and need not trip the
+production guard. The CPU does not scan an active DMA payload looking for
+sentinels. Under the activation contract, the trailing guards remain
+CPU-owned. Detection of a breach while DMA is active is best effort.
+Volatile reads and SSYNC cannot enforce a bus-master write bound.
+[Rust volatile access semantics](https://doc.rust-lang.org/core/ptr/fn.read_volatile.html) ·
+[Black FM-1 captures and FIFO evidence](stress.md)
+
+### Restoring safe activation on a raw port
+
+The remaining FM-1 question is whether every USB0 write can be confined
+before it can damage unrelated state, with exclusive ownership when the CPU
+uses the bytes. A verified pre-store hardware window or a documented bound
+for this silicon could establish spatial confinement. A common window that
+also exposes EP0 to EP1 still needs a handoff design preventing writes to
+bytes the CPU is using. Set protection before enabling D+ and retain it
+through reset, detach, in-flight writes and forgotten handles.
+
+The WL82 SDK range comparator and FUSB master IDs above provide a specific
+experiment. Place a forbidden subrange inside the sacrificial arena. Reproduce
+a known write there with the comparator off. Repeat with it on and independently
+check SRAM even if the CPU took a fault. Exercise an unaligned crossing,
+EP0, and reset during RX. The separately named `axi_ram_write_range_limit`
+accepts addresses in `0x01bfe000..0x01c00000`. The BSP links ordinary data
+from `0x01c40000`. That routine cannot directly protect these buffers.
+[WL82 AXI limits](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/cpu/wl82/debug.c#L1030-L1050) ·
+[BSP linker map](../../fm1/runtime/fm1.ld)
+
+Once the BSP itself can establish those invariants, it can expose the old
+safe `UsbPort::into_midi(identity)` signature again. Making an inherent
+method safe is a compatible API relaxation for a subsequent release. The
+earlier release which first required an unsafe block remains source-breaking.
+[Cargo SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html#fn-unsafe-safe)
 
 ## Reproduce on a board
 
@@ -188,3 +303,7 @@ retention and an injected write with suppressed endpoint events, use the
 [strict-mode emulator harness](../../tools/usb-dma-probe/emulator/README.md).
 Its DMA behavior is a test input. Only the hardware logs establish the
 physical write footprint.
+
+The follow-up [2 KiB stress investigation](stress.md) includes a separate
+8 KiB capture, Mac packet trains, a programmable raw USB host and recovery
+tests for the enlarged production staging.

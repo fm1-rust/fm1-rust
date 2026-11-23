@@ -8,7 +8,10 @@ use super::{
 use crate::time::{Timers, cycles, wait_cycles};
 
 const ARENA_LENGTH: u16 = 2048;
+#[cfg(not(feature = "usb-dma-stress"))]
 pub(super) const BYTES: usize = ARENA_LENGTH as usize;
+#[cfg(feature = "usb-dma-stress")]
+pub(super) const BYTES: usize = 8192;
 // Fixed RXD3 comparison with the allocation at commit 2721022. It must not
 // grow when the normal receive allocation is hardened.
 const ORIGINAL_RX_BYTES: u16 = 68;
@@ -30,6 +33,34 @@ pub enum ProbeProfile {
     Bulk,
     /// Adds alternate 2 for one full-speed isochronous OUT packet up to 1023 bytes.
     Iso,
+    /// Vendor descriptor with the 2 KiB production guard inside an 8 KiB arena.
+    #[cfg(feature = "usb-dma-stress")]
+    Stress,
+}
+
+impl ProbeProfile {
+    fn stress(self) -> bool {
+        #[cfg(feature = "usb-dma-stress")]
+        {
+            self == Self::Stress
+        }
+        #[cfg(not(feature = "usb-dma-stress"))]
+        {
+            false
+        }
+    }
+
+    fn length(self) -> u16 {
+        if self.stress() { 8192 } else { ARENA_LENGTH }
+    }
+
+    fn boundary(self) -> u16 {
+        if self.stress() {
+            u16::try_from(controller::RX_DMA_BYTES).expect("USB staging fits u16")
+        } else {
+            ORIGINAL_RX_BYTES
+        }
+    }
 }
 
 // Alternate zero consumes no periodic bandwidth. Both active alternates use
@@ -94,7 +125,7 @@ pub struct ProbeReading {
     pub gate_csr: u8,
     /// Last changed byte anywhere in the arena.
     pub highest: Option<u16>,
-    /// First changed byte at or beyond offset 68.
+    /// First changed byte at or beyond the profile’s comparison boundary.
     pub first_guard: Option<u16>,
     /// Observed value at the first changed guard byte, when present.
     pub guard_byte: u8,
@@ -224,9 +255,10 @@ impl Probe {
         self.max = hw::rx_max(max)?;
         self.sentinel = if flags & 1 == 0 { 0xa5 } else { 0x5a };
         let live = RxBuffer::Live.ptr();
-        for i in 0..BYTES {
-            // SAFETY: idle/frozen only. EP1 is gated and points at the separate
-            // normal buffer. The sole USB owner writes exactly BYTES to LIVE.
+        for i in 0..usize::from(self.profile.length()) {
+            // SAFETY: EP1 is gated and points elsewhere. After an interrupted
+            // capture the probe contract bounds the drain above before LIVE
+            // is reused. The sole CPU owner fills at most BYTES here.
             unsafe { live.add(i).write_volatile(self.sentinel) };
         }
         controller::sync_tx();
@@ -319,7 +351,7 @@ impl Probe {
                 controller::sync_rx();
                 self.live_needs_drain = false;
                 let mut reading = self.reading();
-                for offset in 0..ARENA_LENGTH {
+                for offset in 0..self.profile.length() {
                     let i = usize::from(offset);
                     // SAFETY: i is below BYTES in disjoint static arrays. EP1
                     // is gated, points elsewhere, and the qualified drain and
@@ -331,7 +363,7 @@ impl Probe {
                     };
                     if byte != self.sentinel {
                         reading.highest = Some(offset);
-                        if offset >= ORIGINAL_RX_BYTES && reading.first_guard.is_none() {
+                        if offset >= self.profile.boundary() && reading.first_guard.is_none() {
                             reading.first_guard = Some(offset);
                             reading.guard_byte = byte;
                         }
@@ -439,13 +471,18 @@ impl Probe {
         let reply = match (kind, request) {
             (0xc0, 0x50) if state.configured && (value, index, len) == (0, 0, 12) => {
                 let [lo, hi] = WINDOW_MS.to_le_bytes();
-                let arena = ARENA_LENGTH.to_le_bytes();
-                let bound = ORIGINAL_RX_BYTES.to_le_bytes();
+                let arena = self.profile.length().to_le_bytes();
+                let bound = self.profile.boundary().to_le_bytes();
+                let magic = if self.profile.stress() {
+                    *b"RXS1"
+                } else {
+                    *b"RXD3"
+                };
                 c.data(&[
-                    b'R',
-                    b'X',
-                    b'D',
-                    b'3',
+                    magic[0],
+                    magic[1],
+                    magic[2],
+                    magic[3],
                     self.profile as u8,
                     self.alt,
                     arena[0],
@@ -461,8 +498,30 @@ impl Probe {
             (0xc0, 0x54) if state.configured && (value, index, len) == (0, 0, 2) => {
                 c.data(&self.next_token().to_le_bytes())
             }
+            // wIndex is the generation. wValue carries the total wire payload
+            // and polarity. The request selects RX_MAX and prompt/delayed service.
+            (0x40, 0x60..=0x69)
+                if self.profile.stress()
+                    && state.configured
+                    && self.alt != 0
+                    && !self.active()
+                    && !state.out_halted
+                    && len == 0
+                    && index == self.next_token()
+                    && value & 0x7fff <= 4096 =>
+            {
+                let maxima = [0xff, 0x40, 0x08, 0x09, 0x20];
+                let max = maxima[usize::from((request & 0x0f) >> 1)];
+                Reply::Arm {
+                    token: index,
+                    max,
+                    flags: ((vh >> 7) & 1) | ((request & 1) << 1),
+                    requested: value & 0x7fff,
+                }
+            }
             (0x40, 0x51)
-                if state.configured
+                if !self.profile.stress()
+                    && state.configured
                     && self.endpoint_enabled()
                     && !self.active()
                     && !state.out_halted
@@ -520,7 +579,7 @@ impl Probe {
                 if self.phase == Phase::Frozen
                     && index == self.token
                     && len == 64
-                    && value < 32 =>
+                    && usize::from(value) < usize::from(self.profile.length()) / PAGE =>
             {
                 let offset = usize::from(value) * PAGE;
                 // SAFETY: host reads only after a complete freeze. EP1 never
@@ -552,7 +611,7 @@ impl Probe {
                 if state.configured
                     && index == 0
                     && len == 0
-                    && value <= u16::from(self.profile as u8) =>
+                    && value <= u16::from((self.profile as u8).min(2)) =>
             {
                 Reply::Alternate(vl)
             }
