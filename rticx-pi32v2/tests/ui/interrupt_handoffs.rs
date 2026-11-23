@@ -1,11 +1,46 @@
 //! The target CI job checks each rejected handoff independently.
 #![no_std]
+#![cfg(target_os = "none")]
+#![forbid(unsafe_code)]
 #![allow(
     missing_docs,
     reason = "RTICX generates public task and initializer types."
 )]
 
-#[cfg(target_os = "none")]
+// The core facade accepts every handoff. The runtime facade accepts none.
+// The positive fixture and each negative fixture must use the genuine bounds.
+extern crate rticx_pi32v2 as actual_runtime;
+extern crate self as rticx_pi32v2;
+pub use actual_runtime::*;
+pub mod export {
+    pub use crate::actual_runtime::export::*;
+    pub trait HandoffSend {}
+    #[cfg(forge_handoff)]
+    impl<T: ?Sized> HandoffSend for T {}
+}
+
+extern crate core as real_core;
+extern crate self as core;
+pub use real_core::*;
+pub mod marker {
+    pub use crate::real_core::marker::*;
+
+    /// This lookalike deliberately accepts every type.
+    pub trait Send {}
+    impl<T: ?Sized> Send for T {}
+}
+
+// A facade that replaces the wrapper cannot authorize its own backend safely.
+#[cfg(forge_handoff)]
+#[macro_export]
+macro_rules! __expand_app {
+    ([$($args:tt)*] $($app:tt)*) => {
+        $crate::actual_runtime::__generate_app! {
+            $crate [__rticx_origin::assume_genuine()] [$($args)*] $($app)*
+        }
+    };
+}
+
 #[rticx_pi32v2::app(device = crate, dispatchers = [SOFT0])]
 mod app {
     use core::cell::Cell;

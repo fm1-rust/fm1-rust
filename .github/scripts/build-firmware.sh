@@ -36,7 +36,7 @@ if [[ $package == fm1-rticx ]]; then
     handoffs=(cargo rustc --color never --locked -p rticx-pi32v2 --example interrupt-handoffs
         --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
         -Zbuild-std-features=compiler-builtins-mem --)
-    cases=(bad_shared bad_local bad_input)
+    cases=(bad_shared bad_local bad_input forge_handoff)
     for flag in "${cases[@]}"; do handoffs+=(--check-cfg "cfg($flag)"); done
     "${handoffs[@]}"
     for flag in "${cases[@]}"; do
@@ -44,7 +44,9 @@ if [[ $package == fm1-rticx ]]; then
             echo "unsafe RTICX call compiled: $flag" >&2
             exit 1
         fi
-        grep -F "error[E0277]" "$log" || { cat "$log" >&2; exit 1; }
+        expect=E0277
+        if [[ $flag == forge_handoff ]]; then expect=E0133; fi
+        grep -F "error[$expect]" "$log" || { cat "$log" >&2; exit 1; }
     done
 
     dispatch=(cargo rustc --color never --locked -p rticx-pi32v2 --example dispatcher-access

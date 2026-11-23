@@ -57,18 +57,58 @@ fn validate_args(args: &Tokens) -> syn::Result<()> {
 /// Declare a CPU0 application with hardware tasks and async software tasks.
 #[proc_macro_attribute]
 pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
-    expand(args.into(), input, Cpu0(parse_quote!(::rticx_pi32v2)))
+    let args = Tokens::from(args);
+    let app = Tokens::from(input);
+    quote!(::rticx_pi32v2::__expand_app! { [#args] #app }).into()
 }
 
 /// Declare an FM-1 application, supplying its board and interrupt controller.
 #[proc_macro_attribute]
 pub fn fm1_app(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = Tokens::from(args);
-    expand(
-        quote!(device = ::fm1_rticx::bsp, #args),
-        input,
-        Cpu0(parse_quote!(::fm1_rticx::rticx)),
-    )
+    let app = Tokens::from(input);
+    quote!(::fm1_rticx::rticx::__expand_app! { [device = ::fm1_rticx::bsp, #args] #app }).into()
+}
+
+/// Implementation of the runtime's application macro.
+///
+/// # Safety
+/// The caller must supply the genuine runtime path. Its handoff check must
+/// enforce `core::marker::Send` before startup enables interrupts.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __generate_app(input: TokenStream) -> TokenStream {
+    use syn::parse::Parser;
+    let parse = |input: syn::parse::ParseStream<'_>| {
+        let runtime = input.parse::<Path>()?;
+        let proof;
+        syn::bracketed!(proof in input);
+        let proof = proof.parse::<Expr>()?;
+        let args;
+        syn::bracketed!(args in input);
+        let app = expand(args.parse()?, input.parse()?, Cpu0(runtime))?;
+
+        // Direct invocation must establish the same safety contract as the wrapper.
+        // A private constructor rules out a struct literal. Const evaluation rules
+        // out manufacturing the value with panic!() in an unused function.
+        Ok(quote! {
+            const _: () = {
+                mod __rticx_origin {
+                    pub(super) struct Verified(());
+
+                    /// # Safety
+                    /// The supplied runtime must uphold the backend's safety contracts.
+                    pub(super) const unsafe fn assume_genuine() -> Verified { Verified(()) }
+                }
+                let _: __rticx_origin::Verified = #proof;
+            };
+            #app
+        })
+    };
+    parse
+        .parse(input)
+        .unwrap_or_else(|e| e.into_compile_error())
+        .into()
 }
 
 fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
@@ -110,34 +150,27 @@ fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
     Ok(async_priorities)
 }
 
-fn expand(args: Tokens, input: TokenStream, cpu: Cpu0) -> TokenStream {
-    let source_file = input
-        .clone()
-        .into_iter()
-        .next()
-        .and_then(|t| t.span().local_file());
-    let module = parse_macro_input!(input as syn::ItemMod);
-    let result = (|| -> syn::Result<Tokens> {
-        validate_args(&args)?;
-        let priorities = validate_cores(&module)?;
-        let mut builder = RticMacroBuilder::new(cpu.clone());
-        builder.bind_pre_core_pass(AsyncPass::new(cpu));
-        let generated = builder.build_rtic_macro2(args, module, source_file);
-        let mut file = syn::parse2::<syn::File>(generated.clone())?;
-        if let [syn::Item::Mod(app)] = file.items.as_mut_slice() {
-            dispatcher::protect(app, &priorities)?;
-            Ok(quote!(#app))
-        } else if !file.items.is_empty() && file.items.iter().all(|item| {
-            matches!(item, syn::Item::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "compile_error"))
-        }) {
-            Ok(generated)
-        } else {
-            Err(syn::Error::new(proc_macro2::Span::call_site(), "unexpected RTICX application expansion"))
-        }
-    })();
-    result
-        .unwrap_or_else(|error| error.into_compile_error())
-        .into()
+fn expand(args: Tokens, module: syn::ItemMod, cpu: Cpu0) -> syn::Result<Tokens> {
+    let source_file = module.ident.span().unwrap().local_file();
+    validate_args(&args)?;
+    let priorities = validate_cores(&module)?;
+    let mut builder = RticMacroBuilder::new(cpu.clone());
+    builder.bind_pre_core_pass(AsyncPass::new(cpu));
+    let generated = builder.build_rtic_macro2(args, module, source_file);
+    let mut file = syn::parse2::<syn::File>(generated.clone())?;
+    if let [syn::Item::Mod(app)] = file.items.as_mut_slice() {
+        dispatcher::protect(app, &priorities)?;
+        return Ok(quote!(#app));
+    }
+    if !file.items.is_empty() && file.items.iter().all(|item| {
+        matches!(item, syn::Item::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "compile_error"))
+    }) {
+        return Ok(generated);
+    }
+    Err(syn::Error::new(
+        proc_macro2::Span::call_site(),
+        "unexpected RTICX application expansion",
+    ))
 }
 
 // RTICX emits Rust functions. Assembly calls the entry and handlers through
@@ -240,7 +273,7 @@ impl CorePassBackend for Cpu0 {
         Some(quote! {
             use #runtime as __rticx_backend;
             const _: () = {
-                fn require_send<T: ::core::marker::Send>() {}
+                fn require_send<T: #runtime::export::HandoffSend>() {}
                 fn check_handoffs() {
                     #(require_send::<#tasks>();)*
                     #(require_send::<#fields>();)*
