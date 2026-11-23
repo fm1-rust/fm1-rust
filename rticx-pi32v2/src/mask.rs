@@ -9,23 +9,16 @@ pub(crate) const WORDS: usize = 16;
 pub struct SourceMask([u32; WORDS]);
 
 impl SourceMask {
-    /// Include a RAM vector when its priority falls within the resource ceiling.
-    #[must_use]
-    pub const fn with_source(mut self, index: u8, priority: u16, ceiling: u16) -> Self {
-        if priority <= ceiling {
-            let n = index as usize;
-            self.0[n / 8] |= 1 << ((n % 8) << 2);
-        }
-        self
-    }
-
     /// Collect enabled-source bit positions up to the given logical priority.
     #[must_use]
     pub const fn through(irqs: &[(Interrupt, u16)], ceiling: u16) -> Self {
         let mut mask = Self([0; WORDS]);
         let mut remaining = irqs;
         while let [(irq, priority), rest @ ..] = remaining {
-            mask = mask.with_source(*irq as u8, *priority, ceiling);
+            if *priority <= ceiling {
+                let index = *irq as usize;
+                mask.0[index / 8] |= 1 << ((index % 8) << 2);
+            }
             remaining = rest;
         }
         mask
@@ -75,6 +68,15 @@ impl SourceMask {
 mod tests {
     use super::*;
     use Interrupt::{SOFT0, SOFT1, SOFT2, SOFT3, TIMER5};
+
+    #[test]
+    fn usb0_uses_only_the_enable_bit_for_vector_nine() {
+        let irqs = [(Interrupt::USB0, 2)];
+        assert_eq!(SourceMask::through(&irqs, 1).0, [0; WORDS]);
+        let mut expected = [0; WORDS];
+        expected[1] = 1 << 4;
+        assert_eq!(SourceMask::through(&irqs, 2).0, expected);
+    }
 
     #[test]
     fn nested_ceilings_preserve_priorities_and_disabled_sources() {

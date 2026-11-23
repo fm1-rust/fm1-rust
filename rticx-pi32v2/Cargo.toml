@@ -24,6 +24,11 @@ name = "dispatcher-access"
 path = "tests/ui/dispatcher_access.rs"
 crate-type = ["rlib"]
 
+[[example]]
+name = "interrupt-vectors"
+path = "tests/ui/interrupt_vectors.rs"
+crate-type = ["rlib"]
+
 [dependencies]
 critical-section = "1"
 heapless = "0.9"

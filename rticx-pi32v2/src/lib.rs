@@ -32,8 +32,11 @@ macro_rules! __expand_app {
 /// CPU0 interrupt sources currently supported on the AC791N.
 /// The discriminants are indices in the SoC's RAM vector table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 #[repr(u8)]
 pub enum Interrupt {
+    /// USB controller 0.
+    USB0 = 9,
     /// Audio link 0.
     ALNK0 = 11,
     /// SPI controller 1.
