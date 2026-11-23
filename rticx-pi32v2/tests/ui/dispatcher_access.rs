@@ -27,8 +27,28 @@ pub mod executor {
     }
 }
 
+// Each by-value receiver wins over an implicit borrow of an Installed handle.
+// Wrong arities make any unqualified call fail in the target build.
+#[allow(dead_code)]
+trait ExecutorMethods: Sized {
+    fn set_pending(self, _: ()) {}
+    fn try_allocate(self, _: ()) {}
+    fn spawn(self) {}
+    fn poll(self) {}
+}
+impl<F: core::future::Future<Output = ()> + 'static> ExecutorMethods
+    for rticx_pi32v2::executor::Installed<F>
+{
+}
+
 #[rticx_pi32v2::app(device = crate, dispatchers = [SOFT0])]
 mod app {
+    #[allow(
+        unused_imports,
+        reason = "Only an unqualified executor call uses this trait."
+    )]
+    use crate::ExecutorMethods as _;
+
     #[shared]
     struct Shared {}
     #[init]
