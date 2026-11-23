@@ -1106,6 +1106,7 @@ dependencies = [
  "portable-atomic",
  "rtic-sync",
  "rticx-pi32v2-macro",
+ "static_cell",
 ]
 
 [[package]]

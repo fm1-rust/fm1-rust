@@ -1,24 +1,27 @@
 //! Async channels and task execution for the pi32v2 backend.
-//!
-//! Import endpoint and error types from [`channel`]. They come from the same
-//! `rtic-sync` implementation as [`make_channel!`].
+pub mod channel;
 pub use portable_atomic;
-pub use rtic_sync::{channel, make_channel};
 pub mod yield_now;
 
-#[cfg(test)]
-mod tests {
-    use super::channel::{Channel, ReceiveError};
+#[doc(hidden)]
+pub use static_cell::ConstStaticCell;
 
-    #[test]
-    fn channel_can_close_and_reopen() {
-        let mut channel = Channel::<u8, 1>::new();
-        for value in [1, 2] {
-            let (mut tx, mut rx) = channel.split();
-            assert_eq!(tx.try_send(value), Ok(()));
-            drop(tx);
-            assert_eq!(rx.try_recv(), Ok(value));
-            assert_eq!(rx.try_recv(), Err(ReceiveError::NoSender));
-        }
-    }
+/// Create and split a static [`channel::Channel`].
+///
+/// # Panics
+/// Each call site can be evaluated only once.
+#[macro_export]
+macro_rules! make_channel {
+    ($ty:ty, $size:expr) => {{
+        static CHANNEL: $crate::asynchronous::ConstStaticCell<
+            $crate::asynchronous::channel::Channel<$ty, $size>,
+        > = $crate::asynchronous::ConstStaticCell::new(
+            $crate::asynchronous::channel::Channel::new(),
+        );
+        CHANNEL.take().split()
+    }};
 }
+pub use crate::make_channel;
+
+#[cfg(test)]
+mod tests;

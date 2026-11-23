@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- [BREAKING] The async channel now uses local endpoints with nonblocking
+  `try_send` and cancellable `recv().await`. Update explicit `rtic_sync` endpoint
+  types to the runtime channel types. Callers of `send().await` must handle
+  `TrySendError::Full(value)` or arrange a separate capacity notification.
+
 ## 0.1.1 (2026-11-21)
 
 ### Changed
