@@ -473,6 +473,7 @@ dependencies = [
  "fm1-controls",
  "fm1-graphics",
  "futures-util",
+ "heapless 0.9.4",
  "rtic-time",
  "rticx-pi32v2",
  "rtt-target",

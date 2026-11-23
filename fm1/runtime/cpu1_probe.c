@@ -1,4 +1,4 @@
-/* CPU0 side of the one-shot AC791N probe. No CPU1 pointer crosses into Rust.
+/* CPU0 side of the opt-in AC791N probes. No CPU1 pointer crosses into Rust.
    Register layout: AC79 SDK wl82/csfr.h. Sequence: pi32v2-isa docs/CPU1.md. */
 #include <stdint.h>
 
@@ -25,7 +25,7 @@ typedef uint32_t u32;
 extern void fm1_cpu1_entry(void), fm1_cpu1_probe_exception(void);
 extern void fm1_cpu1_seed(u32 challenge);
 extern u32 fm1_cpu1_reply(void);
-/* cpu1_entry.S owns the storage. CPU0 reads this snapshot only after hold. */
+/* The peer publishes these immutable context samples before its first reply. */
 extern const volatile struct {
     u32 reply, core, usp, sp, ssp;
 } fm1_cpu1_response;
@@ -65,10 +65,45 @@ void fm1_cpu1_hold(void) {
             __asm__ volatile("nop");
 }
 
-/* Called exactly once, on CPU0 with IRQs masked, after crt0 has copied
-   SRAM and before Board enables timers and interrupts. Returns a scalar
-   only after reasserting hold on every outcome. Never restart in place. */
-u32 fm1_cpu1_probe_run(void) {
+/* Only the persistent probe retains the exception vector, until final hold.
+   CPU0 is the sole owner of this state. A nonzero expected word denotes live. */
+static u32 live_reply, saved_vector, initial_causes;
+
+u32 fm1_cpu1_probe_healthy(void) {
+    return live_reply && fm1_cpu1_reply() == live_reply && !(DBG_MSG & ~initial_causes);
+}
+
+void fm1_cpu1_probe_stop(void) {
+    u32 icfg;
+    __asm__ volatile("%0 = icfg\n\tcli\n\tcsync" : "=r"(icfg) :: "memory");
+    if (live_reply) {
+        fm1_cpu1_hold();
+        u32 access = DBG_WR_EN & 1u;
+        debug_access(1);
+        u32 protection = C0_WR_LIMIT;
+        C0_WR_LIMIT = protection & ~4u;
+        sync();
+        EXCEPTION = saved_vector;
+        sync();
+        C0_WR_LIMIT = protection;
+        sync();
+        debug_access(access);
+        live_reply = 0;
+    }
+    __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
+}
+
+static int context_ok(void) {
+    u32 user = (u32)(uintptr_t)fm1_cpu1_ustack_top;
+    return fm1_cpu1_response.core == 1 && fm1_cpu1_response.usp == user &&
+           fm1_cpu1_response.sp == user &&
+           fm1_cpu1_response.ssp == (u32)(uintptr_t)fm1_cpu1_sstack_top;
+}
+
+/* Called once on CPU0 with IRQs masked, after CRT RAM initialization and
+   before Board starts TIMER4. No warm restart. A persistent success leaves
+   only the fixed SRAM worker live; all other paths hold before returning. */
+u32 fm1_cpu1_probe_run(u32 persistent) {
     for (unsigned i = 0; i < 32; ++i)
         C1_IRQ_CFG(i) = 0;
     C1_IRQ_CLEAR = 0xff;
@@ -111,8 +146,16 @@ u32 fm1_cpu1_probe_run(void) {
         if (reply != 0)
             break;
     }
+    sync(); /* acquire the context samples published before reply */
     u32 faults = DBG_MSG & ~previous_causes;
-    fm1_cpu1_hold();
+    int keep = persistent && !faults && reply == expected && context_ok();
+    if (keep) {
+        live_reply = expected;
+        saved_vector = vector;
+        initial_causes = previous_causes;
+    } else {
+        fm1_cpu1_hold();
+    }
     /* The ROM ran with access to the debug box. Reopen it before restoring
        protected state, even if the boot path changed the write-enable bit. */
     debug_access(1);
@@ -122,7 +165,8 @@ u32 fm1_cpu1_probe_run(void) {
     DBG_MSG_CLR = faults;
     SYS_DIV = divider;
     BOOT_PC = entry;
-    EXCEPTION = vector;
+    if (!keep)
+        EXCEPTION = vector;
     sync();
     C0_WR_LIMIT = protection;
     for (unsigned i = 0; i < 4; ++i)
@@ -130,17 +174,19 @@ u32 fm1_cpu1_probe_run(void) {
     sync();
     debug_access(access);
     T4_CON = 0x4000;
-    if (faults != 0)
+    if (faults || (keep && !fm1_cpu1_probe_healthy())) {
+        fm1_cpu1_probe_stop();
         return 4;
+    }
     if (reply == expected) {
-        u32 user = (u32)(uintptr_t)fm1_cpu1_ustack_top;
-        if (fm1_cpu1_response.reply != reply)
+        if (fm1_cpu1_reply() != reply) {
+            fm1_cpu1_probe_stop();
             return 3;
-        if (fm1_cpu1_response.core != 1 || fm1_cpu1_response.usp != user ||
-            fm1_cpu1_response.sp != user ||
-            fm1_cpu1_response.ssp != (u32)(uintptr_t)fm1_cpu1_sstack_top)
-            return 2;
-        return 1;
+        }
+        if (context_ok())
+            return 1;
+        fm1_cpu1_probe_stop();
+        return 2;
     }
     if (reply == 0 || reply == 2 || reply == 4)
         return reply; /* timeout, bad execution context, or CPU1 exception */

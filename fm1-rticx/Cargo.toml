@@ -17,6 +17,7 @@ rticx-pi32v2.workspace = true
 rtt-target = { version = "0.6.2", optional = true }
 
 [dev-dependencies]
+heapless = "0.9.4"
 fm1-audio.workspace = true
 fm1-controls.workspace = true
 fm1-graphics = { workspace = true, features = ["async-display"] }
@@ -26,11 +27,17 @@ futures-util = { version = "0.3", default-features = false }
 async-display = ["fm1/async-display"]
 async-usb = ["fm1/async-usb"]
 audio = ["fm1/audio"]
+cpu1-probe = ["fm1/cpu1-probe"]
 embedded-graphics = ["fm1/embedded-graphics"]
 rtt = ["dep:rtt-target"]
 usb-log = ["fm1/usb-log"]
 usb-dma-probe = ["fm1/usb-dma-probe"]
 usb-dma-stress = ["usb-dma-probe", "fm1/usb-dma-stress"]
+
+[[example]]
+name = "rticx-cpu1-audio"
+required-features = ["audio", "cpu1-probe", "async-usb", "usb-log"]
+test = true
 
 [[example]]
 name = "rticx-piano"

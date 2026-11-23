@@ -85,6 +85,16 @@ fm1_cpu1_entry:
 .Lpark:
 	goto .Lpark
 
+/* The persistent probe reports boot or protocol status and keeps running on
+   its private stack. The context samples before this word stay immutable. */
+	.globl fm1_cpu1_audio_ready
+fm1_cpu1_audio_ready:
+	csync
+	r1 = fm1_cpu1_response
+	[r1+0] = r0
+	csync
+	rts
+
 /* Vector 1 is shared. A CPU1 exception can arrive before its stack is
    usable. A CPU0 exception during bring-up must never resume through CPU1. */
 	.globl fm1_cpu1_probe_exception

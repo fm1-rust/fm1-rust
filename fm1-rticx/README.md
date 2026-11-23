@@ -23,6 +23,7 @@ set, run the example builds from the workspace root.
 ```sh
 ./fm1/scripts/build-example.sh rticx-blink
 ./fm1/scripts/build-example.sh rticx-tone
+./fm1/scripts/build-example.sh rticx-cpu1-audio
 ./fm1/scripts/build-example.sh rticx-controls
 ./fm1/scripts/build-example.sh rticx-piano
 ./fm1/scripts/build-example.sh rticx-waveform
@@ -264,6 +265,150 @@ still play and send notes during synchronization.
 `MISSED` counts pulses skipped when the task or USB endpoint falls a full pulse
 behind. The audio `LATE` indicator continues to report DMA refill overruns.
 USB frame scheduling and host-side latency are outside the `MAX US` measurement.
+
+## Persistent CPU1 audio probe
+
+Build with `./fm1/scripts/build-example.sh rticx-cpu1-audio` and install
+`target/firmware/rticx-cpu1-audio.fwsc` on the FM-1. Use the same qualified
+board and ordinary USB-MIDI host setup as the USB log example. A quiet
+tone and alternating blue LCD fills run for about 1.5 seconds. Steady green
+PLAY and a green screen labeled `AUDIO PASS` mean the audio test passed. An
+audio failure leaves PLAY amber and the screen red with the failure code.
+The result and peak timings stay on the LCD while the USB readout continues
+to update. Hold PLAY for two seconds to return to download mode.
+
+```sh
+fm1 log
+```
+
+If the Mac cannot find `1209:0001`, photograph the LCD before touching the
+cable. The first audio-probe image produced a tone and a green result on an
+FM-1 while the Mac's USB device tree had no FM-1 entry. The on-board readout
+lets the same test distinguish the following observations.
+
+| LCD | What the device observed |
+| --- | --- |
+| `USB WAIT RESET` | USB0 finished attaching. The driver has yet to see a bus reset or SETUP on this attempt. |
+| `USB WAIT SETUP` | USB0 reported a bus reset. EP0 is waiting for its first SETUP packet. |
+| `USB WAIT ADDRESS` / `USB WAIT CONFIG` | EP0 received SETUP / USB0 applied the host address after the status stage. |
+| `USB ONLINE` / `USB SUSPENDED` | The host selected a configuration. `SUSPENDED` records a suspend indication or a stopped frame counter. |
+| `USB DISCONNECTED` | USB0 signaled a disconnect. |
+| `USB SIE TIMEOUT` | An indexed controller register access exceeded the driver's 100 µs bound. USB0 detached and will retry after 250 ms. A powered FM-1 with no data host can also show this. |
+
+`RESETS` counts bus-reset indications and `RETRIES` counts controller
+timeouts since boot. `REQ` shows the last SETUP's `bmRequestType`,
+`bRequest` and `wValue` in hex. `IDX` and `LEN` give `wIndex` and
+`wLength`. `TIMEOUT RD/WR` names the register access that last timed out.
+`STALL` identifies the last request EP0 rejected, or the unexpected byte
+count if EP0 was expecting SETUP. The request, timeout and stall survive
+reconnects. For example, a successful configuration can show both
+`USB ONLINE` and an earlier `TIMEOUT WR 01`. When comparing cold power-on,
+a bootloader launch or cable reconnect, record which one produced the screen.
+
+The LCD shows `BLOCKS` in decimal and rounds peak times up to whole
+microseconds. A successful USB report has the following layout. Its times are hexadecimal
+24 MHz TIMER4 ticks. Divide by 24 for microseconds. One 128-frame period is
+69,632 ticks.
+
+```text
+C1 PASS 1FF 11 <commit> <gap> <worker>
+```
+
+| Field | Interpretation |
+| --- | --- |
+| `1FF` | 511 PCM blocks validated and accepted by ALNK0 out of 512 numbered jobs. |
+| `11` | CPU0 submitted silence before releasing the halfway gate, then discarded that job's late completion. The one-slot pipeline submits silence again while requesting its replacement. |
+| `commit` | Maximum time from ALNK0 handler entry through a successful refill. |
+| `gap` | Maximum interval between serviced audio interrupt entries. |
+| `worker` | Longest CPU1 render for a validated, played block. Excludes the deliberately stalled job. |
+
+On a physical FM-1 connected to macOS, the LCD showed `AUDIO PASS`,
+`USB ONLINE` and `RESETS 13`. The host received the following `fm1 log` reply.
+
+```text
+C1 PASS 1FF 11 0000099D 00011001 00000166
+```
+
+CPU0's peak entry-to-refill time was 102.54 µs. The longest interval between
+serviced audio interrupts was 69,633 ticks (2,901.375 µs), one tick above
+the 128-frame period. CPU1's peak render time for this test waveform was
+14.92 µs. The reset count is cumulative. A second reading with the cable
+still connected can show whether resets continue after configuration.
+
+`RUN` is a live snapshot. `BT0/BT2/BT3/BT4` are the boot probe's timeout,
+context, reply and fault statuses. `CPU1` means the live reply or debug status
+changed. `SEQ`, `GATE` and `MISS` identify an unexpected completion number,
+premature completion of the gated job, or a job unavailable at its deadline.
+`DATA` means the samples or checksum disagreed. `DMA` means the refill was
+late. `TIME` means the service time reached one period or the gap reached two
+periods. `IRQ` means progress stopped for one second. `DAC` and `LCD` report
+peripheral failures. `DRAW` means no LCD fill overlapped an accepted audio
+block. A CPU0 exception can stop the reporter. The REC power-on download
+gesture remains available.
+
+CPU1 polls one sequence-tagged SRAM slot. It owns the samples until it has
+published all 128 words, their checksum and its render time. CPU0 copies a
+completed block, verifies every sample against its job and frame, then submits
+the next job. At job 64 CPU1 pauses after 64 stores. Only a successful
+silent refill releases it. The next normal job must pass the same checks.
+CPU0 holds the peer on completion, failure and the download path. Boot and
+handoff rely on aligned SRAM words, `csync` and the hardware hold. A pass
+measures this exchange on the tested unit. Application linker scripts with
+larger CPU0 stack reservations should check `__fm1_statics_end`, which
+includes the CPU1 stacks and mailbox after `.bss`.
+
+### Async patterns for audio and graphics
+
+Keep the DSP state on CPU1 and the RTICX executor, ALNK0, USB and SPI1 on CPU0.
+In this example ALNK0 has the highest priority. USB0 wakes a separate CPU0
+async task that owns `MidiDevice`, with a 10 ms fallback for attachment,
+retry and frame sampling. Both can preempt a full-screen fill. The
+lower-priority `Monitor` copies the audio and USB snapshots under short
+resource locks and releases them before touching SPI1 or awaiting its timer.
+It fills the screen during the audio test, then repaints changed status cells.
+For an async SPI transfer, keep its buffer and future in the CPU0 display task
+through completion.
+The [waveform example](examples/rticx-waveform.rs) shows CPU0 channels and
+async display transfers.
+
+For a synth, send bounded control messages to the DSP and return owned PCM
+blocks tagged with a sequence and the settings revision. The ALNK0 interrupt
+polls once, feeds ready audio to DMA and records the revision only after
+`Refill::Written`. Send a small meter or scope snapshot from that interrupt
+to the CPU0 display task with `try_send`. The task can `recv().await`.
+A full telemetry queue may drop an update. Note edges and edit receipts need
+an explicit overflow policy that preserves their ordering.
+
+The following endpoints both belong to CPU0. A display task can skip a stale
+meter reading without delaying audio. The application owns the choice to
+drop the new reading when the channel is full.
+
+```rust
+use fm1_rticx::rticx::asynchronous::channel::{Receiver, Sender};
+
+fn publish_meter(tx: &mut Sender<'_, [u16; 2], 1>, peaks: [u16; 2]) {
+    let _ = tx.try_send(peaks);
+}
+
+async fn next_meter(rx: &mut Receiver<'_, [u16; 2], 1>) -> Option<[u16; 2]> {
+    rx.recv().await.ok()
+}
+```
+
+A future CPU0-facing completion API can share a nonblocking readiness check
+with the audio interrupt. Keep the waiter on CPU0. Check for completion,
+register the local waker and recheck before returning `Pending`. A CPU0
+timer or interrupt observes the published sequence and wakes that task.
+Use one consumer for each completion. Dropping a wait or reaching a timeout
+abandons interest in the result. The worker retains its slot until it
+acknowledges completion or CPU0 establishes a hardware hold. The existing
+RTICX channels, resource ceilings and critical sections synchronize CPU0
+tasks. A generic CPU1 executor would also need its own wake/dispatch
+mechanism and an audit of every global synchronization backend reachable
+from a submitted future. Construct and poll core-local futures on the core
+that owns their state. A remote spawn handle could enqueue owned `Send`
+commands. A `Send + 'static` future can still access a static protected by
+the current CPU0-only critical section.
 
 ## Application setup
 

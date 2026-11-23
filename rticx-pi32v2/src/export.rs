@@ -174,8 +174,9 @@ pub unsafe fn with_ceiling<R>(mask: &SourceMask, flag: &BorrowFlag, f: impl FnOn
 
 struct Cpu0;
 critical_section::set_impl!(Cpu0);
-// SAFETY: CPU1 is parked. The shims mask CPU0 interrupts, synchronize memory,
-// and restore the full prior ICFG value when nested critical sections unwind.
+// SAFETY: only CPU0 executes code using this backend or its protected state.
+// The CPU1 diagnostics link a fixed SRAM worker with no path to either.
+// The shims mask CPU0 IRQs and restore the full prior ICFG on nested release.
 unsafe impl critical_section::Impl for Cpu0 {
     unsafe fn acquire() -> u32 {
         // SAFETY: this shim saves the current ICFG before masking IRQs on the active CPU.

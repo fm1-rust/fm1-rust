@@ -10,7 +10,7 @@ MEMORY {
   ram (rwx) : ORIGIN = 0x01C40000, LENGTH = 0x3C000
 }
 SECTIONS {
-  /* Only the cpu1-probe example pulls the early hold routine from the archive. */
+  /* Only the CPU1 probe images pull the early hold routine from the archive. */
   .entry : { KEEP(*(.entry.cpu1_probe)) KEEP(*(.entry)) } > flash
   __fm1_image_entry = DEFINED(fm1_cpu1_probe_reset) ? fm1_cpu1_probe_reset : _start;
   .text : { *(.text*) *(.rodata*) . = ALIGN(4); } > flash

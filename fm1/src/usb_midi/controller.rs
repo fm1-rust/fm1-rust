@@ -77,9 +77,7 @@ static mut CONTROL: RxStorage = RxStorage::EMPTY;
 static mut TX: Buffer<MAX_PACKET> = Buffer([0; MAX_PACKET]);
 static mut RX: RxStorage = RxStorage::EMPTY;
 
-#[derive(Debug)]
-pub(super) struct Timeout;
-pub(super) type Result<T> = core::result::Result<T, Timeout>;
+pub(super) type Result<T> = core::result::Result<T, super::RegisterTimeout>;
 
 pub(super) fn sync_rx() {
     #[cfg(fm1)]
@@ -237,7 +235,7 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
 // Keep this transaction out of line. A powered FM-1 without a data host can
 // leave DONE clear indefinitely. Bound one transaction, then back off.
 #[inline(never)]
-fn transaction(command: u32) -> Result<u8> {
+fn transaction(command: u32) -> Option<u8> {
     write(CON1, command);
     sync_tx();
     let start = cycles();
@@ -247,19 +245,21 @@ fn transaction(command: u32) -> Result<u8> {
         let expired = cycles().wrapping_sub(start) >= Timers::CRYSTAL_HZ / 10_000;
         let value = read(CON1);
         if value & 0x8000 != 0 {
-            return Ok(value.to_le_bytes()[0]);
+            return Some(value.to_le_bytes()[0]);
         }
         if expired {
-            return Err(Timeout);
+            return None;
         }
     }
 }
 
 pub(super) fn rd(reg: u8) -> Result<u8> {
-    transaction((u32::from(reg) << 8) | 0x4000)
+    transaction((u32::from(reg) << 8) | 0x4000).ok_or(super::RegisterTimeout::Read(reg))
 }
 pub(super) fn wr(reg: u8, val: u8) -> Result<()> {
-    transaction((u32::from(reg) << 8) | u32::from(val)).map(|_| ())
+    transaction((u32::from(reg) << 8) | u32::from(val))
+        .map(|_| ())
+        .ok_or(super::RegisterTimeout::Write(reg))
 }
 
 pub(super) fn frame_number() -> Result<u16> {

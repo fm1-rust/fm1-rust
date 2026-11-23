@@ -13,7 +13,11 @@ fm1 timing
 `log` prints the USB-MIDI log, or the on-board trial history on a DMA
 diagnostic image. With `rticx-timing` loaded, wait for
 **DONE - USB REPORT** on the LCD, then use `timing` to read all 25 pages.
-Report text goes to stdout and the selected USB location goes to stderr.
+With `rticx-cpu1-audio` loaded, `fm1 log` returns the latest block counts
+and timing peaks. If the host cannot see the device, the FM-1 LCD shows
+the audio result, timings and USB enumeration diagnostics. The [CPU1 probe report](../fm1-rticx/README.md#persistent-cpu1-audio-probe)
+lists the fields and status codes. Report text goes to stdout and the
+selected USB location goes to stderr.
 
 Connect one device using the development USB ID `1209:0001`. The tool looks
 for a MIDI pair that answers the log request, including ports with a name

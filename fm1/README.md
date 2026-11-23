@@ -62,6 +62,11 @@ With `async-usb`, bind
 and call `device.wait_for_activity(&mut delay).await` in the owning task.
 The `embedded_hal_async::delay::DelayNs` provider handles attachment and retry.
 After a wake, check `device.session()`, receive packets, and retry pending sends.
+The owning task can also copy `device.status()` to a display task. It reports
+the current enumeration stage, bus resets and retries, the last SETUP and
+rejected request, and the register that last timed out. Reading the snapshot
+performs no I/O, so a display can diagnose attachment before a host opens the
+MIDI log.
 The task can also wake on locally produced output. The driver checks the two
 trailing SRAM guards during service and every 100 ms while waiting for an IRQ.
 An intact guard keeps that wait pending. A changed guard or an observed
@@ -305,7 +310,8 @@ and restores the vectors, divider, PC limits and top-RAM protection before
 initializing the board. Both 1 KiB peer stacks and the two 32-byte mailbox
 lines belong to the probe for the lifetime of the image.
 
-Only this example links the probe startup archive. All Rust on CPU1 is the
+The CPU1 diagnostics explicitly link the probe startup archive. In the
+one-shot image, all Rust on CPU1 is the
 integer function in `examples/cpu1-probe.rs`. It has no access path to
 application callbacks, BSP peripherals or the CPU0 critical-section backend.
 Even a capture-free user function could reach a static protected by that
@@ -323,6 +329,8 @@ whole-chip resets and a timeout on a late re-release. The [documented boot
 sequence][cpu1-sequence] gives the register and ROM details. The probe runs
 once per boot using the bootloader's power configuration. [Other FM-1 firmware
 has reported unit-dependent SRAM misreads under dual-core load][cpu1-units].
+The [persistent audio-block probe](../fm1-rticx/README.md#persistent-cpu1-audio-probe)
+uses the same early hold and checked boot to keep a fixed worker in SRAM.
 RTICX tasks and resource ceilings on the FM-1 continue to execute on CPU0.
 
 [cpu1-traces]: https://github.com/jvitkauskas/pi32v2-isa/blob/058b89bb835d12b194a9f13f51ec153c1d6cc24b/hw/fm1-2026-10-24-app4/README.md
