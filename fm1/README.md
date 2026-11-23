@@ -39,7 +39,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
-| `board.take_usb()` | Acquire the idle port. Board setup can qualify it once for normal USB-MIDI and pass a `QualifiedMidiPort` to a safe application. Poll the resulting device or await USB0 with `async-usb`. |
+| `board.take_usb()` | Acquire the idle port. Use `try_into_midi(identity)` when USB is optional or `into_midi(identity)` when startup failure should panic. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
 By default audio consumes 256 stereo frames about every 5.8 ms at the stock clock rate
@@ -49,14 +49,17 @@ smaller DMA half at startup. Submit a prepared block with `try_write`, or use
 LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a missed deadline during preparation or copying.
 
-When initializing USB-MIDI, supply your application's USB vendor ID, product
-ID and descriptor strings to `into_midi`. Direct activation on a raw
-`UsbPort` is unsafe. At a qualified board's initialization boundary,
-`unsafe { port.assume_midi_dma() }` returns a single-use `QualifiedMidiPort`.
-Its `into_midi(identity)` method is safe. Board setup can also construct the
-`MidiDevice` itself and pass that to the USB task. Both patterns rely on the
-same EP0 and EP1 confinement and ownership across resets and reconnects.
-[Board measurements, host assumptions and qualification](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1)
+Supply your application's USB vendor ID, product ID and descriptor strings
+to either safe constructor. On the current AC791N BSP, `try_into_midi` returns
+`UsbError::DmaProtectionUnavailable` and leaves USB detached. The instrument
+can continue playing locally. `into_midi` panics on the same error.
+
+Bench firmware with an independently qualified board and host can still use
+`unsafe { port.assume_midi_dma() }.into_midi(identity)`. The bench must
+establish receive bounds and CPU ownership for both EP0 and EP1, including
+after reset or host replacement.
+[Measurements and bench qualification](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1)
+
 With `async-usb`, bind
 `fm1::usb_midi::on_usb0_interrupt` to CPU0's USB0 controller interrupt (IRQ 9)
 and call `device.wait_for_activity(&mut delay).await` in the owning task.

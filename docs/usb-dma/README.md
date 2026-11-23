@@ -104,15 +104,12 @@ precaution for a second bus-writable destination. This investigation measured
 EP1. RXD3 keeps comparing against the **historical** boundary of 68 so future
 builds can still reproduce the original result.
 
-Taking the USB port is safe and performs no DMA. Activating it with
-`UsbPort::into_midi` or `into_dma_probe` requires `unsafe`. When migrating
-a caller, establish the receive DMA contract for every host it can see,
-including reconnects, then explain that condition at the call site. On the
-bench, constrain the host, board and input range to the qualified setup.
-For deployment on an unrestricted USB bus, an independently enforced
-hardware bound or DMA isolation must cover malformed and rejected packets,
-all receive destinations and outstanding writes. A post-receive check or
-an interrupt handler cannot undo a store that already reached SRAM.
+Taking the USB port performs no DMA. Applications can call the safe
+`UsbPort::try_into_midi(identity)` with any host connected. On AC791N it detaches USB0
+and returns `UsbError::DmaProtectionUnavailable` without programming a DMA
+destination. `UsbPort::into_midi(identity)` panics on the same error.
+Returning a working device requires the BSP to cover malformed and rejected
+packets, all receive destinations and outstanding writes across reconnects.
 
 The WL82 SDK has a concrete lead for hardware confinement. Its
 `dev_write_range_limit` programs low/high address registers, a permitted
@@ -124,15 +121,14 @@ commits**. A useful qualification test places a guard *inside* a larger
 reserved diagnostic allocation, programs the candidate window to end before
 that guard, sends a known crossing and checks the SRAM after the fault.
 Include crossings within a final bus beat, EP0 traffic, reset, detach and
-reconnect. No range monitor is enabled by this patch. Its blocking semantics
-would need independent validation before using it to justify safe activation.
+reconnect. The current AC791N driver leaves the range monitor disabled.
 [WL82 range setup](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/cpu/wl82/debug.c#L836-L890) ·
 [WL82 bus-master IDs](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/include_lib/driver/cpu/wl82/asm/debug.h#L6-L11)
 
 ## Qualifying normal MIDI on the FM-1
 
-Board setup takes the idle `UsbPort` safely. At the point where the physical
-setup is known it can call `unsafe { port.assume_midi_dma() }`. This consumes
+On an explicitly qualified bench, board setup can call
+`unsafe { port.assume_midi_dma() }`. This consumes
 the raw port without touching USB0. Application code that receives the
 result needs no unsafe block to choose its identity and start normal MIDI.
 
@@ -145,8 +141,8 @@ fn start_instrument(port: QualifiedMidiPort, id: Identity) -> MidiDevice {
 ```
 
 The qualified port has a private field, cannot be duplicated and gives access
-only to the MIDI personality. Raw `UsbPort::into_midi` and the diagnostic
-constructor retain their unsafe contracts. If board setup already knows the
+only to the MIDI personality. The diagnostic constructor has its own unsafe
+contract for the additional capture arena. If board setup already knows the
 identity, it can pass a ready `MidiDevice` directly. The obligation covers
 arbitrary delays before starting, enumeration on EP0, ordinary EP1 traffic,
 reset, suspend, host replacement and any DMA outstanding at detach. Safe
@@ -226,21 +222,25 @@ also exposes EP0 to EP1 still needs a handoff design preventing writes to
 bytes the CPU is using. Set protection before enabling D+ and retain it
 through reset, detach, in-flight writes and forgotten handles.
 
-The WL82 SDK range comparator and FUSB master IDs above provide a specific
-experiment. Place a forbidden subrange inside the sacrificial arena. Reproduce
-a known write there with the comparator off. Repeat with it on and independently
-check SRAM even if the CPU took a fault. Exercise an unaligned crossing,
-EP0, and reset during RX. The separately named `axi_ram_write_range_limit`
+The first comparator experiment can use one ordinary 64-byte EP1 OUT packet.
+Reserve the entire test area and place the proposed hardware boundary inside
+the known payload. With the comparator off, verify the expected payload on
+both sides. With it on, confirm the transfer reached the allowed prefix and
+inspect the first forbidden byte and the rest of the arena after the fault.
+Use an independent readout that preserves SRAM if USB stops responding.
+Repeat with a boundary inside a bus beat, then exercise EP0 and reset during
+RX. A fault that commits the forbidden byte rules this mechanism out.
+The separately named `axi_ram_write_range_limit`
 accepts addresses in `0x01bfe000..0x01c00000`. The BSP links ordinary data
 from `0x01c40000`. That routine cannot directly protect these buffers.
 [WL82 AXI limits](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/cpu/wl82/debug.c#L1030-L1050) ·
 [BSP linker map](../../fm1/runtime/fm1.ld)
 
-Once the BSP itself can establish those invariants, it can expose the old
-safe `UsbPort::into_midi(identity)` signature again. Making an inherent
-method safe is a compatible API relaxation for a subsequent release. The
-earlier release which first required an unsafe block remains source-breaking.
-[Cargo SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html#fn-unsafe-safe)
+Enable the successful path in `try_into_midi` once the BSP establishes both
+the per-endpoint write bounds and the handoffs. Install protection before
+enabling receive DMA. Keep it effective through deferred attachment, every
+retry and any outstanding writes after detach. A protection fault can then
+stop the device with the first forbidden byte still intact.
 
 ## Lessons from the macOS enumeration experiments
 

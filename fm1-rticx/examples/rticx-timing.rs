@@ -84,13 +84,13 @@ mod app {
         let usb = unsafe {
             #[cfg(not(feature = "usb-dma-probe"))]
             {
-                port.into_midi(id)
+                port.assume_midi_dma().into_midi(id)
             }
             #[cfg(feature = "usb-dma-probe")]
             {
                 use fm1_rticx::bsp::usb_midi::ProbeProfile;
                 match option_env!("FM1_DMA_PROFILE") {
-                    None => port.into_midi(id),
+                    None => port.assume_midi_dma().into_midi(id),
                     Some("midi") => port.into_dma_probe(id, ProbeProfile::Midi),
                     Some("bulk") => port.into_dma_probe(
                         Identity {

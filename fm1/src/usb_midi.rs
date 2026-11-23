@@ -5,8 +5,8 @@
 //! Move the board's USB port into one task. Enable `async-usb` to wait for USB0
 //! interrupts, or call [`MidiDevice::poll`] about every millisecond. Both paths
 //! receive and send complete four-byte event packets without an allocator.
-//! A board integration can qualify its [`UsbPort`] once and pass a
-//! [`QualifiedMidiPort`] to ordinary safe application code.
+//! Use [`UsbPort::try_into_midi`] when the instrument can run without USB.
+//! The AC791N currently returns [`UsbError::DmaProtectionUnavailable`].
 
 #[cfg(feature = "async-usb")]
 mod asynchronous;
@@ -54,6 +54,27 @@ pub struct Identity {
     pub product: &'static str,
 }
 
+/// Reason the BSP could not start a USB-MIDI device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UsbError {
+    /// The BSP cannot guarantee USB0 receive DMA bounds and CPU ownership
+    /// of the endpoint buffers on this board. USB remains detached.
+    DmaProtectionUnavailable,
+}
+
+impl core::fmt::Display for UsbError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::DmaProtectionUnavailable => {
+                f.write_str("USB0 receive DMA protection unavailable")
+            }
+        }
+    }
+}
+
+impl core::error::Error for UsbError {}
+
 /// Exclusive CPU0 handle for the USB0 full-speed device port.
 #[derive(Debug)]
 pub struct UsbPort(Token);
@@ -69,7 +90,7 @@ static CLAIMED: AtomicBool = AtomicBool::new(false);
 impl Board {
     /// Acquire the USB0 port before moving other board fields into tasks.
     /// Returns `None` while an existing port or MIDI device owns the controller.
-    /// Acquiring the port leaves the USB pads alone until [`UsbPort::into_midi`].
+    /// Acquiring the port leaves the USB pads alone.
     #[must_use]
     pub fn take_usb(&self) -> Option<UsbPort> {
         (!CLAIMED.swap(true, Ordering::Acquire)).then(|| UsbPort(Token::new()))
@@ -83,15 +104,65 @@ impl Drop for UsbPort {
 }
 
 impl UsbPort {
-    /// Pass the board's DMA assurance to code that chooses the MIDI identity
-    /// and starts USB later. This only moves the owned port.
+    /// Start normal USB-MIDI with the board's receive DMA protection.
+    /// Use [`Self::try_into_midi`] to continue running if protection is unavailable.
+    ///
+    /// # Panics
+    /// Panics on the same startup error returned by [`Self::try_into_midi`],
+    /// after detaching USB0. This is the current behavior on AC791N.
+    #[must_use]
+    #[track_caller]
+    pub fn into_midi(self, identity: Identity) -> MidiDevice {
+        self.try_into_midi(identity).expect("USB-MIDI startup")
+    }
+
+    /// Start normal USB-MIDI if the BSP can confine every receive write and
+    /// establish exclusive CPU/device handoffs for the lifetime of the device,
+    /// including resets and reconnects. The first attachment is deferred to
+    /// USB service. No host qualification is required.
+    ///
+    /// # Errors
+    /// Returns [`UsbError::DmaProtectionUnavailable`] on the current AC791N
+    /// BSP. This detaches USB0 and releases the port without arming receive DMA.
+    ///
+    /// ```
+    /// #![forbid(unsafe_code)]
+    /// use fm1::{Board, usb_midi::{Identity, MidiDevice}};
+    ///
+    /// fn optional_midi(board: &Board, identity: Identity) -> Option<MidiDevice> {
+    ///     board.take_usb()?.try_into_midi(identity).ok()
+    /// }
+    /// ```
+    pub fn try_into_midi(self, _identity: Identity) -> Result<MidiDevice, UsbError> {
+        // The bootloader may have left D+ asserted. Stop USB0 before releasing
+        // the claim, without touching endpoint storage or scheduling attachment.
+        controller::detach();
+        controller::sync_tx();
+        // The WL82 range comparator's first-store suppression and the endpoint
+        // handoffs are unverified. See docs/usb-dma/README.md.
+        Err(UsbError::DmaProtectionUnavailable)
+    }
+
+    /// Qualify normal MIDI for a controlled bench setup. This only moves the
+    /// owned port. The resulting [`QualifiedMidiPort`] can start USB later.
     ///
     /// # Safety
-    /// Establish the complete [`Self::into_midi`] contract before calling.
+    /// Every USB0 RX store must land in its programmed data area (2048 bytes
+    /// each for normal EP0 and EP1, 8192 in the stress build), including CRC,
+    /// padding, rejected packets and stores without an interrupt. The trailing
+    /// guard words belong to the CPU. A ready EP0 SETUP or EP1 prefix must
+    /// remain stable until acknowledgement. USB0 must leave CPU-owned bytes
+    /// alone while the CPU prepares a response, and old transfers must be
+    /// quiescent before the storage is reused. These requirements start before
+    /// enumeration and cover reset, suspend, reconnect and outstanding writes
+    /// after detach.
+    ///
     /// Safe code can hold this port through a cable change, start it later, or
     /// forget the active device. Keep the assurance valid for every such use.
     /// Restricting traffic through a controlled fixture requires control of
     /// the physical connection and the host stack throughout that interval.
+    /// Standard enumeration and 64-byte bulk packetization alone cannot
+    /// establish the controller's SRAM write bounds or ownership handoffs.
     ///
     /// ```compile_fail,E0133
     /// # use fm1::usb_midi::UsbPort;
@@ -111,7 +182,7 @@ impl UsbPort {
     /// A changed staging guard retained from a previous session is fatal.
     ///
     /// # Safety
-    /// The caller must uphold the receive DMA contract of [`Self::into_midi`]
+    /// The caller must uphold the receive DMA contract of [`Self::assume_midi_dma`]
     /// for all normal destinations and the probe's EP1 arena (2048 bytes for
     /// RXD3, 8192 for RXS1). With the stress image, an isolated fixture must
     /// finish its bounded EP1 traffic before the snapshot gate.
@@ -133,57 +204,16 @@ impl UsbPort {
     pub unsafe fn into_dma_probe(self, identity: Identity, profile: ProbeProfile) -> MidiDevice {
         // SAFETY: this constructor passes the full DMA obligation to its caller.
         // No endpoint is attached until a later service pass.
-        let mut device = unsafe { self.into_midi(identity) };
+        let mut device = unsafe { self.assume_midi_dma() }.into_midi(identity);
         device.probe = Some(dma_probe::Probe::new(profile));
         device
-    }
-
-    /// Start attachment as a USB-MIDI device. The first service pass after 25 ms
-    /// enables the D+ pull-up, giving the host time to forget the bootloader.
-    ///
-    /// # Panics
-    /// A changed receive guard retained from a previous session is fatal.
-    ///
-    /// # Safety
-    /// Every USB0 RX store must land in its programmed data area (2048 bytes
-    /// each for normal EP0 and EP1, 8192 in the stress build), including CRC,
-    /// padding, rejected packets and stores without an interrupt. The trailing
-    /// guard words belong to the CPU. A ready EP0 SETUP or EP1
-    /// prefix read by the CPU must remain stable until the acknowledgement.
-    /// USB0 must leave CPU-owned bytes alone while the CPU prepares a response,
-    /// and old transfers must be quiescent before the storage is reused.
-    /// These requirements start before enumeration and include reset, suspend,
-    /// reconnect and outstanding writes after detach. A forgotten device
-    /// can leave USB0 active indefinitely.
-    ///
-    /// A controlled setup can rely on a qualified board, an OS and host
-    /// controller restricted to ordinary control and 64-byte MIDI bulk
-    /// traffic, and a physical connection that preserves those assumptions.
-    /// A host application such as `fm1-usb` controls the messages it submits.
-    /// Wire packetization and the USB0 SRAM write extent are separate steps.
-    /// For an unrestricted cable, establish the controller's hardware bounds
-    /// and handoffs, or enforce equivalent isolation before enabling DMA.
-    /// A changed guard or an oversized COUNT can first be visible after a store.
-    ///
-    /// [`Board::take_usb`] only acquires the port and does not start DMA.
-    ///
-    /// ```compile_fail,E0133
-    /// # use fm1::usb_midi::{Identity, UsbPort};
-    /// fn start(port: UsbPort, identity: Identity) {
-    ///     let _device = port.into_midi(identity);
-    /// }
-    /// ```
-    #[must_use]
-    pub unsafe fn into_midi(self, identity: Identity) -> MidiDevice {
-        // SAFETY: the caller establishes the same RX contract for this device.
-        // Consume the qualified port immediately.
-        unsafe { self.assume_midi_dma() }.into_midi(identity)
     }
 }
 
 impl QualifiedMidiPort {
     /// Start the normal USB-MIDI device on the previously qualified port.
-    /// The diagnostic alternate settings require a separate unsafe activation.
+    /// The first service pass after 25 ms enables the D+ pull-up. The
+    /// diagnostic alternate settings require a separate unsafe activation.
     ///
     /// # Panics
     /// A changed receive guard retained from a previous session is fatal.

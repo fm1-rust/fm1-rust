@@ -43,7 +43,7 @@ pub(super) const MAX_PACKET: usize = 64;
 // Capacity of each normal USB0 receive destination, independent of the MIDI
 // payload size. At RX_MAX=0xff the black FM-1 changed EP1 offsets 0..=65 for
 // a legal transfer and reached offset 1023 under the oversized-packet probe.
-// 2 KiB is the tested staging allocation. See UsbPort::into_midi for the
+// 2 KiB is the tested staging allocation. See UsbPort::assume_midi_dma for the
 // separate platform obligation on the maximum DMA write before Rust can poll.
 pub(super) const RX_DMA_BYTES: usize = 2048;
 // Between targeted trials, stray EP1 traffic must also have a sacrificial destination.
@@ -412,7 +412,77 @@ unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: 
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+    use crate::usb_midi::{Identity, UsbError};
+
+    // The host MMIO fixture is thread-local. The USB claim and buffers are shared.
+    static USB: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const ID: Identity = Identity {
+        vendor_id: 0x1209,
+        product_id: 1,
+        manufacturer: "fm1-rust",
+        product: "test",
+    };
+
+    #[test]
+    fn checked_start_detaches_and_releases_the_port_on_error_or_panic() {
+        let _usb = USB.lock().expect("exclusive test port");
+        let board = crate::Board::init();
+        let claim = || board.take_usb().expect("port is available");
+
+        // Model a bootloader that left D+ asserted with its own RX destinations.
+        write(EP0_ADR, 0x1230);
+        write(EP1_RX, 0x4560);
+        let attached = || {
+            write(CON0, 1);
+            write(IO, 0x40);
+        };
+        let assert_detached = || {
+            assert_eq!((read(CON0), read(IO)), (0, 0x0c));
+            assert_eq!((read(EP0_ADR), read(EP1_RX)), (0x1230, 0x4560));
+        };
+
+        attached();
+        assert_eq!(
+            claim().try_into_midi(ID).expect_err("unqualified AC791N"),
+            UsbError::DmaProtectionUnavailable
+        );
+        assert_detached();
+
+        let port = claim();
+        attached();
+        assert!(std::panic::catch_unwind(|| port.into_midi(ID)).is_err());
+        assert_detached();
+        drop(claim());
+    }
+
+    #[test]
+    fn bench_qualification_still_starts_midi_and_diagnostics() {
+        let _usb = USB.lock().expect("exclusive test port");
+        let board = crate::Board::init();
+        let port = board.take_usb().expect("port is available");
+        // SAFETY: the host fixture has no DMA master. Only this test owns USB0.
+        let device = unsafe { port.assume_midi_dma() }.into_midi(ID);
+        assert!(board.take_usb().is_none());
+        assert_eq!(
+            device.status().stage,
+            crate::usb_midi::EnumerationStage::Starting
+        );
+        #[cfg(feature = "usb-dma-probe")]
+        assert!(device.probe_display().is_none());
+        drop(device);
+
+        #[cfg(feature = "usb-dma-probe")]
+        {
+            let port = board.take_usb().expect("previous device released the port");
+            // SAFETY: the fixture cannot transfer USB data to either probe arena.
+            let probe = unsafe { port.into_dma_probe(ID, crate::usb_midi::ProbeProfile::Iso) };
+            assert!(probe.probe_display().is_some());
+        }
+    }
 
     #[test]
     fn receive_destinations_have_space_for_full_speed_data_and_its_trailer() {
@@ -426,7 +496,7 @@ mod tests {
 
     #[test]
     fn reacquisition_preserves_guard_damage_and_detaches_before_panicking() {
-        extern crate std;
+        let _usb = USB.lock().expect("exclusive test port");
         // No USB DMA master runs in the host fixture. Hold the same exclusive
         // claim as a real caller while changing the guard and restoring it.
         let _port = crate::Board::init().take_usb().expect("fixture USB port");

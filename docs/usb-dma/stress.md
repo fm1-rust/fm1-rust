@@ -292,10 +292,10 @@ been established on the board.
 * For this black FM-1, the 2 KiB staging area contains every observed EP1
   write under the Mac suite, including oversized packets, silent writes and
   packet trains. Keeping the production `ff` setting and the staging area is
-  supported by these results. Keep the unsafe activation contract for an
-  unrestricted bus. The suite did not send a single payload over 1023 bytes,
+  supported for the qualified bench. The checked API leaves USB detached.
+  The suite did not send a single payload over 1023 bytes,
   reset the board during an in-flight store, or measure EP0's write extent.
-* To justify a safe constructor for arbitrary hosts, obtain an authoritative
+* To return an active device from the safe constructor, obtain an authoritative
   upper address and completion guarantee or enforce a DMA memory window
   independently of the USB packet parser. A concrete next experiment is to
   place a hardware write limit *inside* the sacrificial arena at an address
