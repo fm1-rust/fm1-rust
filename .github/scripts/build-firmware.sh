@@ -15,6 +15,19 @@ for example in "$package"/examples/*.rs; do
     ./fm1/scripts/build-example.sh "$(basename "$example" .rs)"
 done
 
+if [[ $package == fm1 ]]; then
+    # Cargo features unify. Enabling the probe dependency must leave an
+    # ordinary image's reset path and SRAM layout intact.
+    probe_check=$(mktemp -d)
+    trap 'rm -rf "$probe_check"' EXIT
+    cargo build --locked -p fm1 --example blink --features cpu1-probe \
+        --profile firmware --target "$PI32V2_TARGET" --target-dir target \
+        -Zjson-target-spec -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
+    python3 "$PI32V2_ISA/tools/hwtest/fm1app.py" "$probe_check/blink.fwsc" \
+        --from-elf target/pi32v2-none/firmware/examples/blink
+    cmp "${FM1_OUT:-target/firmware}/blink.bin" "$probe_check/blink.bin"
+fi
+
 if [[ $package == fm1-rticx ]]; then
     for profile in midi bulk iso stress; do
         ./fm1/scripts/build-example.sh "rticx-dma-$profile"

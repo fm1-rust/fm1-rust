@@ -26,10 +26,15 @@ critical-section = { version = "1", features = ["std"] }
 async-display = ["dep:critical-section", "dep:embedded-hal-async"]
 async-usb = ["dep:critical-section", "dep:embedded-hal-async"]
 audio = []
+cpu1-probe = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
 usb-dma-probe = []
 usb-dma-stress = ["usb-dma-probe"]
+
+[[example]]
+name = "cpu1-probe"
+required-features = ["cpu1-probe"]
 
 [[example]]
 name = "graphics"

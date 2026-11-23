@@ -1,6 +1,10 @@
 //! Build the startup archive and expose the FM-1 linker script for target firmware.
 
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn run(command: &mut Command) -> std::io::Result<()> {
     let result = command.status()?;
@@ -8,21 +12,11 @@ fn run(command: &mut Command) -> std::io::Result<()> {
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn core::error::Error>> {
-    println!("cargo::rerun-if-changed=runtime");
-    println!("cargo::rerun-if-env-changed=PI32V2_BIN");
-    println!("cargo::rustc-check-cfg=cfg(fm1)");
-    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("pi32v2") {
-        return Ok(());
-    }
-    println!("cargo::rustc-cfg=fm1");
-    let bin = PathBuf::from(
-        env::var_os("PI32V2_BIN").ok_or("set PI32V2_BIN to the pi32v2 LLVM bin directory")?,
-    );
-    let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo did not set OUT_DIR")?);
+fn archive(bin: &Path, out: &Path, name: &str, files: &[&str]) -> std::io::Result<()> {
+    let archive = out.join(name);
     let mut ar = Command::new(bin.join("llvm-ar"));
-    ar.arg("crs").arg(out.join("libfm1_rt.a"));
-    for file in ["crt0.S", "shim.c"] {
+    ar.arg("crs").arg(&archive);
+    for file in files {
         let object = out.join(file).with_extension("o");
         run(Command::new(bin.join("clang"))
             .args([
@@ -37,7 +31,35 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
             .arg(&object))?;
         ar.arg(object);
     }
-    run(&mut ar)?;
+    // llvm-ar replaces named members but keeps omitted ones on incremental builds.
+    if archive.try_exists()? {
+        fs::remove_file(&archive)?;
+    }
+    run(&mut ar)
+}
+
+fn main() -> Result<(), Box<dyn core::error::Error>> {
+    println!("cargo::rerun-if-changed=runtime");
+    println!("cargo::rerun-if-env-changed=PI32V2_BIN");
+    println!("cargo::rustc-check-cfg=cfg(fm1)");
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("pi32v2") {
+        return Ok(());
+    }
+    println!("cargo::rustc-cfg=fm1");
+    let bin = PathBuf::from(
+        env::var_os("PI32V2_BIN").ok_or("set PI32V2_BIN to the pi32v2 LLVM bin directory")?,
+    );
+    let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo did not set OUT_DIR")?);
+    archive(&bin, &out, "libfm1_rt.a", &["crt0.S", "shim.c"])?;
+    if env::var_os("CARGO_FEATURE_CPU1_PROBE").is_some() {
+        // Only the example explicitly links this archive, even with --all-features.
+        archive(
+            &bin,
+            &out,
+            "libfm1_cpu1_probe.a",
+            &["cpu1_entry.S", "cpu1_probe.c"],
+        )?;
+    }
     fs::copy("runtime/fm1.ld", out.join("fm1.ld"))?;
     println!("cargo::rustc-link-search=native={}", out.display());
     println!("cargo::rustc-link-lib=static=fm1_rt");
