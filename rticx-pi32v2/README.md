@@ -48,6 +48,9 @@ Task and idle state, each shared field, and each async spawn input must implemen
 after releasing the lock. The macro rejects that type in both shared storage
 and task initializers. The future created by an async task stays on its owning
 dispatcher and may keep task-local, non-`Send` values across an await.
+Both application attributes resolve the handoff bound in the defining runtime.
+Re-exporting the runtime or naming another crate `core` cannot change the
+trait used by this check.
 
 Spawn async work with the generated `Task::spawn` method. Startup installs the
 slot storage once. Only its owning interrupt or idle dispatcher may install

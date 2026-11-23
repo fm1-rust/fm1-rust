@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Fix a soundness hole in the interrupt handoff checks. A caller-supplied
+  `core::marker::Send` could admit non-`Send` shared fields, task state and
+  spawn inputs. Both application attributes now use the defining runtime's bound.
+
 ## 0.1.1 (2026-11-21)
 ### Added
 - Support `#[task(binds = USB0)]` with a pi32v2 runtime that provides the USB0 vector.
