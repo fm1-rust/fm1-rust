@@ -19,6 +19,7 @@ use embedded_hal_async::delay::DelayNs;
 // clear on read. Only the task reads them, including when a wait is cancelled.
 const SIEIE: u32 = 1 << 11;
 const SIE_PND: u32 = 1 << 14;
+const GUARD_MS: u32 = 100;
 static WAITER: Mutex<Cell<Option<Waker>>> = Mutex::new(Cell::new(None));
 static SIGNALED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
@@ -44,12 +45,13 @@ impl MidiDevice {
     ///
     /// While attached, the delay also wakes the guard checker every 100 ms
     /// so a silent DMA write can be detected without an endpoint interrupt.
-    /// An intact guard leaves the application waiting for USB activity.
+    /// An active DMA probe also wakes for a deferred acknowledgement, the end of
+    /// its capture window, and the drain before freezing its snapshot.
     /// Suspend or disconnect can signal loss of the data host. For a cable pull
     /// that raises neither interrupt, callers can use [`Self::poll`] to sample
     /// frame progress while a missed disconnect matters (e.g. a sounding note).
     ///
-    /// Cancelling this wait leaves endpoint data and the attachment deadline intact.
+    /// Cancelling this wait preserves endpoint data and the attachment and probe deadlines.
     ///
     /// # Panics
     /// Detecting a changed receive guard or an oversized normal endpoint count
@@ -66,7 +68,22 @@ impl MidiDevice {
             controller::check_rx_guards();
             let mut irq = pin!(wait_for_irq());
             loop {
-                let mut timer = pin!(delay.delay_ms(100));
+                #[cfg(feature = "usb-dma-probe")]
+                let (timer, service_on_timeout) = {
+                    let ticks = self
+                        .probe
+                        .as_ref()
+                        .and_then(|probe| probe.ticks_until_service(cycles(), self.rx_pending));
+                    let (us, due) = probe_wait_us(ticks);
+                    if us == 0 {
+                        break;
+                    }
+                    (delay.delay_us(us), due)
+                };
+                #[cfg(feature = "usb-dma-probe")]
+                let mut timer = pin!(timer);
+                #[cfg(not(feature = "usb-dma-probe"))]
+                let mut timer = pin!(delay.delay_ms(GUARD_MS));
                 let signaled = poll_fn(|cx| {
                     if irq.as_mut().poll(cx).is_ready() {
                         Poll::Ready(true)
@@ -78,12 +95,28 @@ impl MidiDevice {
                 if signaled {
                     break;
                 }
+                #[cfg(feature = "usb-dma-probe")]
+                if service_on_timeout {
+                    break;
+                }
                 controller::check_rx_guards();
             }
         }
         if self.service(false).is_err() {
             self.retry();
         }
+    }
+}
+
+/// Microseconds until the next guard check or probe deadline, and whether service is due.
+#[cfg(feature = "usb-dma-probe")]
+fn probe_wait_us(probe_ticks: Option<u32>) -> (u32, bool) {
+    let guard_ticks = GUARD_MS * (Timers::CRYSTAL_HZ / 1000);
+    match probe_ticks {
+        Some(ticks) if ticks <= guard_ticks => {
+            (ticks.div_ceil(Timers::CRYSTAL_HZ / 1_000_000), true)
+        }
+        _ => (GUARD_MS * 1000, false),
     }
 }
 
@@ -143,6 +176,17 @@ mod tests {
         fn wake(self: Arc<Self>) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    #[cfg(feature = "usb-dma-probe")]
+    #[test]
+    fn timer_services_a_probe_deadline_and_keeps_the_guard_interval() {
+        let guard_ticks = Timers::CRYSTAL_HZ / 10;
+        assert_eq!(probe_wait_us(None), (100_000, false));
+        assert_eq!(probe_wait_us(Some(guard_ticks + 1)), (100_000, false));
+        assert_eq!(probe_wait_us(Some(guard_ticks)), (100_000, true));
+        assert_eq!(probe_wait_us(Some(1)), (1, true));
+        assert_eq!(probe_wait_us(Some(0)), (0, true));
     }
 
     #[test]
