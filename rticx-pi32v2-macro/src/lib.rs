@@ -290,13 +290,18 @@ impl CorePassBackend for Cpu0 {
         lock
     }
 
-    fn wrap_task_execution(&self, task: &RticTask, call: Tokens) -> Option<Tokens> {
-        let name = task.args.binds.as_ref()?;
-        is_software(name).then(|| {
-            quote! {
-                __rticx_backend::export::acknowledge(__rticx_backend::Interrupt::#name);
-                #call
-            }
+    fn wrap_task_execution(&self, task: &RticTask, _: Tokens) -> Option<Tokens> {
+        let irq = task.args.binds.as_ref()?;
+        let storage = task.name_uppercase();
+        let ack = is_software(irq).then(|| {
+            quote!(
+                __rticx_backend::export::acknowledge(__rticx_backend::Interrupt::#irq);
+            )
+        });
+        // Always call the trait, whose receiver cannot escape this invocation.
+        Some(quote! {
+            #ack
+            RticTask::exec(unsafe { #storage.assume_init_mut() });
         })
     }
 

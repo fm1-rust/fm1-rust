@@ -35,6 +35,11 @@ passes. With the pinned 0.2 releases, it keeps each executor slot in the
 non-returning entry frame and projects shared fields through raw pointers
 before locking. Size task futures for the application's startup stack.
 
+Implement interrupt handlers in `RticTask::exec` and idle handlers in
+`RticIdleTask::exec`. The runtime invokes these trait methods with a fresh
+mutable borrow for each call, even if the task type has an inherent `exec`
+method.
+
 ### Values crossing interrupt priorities
 
 Task and idle state, each shared field, and each async spawn input must implement
