@@ -30,6 +30,17 @@ pub mod marker {
     impl<T: ?Sized> Send for T {}
 }
 
+// Generated task storage must use the runtime's layout. User code remains
+// free to use a different type at the same path.
+pub mod mem {
+    pub use crate::real_core::mem::*;
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct MaybeUninit;
+    #[derive(Clone, Copy, Debug)]
+    pub struct ManuallyDrop;
+}
+
 // A facade that replaces the wrapper cannot authorize its own backend safely.
 #[cfg(forge_handoff)]
 #[macro_export]
@@ -41,9 +52,24 @@ macro_rules! __expand_app {
     };
 }
 
+// Method lookup tries a shared receiver before a mutable one. If a
+// generated access uses method syntax, these signatures fail to compile.
+#[allow(dead_code)]
+trait StorageMethods {
+    fn write(&self) {}
+    fn assume_init_mut(&self, _: ()) {}
+}
+impl<T> StorageMethods for real_core::mem::MaybeUninit<T> {}
+
 #[rticx_pi32v2::app(device = crate, dispatchers = [SOFT0])]
 mod app {
     use core::cell::Cell;
+
+    #[allow(
+        unused_imports,
+        reason = "A qualified storage access leaves this trait unused."
+    )]
+    use crate::StorageMethods as _;
     #[cfg(bad_shared)]
     type SharedValue = &'static Cell<u32>;
     #[cfg(not(bad_shared))]
