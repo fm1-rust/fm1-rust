@@ -18,11 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [BREAKING] `UsbPort::into_midi` is safe and panics if the BSP cannot establish
-  receive DMA confinement and ownership. Use `UsbPort::try_into_midi` to keep
-  running without USB. On AC791N it returns `UsbError::DmaProtectionUnavailable`
-  with USB detached. Bench code that met the RC's unsafe startup contract can
-  migrate to `unsafe { port.assume_midi_dma() }.into_midi(identity)`.
+- [BREAKING] `UsbPort::into_midi` now panics if the BSP cannot guarantee receive
+  DMA bounds and buffer ownership. Use `UsbPort::try_into_midi` to keep running
+  without USB. On AC791N it detaches USB0 and returns
+  `UsbError::DmaProtectionUnavailable` before arming receive DMA. Bench firmware
+  that upholds the port's DMA contract can start MIDI with
+  `unsafe { port.assume_midi_dma() }.into_midi(identity)`.
 
 ### Fixed
 
