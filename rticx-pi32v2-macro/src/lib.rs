@@ -1,4 +1,5 @@
 //! Code generation for the single-core AC791N RTICX distribution.
+mod dispatcher;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as Tokens};
 use quote::{format_ident, quote};
@@ -8,6 +9,7 @@ use rticx_core::{
     parse_utils::RticAttr,
 };
 use rticx_sw_pass::SwPassBackend;
+use std::collections::HashSet;
 use syn::{
     Attribute, Expr, ImplItemFn, ItemFn, Path, parse_macro_input, parse_quote, visit_mut::VisitMut,
 };
@@ -37,7 +39,7 @@ fn validate_args(args: &Tokens) -> syn::Result<()> {
             "this distribution runs on CPU0 only",
         ));
     }
-    let mut dispatchers = std::collections::HashSet::new();
+    let mut dispatchers = HashSet::new();
     for irq in args.take_ident_array("dispatchers")?.unwrap_or_default() {
         if !dispatchers.insert(irq.clone()) {
             return Err(syn::Error::new(irq.span(), "duplicate software dispatcher"));
@@ -69,9 +71,13 @@ pub fn fm1_app(args: TokenStream, input: TokenStream) -> TokenStream {
     )
 }
 
-fn validate_cores(module: &syn::ItemMod) -> syn::Result<()> {
+fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
+    let mut async_priorities = HashSet::new();
     let Some((_, items)) = &module.content else {
-        return Ok(());
+        return Err(syn::Error::new(
+            module.ident.span(),
+            "expected an inline application module",
+        ));
     };
     for item in items {
         let attrs = match item {
@@ -80,35 +86,58 @@ fn validate_cores(module: &syn::ItemMod) -> syn::Result<()> {
             _ => continue,
         };
         for attr in attrs {
-            if let Some(name) = attr.path().get_ident()
-                && matches!(
-                    name.to_string().as_str(),
-                    "task" | "async_task" | "idle" | "shared" | "init" | "post_init"
-                )
-                && RticAttr::parse_from_attr(attr)?
-                    .take_u32("core")?
-                    .unwrap_or(0)
-                    != 0
-            {
+            let Some(name) = attr.path().get_ident() else {
+                continue;
+            };
+            if !matches!(
+                name.to_string().as_str(),
+                "task" | "async_task" | "idle" | "shared" | "init" | "post_init"
+            ) {
+                continue;
+            }
+            let mut args = RticAttr::parse_from_attr(attr)?;
+            if args.take_u32("core")?.unwrap_or(0) != 0 {
                 return Err(syn::Error::new(
                     name.span(),
                     "this distribution runs on CPU0 only",
                 ));
             }
+            if name == "async_task" {
+                async_priorities.insert(args.take_u16("priority")?.unwrap_or(0));
+            }
         }
     }
-    Ok(())
+    Ok(async_priorities)
 }
 
 fn expand(args: Tokens, input: TokenStream, cpu: Cpu0) -> TokenStream {
-    let parsed = input.clone();
-    let module = parse_macro_input!(parsed as syn::ItemMod);
-    if let Err(err) = validate_args(&args).and_then(|()| validate_cores(&module)) {
-        return err.to_compile_error().into();
-    }
-    let mut builder = RticMacroBuilder::new(cpu.clone());
-    builder.bind_pre_core_pass(AsyncPass::new(cpu));
-    builder.build_rtic_macro(args.into(), input)
+    let source_file = input
+        .clone()
+        .into_iter()
+        .next()
+        .and_then(|t| t.span().local_file());
+    let module = parse_macro_input!(input as syn::ItemMod);
+    let result = (|| -> syn::Result<Tokens> {
+        validate_args(&args)?;
+        let priorities = validate_cores(&module)?;
+        let mut builder = RticMacroBuilder::new(cpu.clone());
+        builder.bind_pre_core_pass(AsyncPass::new(cpu));
+        let generated = builder.build_rtic_macro2(args, module, source_file);
+        let mut file = syn::parse2::<syn::File>(generated.clone())?;
+        if let [syn::Item::Mod(app)] = file.items.as_mut_slice() {
+            dispatcher::protect(app, &priorities)?;
+            Ok(quote!(#app))
+        } else if !file.items.is_empty() && file.items.iter().all(|item| {
+            matches!(item, syn::Item::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "compile_error"))
+        }) {
+            Ok(generated)
+        } else {
+            Err(syn::Error::new(proc_macro2::Span::call_site(), "unexpected RTICX application expansion"))
+        }
+    })();
+    result
+        .unwrap_or_else(|error| error.into_compile_error())
+        .into()
 }
 
 // RTICX emits Rust functions. Assembly calls the entry and handlers through
