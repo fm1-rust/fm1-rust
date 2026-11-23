@@ -1,4 +1,5 @@
 //! Read FM-1 diagnostics from the host.
+#![forbid(unsafe_code)]
 
 mod dma_probe;
 mod dma_stress;

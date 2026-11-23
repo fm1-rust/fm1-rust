@@ -132,6 +132,9 @@ impl TimerQueueBackend for DeadlineClock {
     }
 }
 
+/// # Safety
+/// Call from the TIMER2 trampoline after queue initialization, with same-priority
+/// reentry excluded.
 #[cfg(target_os = "none")]
 #[unsafe(export_name = "__fm1_rticx_deadline_irq")]
 unsafe extern "C" fn interrupt() {

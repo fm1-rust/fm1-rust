@@ -8,6 +8,8 @@ use rticx_pi32v2_macro::__entry;
 
 mod __rticx_backend {
     pub mod export {
+        /// # Safety
+        /// This test double has no preconditions. Its signature matches the target backend.
         pub unsafe fn reset() {}
     }
 }
@@ -17,6 +19,10 @@ impl SlotPtr {
     const fn new() -> Self {
         Self(AtomicPtr::new(ptr::null_mut()))
     }
+
+    /// # Safety
+    /// This test double matches the unsafe production installer. It only
+    /// records the address for comparison, so it has no caller preconditions.
     unsafe fn install(&self, slot: &u32) {
         self.0.store(ptr::from_ref(slot).cast_mut(), Relaxed);
     }
@@ -41,5 +47,7 @@ fn distinct_slots() -> bool {
 
 #[test]
 fn executor_slots_have_distinct_addresses() {
+    // SAFETY: this test is the sole caller of the generated entry. Its backend
+    // reset is inert and it only compares task-slot addresses while they are live.
     assert!(unsafe { distinct_slots() });
 }

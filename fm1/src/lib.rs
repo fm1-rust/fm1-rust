@@ -158,11 +158,12 @@ pub fn enter_download_mode() -> ! {
     panic!("download mode requires an FM-1");
     #[cfg(fm1)]
     {
-        use registers::{set, write};
+        use registers::{csync, set, write};
         unsafe extern "C" {
             fn fm1_cli();
-            fn fm1_csync();
         }
+        // SAFETY: this path never returns to the caller. Mask CPU0 interrupts
+        // before updating the bootloader mailbox and requesting a reset.
         unsafe { fm1_cli() };
         write(time::T5_CON, 0x4000);
         #[allow(
@@ -172,7 +173,7 @@ pub fn enter_download_mode() -> ! {
         for (i, word) in b"usb_update_mode\0".as_chunks::<4>().0.iter().enumerate() {
             write(0x01c7_fd80 + 4 * i, u32::from_le_bytes(*word));
         }
-        unsafe { fm1_csync() };
+        csync();
         set(0x10000, 0x10);
         loop {
             core::hint::spin_loop();

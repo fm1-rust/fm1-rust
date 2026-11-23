@@ -3,6 +3,7 @@
 //! AC791N USB0 device PHY, indexed MUSB registers and endpoint DMA.
 //! The CPU0 USB handle serializes all SIE and DMA accesses.
 
+pub(super) use crate::registers::csync as sync_tx;
 use crate::{
     registers::{bus_address, clear, read, set, write},
     time::{Timers, cycles},
@@ -79,18 +80,6 @@ static mut RX: RxStorage = RxStorage::EMPTY;
 #[derive(Debug)]
 pub(super) struct Timeout;
 pub(super) type Result<T> = core::result::Result<T, Timeout>;
-
-pub(super) fn sync_tx() {
-    #[cfg(fm1)]
-    // SAFETY: the target shim executes the pi32v2 CSYNC instruction. It has
-    // no arguments or pointer preconditions.
-    unsafe {
-        unsafe extern "C" {
-            fn fm1_csync();
-        }
-        fm1_csync();
-    }
-}
 
 pub(super) fn sync_rx() {
     #[cfg(fm1)]
@@ -403,9 +392,10 @@ pub(super) fn send(events: &[super::EventPacket]) -> Result<usize> {
     Ok(n)
 }
 
-// SAFETY contract: buffer addresses at least MAX_PACKET writable bytes in
-// aligned static SRAM. The caller exclusively owns the idle endpoint until
-// the count/CSR handoff. address_reg and count_reg belong to that endpoint.
+/// # Safety
+/// `buffer` must point to at least `MAX_PACKET` writable bytes in aligned static
+/// SRAM. The caller must exclusively own the idle endpoint and its buffer until
+/// the handoff. Both registers must belong to that endpoint.
 unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: &[u8]) {
     assert!(bytes.len() <= MAX_PACKET);
     for (i, &byte) in bytes.iter().enumerate() {

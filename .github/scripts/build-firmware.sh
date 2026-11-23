@@ -16,7 +16,7 @@ for example in "$package"/examples/*.rs; do
 done
 
 if [[ $package == fm1-rticx ]]; then
-    for profile in midi bulk iso; do
+    for profile in midi bulk iso stress; do
         ./fm1/scripts/build-example.sh "rticx-dma-$profile"
     done
     # Use the same macro, controller and target ABI as the firmware examples.

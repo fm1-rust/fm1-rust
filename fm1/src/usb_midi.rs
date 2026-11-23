@@ -450,6 +450,19 @@ impl MidiDevice {
         Ok(())
     }
 
+    fn setup_reply(&mut self, setup: [u8; 8]) -> Reply {
+        #[cfg(feature = "usb-dma-probe")]
+        if let Some(probe) = &mut self.probe {
+            probe.stage = probe.stage.max(2);
+            if let Some(reply) =
+                probe.request(&mut self.control, &self.identity, self.interface, setup)
+            {
+                return reply;
+            }
+        }
+        self.control.request(&self.identity, self.interface, setup)
+    }
+
     fn endpoint_zero(&mut self, now: u32) -> controller::Result<()> {
         wr(INDEX, 0)?;
         let csr = rd(CSR0)?;
@@ -484,15 +497,7 @@ impl MidiDevice {
         let setup = controller::setup();
         let requested = u16::from_le_bytes([setup[6], setup[7]]);
         self.control.sending = false;
-        #[cfg(not(feature = "usb-dma-probe"))]
-        let diagnostic_reply = None;
-        #[cfg(feature = "usb-dma-probe")]
-        let diagnostic_reply = self.probe.as_mut().and_then(|p| {
-            p.stage = p.stage.max(2);
-            p.request(&mut self.control, &self.identity, self.interface, setup)
-        });
-        let reply = diagnostic_reply
-            .unwrap_or_else(|| self.control.request(&self.identity, self.interface, setup));
+        let reply = self.setup_reply(setup);
         match reply {
             Reply::Data(available) if requested != 0 => {
                 wr(CSR0, 0x40)?;

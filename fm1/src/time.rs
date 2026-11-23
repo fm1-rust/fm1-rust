@@ -133,6 +133,8 @@ pub(crate) fn install_tick_interrupt() {
         crate::registers::bus_address(fm1_timer5_isr as *const ()),
     );
     write(ICFG_WORDS + 4 * (SOURCE / 8), 3 << (4 * (SOURCE % 8)));
+    // SAFETY: CPU0 entered with IRQs masked. The TIMER5 vector and its priority
+    // are installed, and the other sources have been disabled above.
     unsafe { fm1_set_icfg(0x300) };
 }
 

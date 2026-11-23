@@ -31,12 +31,17 @@ impl SourceMask {
         mask
     }
 
-    // CONFIG must point to the 16-word register bank and IRQs must be masked
-    // during each of these operations. Save only bits this lock actually clears.
+    /// Disable the selected sources and return only the bits this call clears.
+    ///
+    /// # Safety
+    /// `config` must address 16 aligned, volatile-readable and writable words.
+    /// The caller must exclude other accesses during the read-modify-write
+    /// sequence (on CPU0, mask interrupts).
     pub(crate) unsafe fn disable(&self, config: *mut u32) -> Self {
         let mut saved = Self([0; WORDS]);
         for (word, &bits) in self.0.iter().enumerate() {
             if bits != 0 {
+                // SAFETY: word indexes one of the 16 words the caller has exclusive access to.
                 unsafe {
                     let reg = config_word(config, word);
                     let old = read_volatile(reg);
@@ -48,9 +53,15 @@ impl SourceMask {
         saved
     }
 
+    /// Re-enable the bits saved by a matching call to `disable`.
+    ///
+    /// # Safety
+    /// Use the same register bank with the same exclusive access as `disable`.
+    /// Nested calls must restore their saved masks in reverse order.
     pub(crate) unsafe fn restore(self, config: *mut u32) {
         for (word, bits) in self.0.into_iter().enumerate() {
             if bits != 0 {
+                // SAFETY: word indexes one of the 16 words the caller has exclusive access to.
                 unsafe {
                     let reg = config_word(config, word);
                     write_volatile(reg, read_volatile(reg) | bits);
@@ -71,6 +82,7 @@ mod tests {
         let mut bank = [0; WORDS];
         bank[15] = 0x2531; // SOFT3 already disabled
         bank[7] = 0x3000_0000; // TIMER5 in a different word
+        // SAFETY: this test owns the 16-word bank and restores both masks in reverse order.
         unsafe {
             let outer = SourceMask::through(&irqs, 1).disable(bank.as_mut_ptr());
             assert_eq!(bank[15], 0x2530);

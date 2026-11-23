@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 
 use crate::{
     Token,
-    registers::{self, DIE, DIR, OUT, PC},
+    registers::{self, DIE, DIR, OUT, PC, csync},
     time::{cycles, wait_cycles},
 };
 
@@ -33,18 +33,22 @@ static mut DMA: [Block; 2] = [[[0; 2]; BLOCK_FRAMES]; 2];
 
 #[cfg(not(test))]
 fn read16(addr: usize) -> u16 {
+    // SAFETY: the driver reads the aligned, halfword-readable ALNK0 CON0 register.
     unsafe { core::ptr::read_volatile(addr as *const u16) }
 }
 #[cfg(not(test))]
 fn write16(addr: usize, value: u16) {
+    // SAFETY: callers select CON0, CON1 or LEN, all aligned ALNK0 halfword registers.
     unsafe { core::ptr::write_volatile(addr as *mut u16, value) }
 }
 #[cfg(not(test))]
 fn pending() -> u8 {
+    // SAFETY: STATUS is the byte-readable ALNK0 pending register.
     unsafe { core::ptr::read_volatile(STATUS as *const u8) }
 }
 #[cfg(not(test))]
 fn write8(addr: usize, value: u8) {
+    // SAFETY: callers select STATUS or CON3, both byte-writable ALNK0 registers.
     unsafe { core::ptr::write_volatile(addr as *mut u8, value) }
 }
 
@@ -63,16 +67,6 @@ fn pending() -> u8 {
 #[cfg(test)]
 fn write8(addr: usize, value: u8) {
     registers::write(addr, value.into());
-}
-
-fn sync() {
-    #[cfg(not(test))]
-    {
-        unsafe extern "C" {
-            fn fm1_csync();
-        }
-        unsafe { fm1_csync() };
-    }
 }
 
 fn pin(mask: u32, high: bool) {
@@ -169,7 +163,7 @@ impl AudioPort {
         registers::write(ADDR3, registers::bus_address(dma));
         pin(DATA, true);
         write8(STATUS, 0x0f);
-        sync();
+        csync();
         write16(CON0, 0x180 | RUN);
         wait_cycles(5 * 24_000);
         pin(DATA, true);
@@ -243,6 +237,8 @@ impl<const N: usize> Stream<'_, N> {
         };
         for (i, frame) in input.iter().enumerate() {
             for (ch, sample) in frame.iter().enumerate() {
+                // SAFETY: i < N and ch < 2 select an aligned sample in the chosen half.
+                // This stream is the only CPU writer. ALNK0 only reads sample words.
                 unsafe {
                     dst.add(i)
                         .cast::<i32>()
@@ -251,7 +247,7 @@ impl<const N: usize> Stream<'_, N> {
                 };
             }
         }
-        sync();
+        csync();
         if moved() || cycles().wrapping_sub(start) >= period {
             Refill::Late
         } else {
@@ -263,7 +259,7 @@ impl<const N: usize> Stream<'_, N> {
 impl<const N: usize> Drop for Stream<'_, N> {
     fn drop(&mut self) {
         write16(CON0, read16(CON0) & !RUN);
-        sync();
+        csync();
         write8(STATUS, 0x0f);
         pin(DATA, false);
     }
@@ -288,16 +284,15 @@ mod tests {
         assert_eq!(stream.try_write(&block), Refill::WouldBlock);
         registers::write(STATUS, 0x80);
         assert_eq!(stream.try_write(&block), Refill::Written);
-        // The mock DMA is idle. Check every frame in both halves.
-        let ptr = (&raw const DMA).cast::<[i32; 2]>();
+        let read_frame = |i: usize| {
+            assert!(i < 2 * BLOCK_FRAMES);
+            // SAFETY: i is in the initialized array. This test owns the audio port,
+            // the mock never reads SRAM, and CPU refills finish before these reads.
+            unsafe { (&raw const DMA).cast::<[i32; 2]>().add(i).read_volatile() }
+        };
         for i in 0..BLOCK_FRAMES {
-            unsafe {
-                assert_eq!(ptr.add(i).read_volatile(), [0; 2]);
-                assert_eq!(
-                    ptr.add(BLOCK_FRAMES + i).read_volatile(),
-                    [-8_388_608, 8_388_607]
-                );
-            }
+            assert_eq!(read_frame(i), [0; 2]);
+            assert_eq!(read_frame(BLOCK_FRAMES + i), [-8_388_608, 8_388_607]);
         }
         drop(stream);
         assert_eq!(read16(CON0) & RUN, 0);
@@ -318,12 +313,9 @@ mod tests {
         assert!(!called);
         registers::write(STATUS, 0x80);
         assert_eq!(short.try_write(&block), Refill::Written);
-        // SAFETY: the mocked DMA is idle and this test owns the audio port.
-        unsafe {
-            assert_eq!(ptr.add(127).read_volatile(), [0; 2]);
-            assert_eq!(ptr.add(128).read_volatile(), [17, -42]);
-            assert_eq!(ptr.add(255).read_volatile(), [17, -42]);
-        }
+        assert_eq!(read_frame(127), [0; 2]);
+        assert_eq!(read_frame(128), [17, -42]);
+        assert_eq!(read_frame(255), [17, -42]);
         registers::write(STATUS, 0x80);
         let late = short.try_write_with(|| {
             // Another half finished during rendering, even if parity now looks the same.
@@ -332,10 +324,10 @@ mod tests {
         });
         assert_eq!(late, Refill::Late);
         // No stale write, and the new event is still available to the next call.
-        unsafe { assert_eq!(ptr.add(128).read_volatile(), [17, -42]) };
+        assert_eq!(read_frame(128), [17, -42]);
         write16(CON0, read16(CON0) | (1 << 15));
         assert_eq!(short.try_write(&block), Refill::Written);
-        unsafe { assert_eq!(ptr.read_volatile(), [17, -42]) };
+        assert_eq!(read_frame(0), [17, -42]);
         drop(short);
 
         let mut stream = audio.start_with_frames::<144>().expect("restart at 144");
@@ -347,6 +339,6 @@ mod tests {
             &[[1, 1]; 144]
         });
         assert_eq!(late, Refill::Late);
-        unsafe { assert_eq!(ptr.add(144).read_volatile(), [0; 2]) };
+        assert_eq!(read_frame(144), [0; 2]);
     }
 }

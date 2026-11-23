@@ -1,0 +1,3 @@
+[alias]
+# Advisory review of blocks with multiple unsafe operations.
+unsafe-review = "clippy --locked --workspace --all-features --all-targets -- -Wclippy::multiple_unsafe_ops_per_block"

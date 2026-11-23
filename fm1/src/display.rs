@@ -278,10 +278,11 @@ impl Spi1 {
 
     fn staging(&mut self) -> &mut [u8; CHUNK] {
         debug_assert!(!self.failed && self.pending_since.is_none());
-        // SAFETY: the unique SPI1 transport owns this permanent SRAM allocation. Callers
-        // complete any preceding transfer and stop on timeout before borrowing it.
-        let buffer = unsafe { &raw mut DMA_BUFFER.0 };
-        unsafe { &mut *buffer }
+        let staging = &raw mut DMA_BUFFER;
+        // SAFETY: the sole SPI1 transport owns the initialized static. Callers wait for
+        // DMA completion and propagate timeouts before reaching here. The returned
+        // borrow of self prevents starting another transfer while the slice is live.
+        unsafe { &mut (*staging).0 }
     }
 
     fn stage_bytes(&mut self, bytes: &[u8], interrupt: bool) {
