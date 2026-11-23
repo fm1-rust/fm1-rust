@@ -62,6 +62,16 @@ if [[ $package == fm1-rticx ]]; then
         grep -F "error[$expect]" "$log" || { cat "$log" >&2; exit 1; }
     done
 
+    vectors=(cargo rustc --color never --locked -p rticx-pi32v2 --example interrupt-vectors
+        --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
+        -Zbuild-std-features=compiler-builtins-mem -- --check-cfg 'cfg(forge_vector)')
+    "${vectors[@]}"
+    if "${vectors[@]}" --cfg forge_vector >"$log" 2>&1; then
+        echo "application trait constant accepted as an interrupt vector" >&2
+        exit 1
+    fi
+    grep -F 'no `TIMER2` in `Interrupt`' "$log" || { cat "$log" >&2; exit 1; }
+
     dispatch=(cargo rustc --color never --locked -p rticx-pi32v2 --example dispatcher-access
         --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
         -Zbuild-std-features=compiler-builtins-mem --)

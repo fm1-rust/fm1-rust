@@ -25,10 +25,13 @@ fn is_software(name: &Ident) -> bool {
     )
 }
 
-// The published Interrupt enum is exhaustively matchable. Only apps that bind
-// an additional vector need the newer runtime's index-based helpers.
-fn additional_vector(name: &Ident) -> Option<Tokens> {
-    (name == "USB0").then(|| quote!(__rticx_backend::export::USB0_IRQ))
+// An import resolves only real enum variants. An associated-item expression
+// could also resolve an application trait's constant for an unsupported name.
+fn interrupt_variant(name: &Ident) -> Tokens {
+    quote!({
+        use __rticx_backend::Interrupt::#name as irq;
+        irq
+    })
 }
 
 fn validate_args(args: &Tokens) -> syn::Result<()> {
@@ -250,13 +253,10 @@ impl CorePassBackend for Cpu0 {
             let name = &irq.name;
             let vector = format_ident!("__rticx_irq_{name}");
             let priority = irq.priority;
-            let install = match additional_vector(name) {
-                Some(index) => quote!(__rticx_backend::export::install_at(usize::from(#index), #priority, #vector)),
-                None => quote!(__rticx_backend::export::install(__rticx_backend::Interrupt::#name, #priority, #vector)),
-            };
+            let source = interrupt_variant(name);
             quote! {
                 unsafe extern "C" { fn #vector(); }
-                unsafe { #install; }
+                unsafe { __rticx_backend::export::install(#source, #priority, #vector); }
             }
         });
         Some(quote!(#(#install)*))
@@ -268,17 +268,11 @@ impl CorePassBackend for Cpu0 {
         app: &SubApp,
         analysis: &SubAnalysis,
     ) -> Option<Tokens> {
-        let mut entries = Vec::new();
-        let mut additional = Vec::new();
-        for irq in &analysis.used_irqs {
-            let name = &irq.name;
+        let entries = analysis.used_irqs.iter().map(|irq| {
+            let source = interrupt_variant(&irq.name);
             let priority = irq.priority;
-            if let Some(index) = additional_vector(name) {
-                additional.push(quote!(.with_source(#index, #priority, ceiling)));
-            } else {
-                entries.push(quote!((__rticx_backend::Interrupt::#name, #priority)));
-            }
-        }
+            quote!((#source, #priority))
+        });
         let runtime = &self.0;
         let tasks = app.tasks.iter().chain(app.idle.iter()).map(RticTask::name);
         let fields = app.shared.iter().flat_map(|s| &s.resources).map(|f| &f.ty);
@@ -298,7 +292,7 @@ impl CorePassBackend for Cpu0 {
                 }
             };
             const fn __rticx_source_mask(ceiling: u16) -> __rticx_backend::export::SourceMask {
-                __rticx_backend::export::SourceMask::through(&[#(#entries),*], ceiling) #(#additional)*
+                __rticx_backend::export::SourceMask::through(&[#(#entries),*], ceiling)
             }
         })
     }

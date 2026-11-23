@@ -26,9 +26,6 @@ unsafe extern "C" {
     pub fn __rticx_idle();
 }
 
-/// AC79 IRQ_USB_CTRL_IDX, the USB0 controller.
-pub const USB0_IRQ: u8 = 9;
-
 /// Disable the CPU0 interrupt sources. Leave unused RAM vectors intact:
 /// vector 126 also holds the CPU1 entry address.
 ///
@@ -72,7 +69,7 @@ pub unsafe fn install_timer2(priority: u16) {
 ///
 /// # Safety
 /// The index must be below 128. The startup and vector requirements of [`install`] apply.
-pub unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()) {
+unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()) {
     let shift = (n % 8) * 4;
     let config = ((u32::from(priority) - 1) << 1) | 1;
     // SAFETY: n < 128 selects a reserved RAM vector and one of 16 aligned MMIO
