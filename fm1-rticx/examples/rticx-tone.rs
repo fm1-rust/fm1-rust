@@ -10,6 +10,7 @@
 #[fm1_rticx::app(dispatchers = [SOFT0])]
 mod app {
     use fm1_audio::{MasterLevel, Output, Stats};
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{
             Board,
@@ -62,12 +63,15 @@ mod app {
             TaskInits {
                 audio: Audio { output, phase: 0 },
                 keys: Keys {
-                    timers: board.timers,
-                    panel,
+                    timers: board.timers.into(),
+                    panel: panel.into(),
                     previous_down: false,
                     held_ticks: 0,
                 },
-                screen: Screen { display, updates },
+                screen: Screen {
+                    display: display.into(),
+                    updates,
+                },
             },
         )
     }
@@ -79,8 +83,8 @@ mod app {
 
     #[task(binds = TIMER5, priority = 2, shared = [transport])]
     struct Keys {
-        timers: Timers,
-        panel: Play,
+        timers: Cpu0<Timers>,
+        panel: Cpu0<Play>,
         previous_down: bool,
         held_ticks: u32,
     }
@@ -142,7 +146,7 @@ mod app {
 
     #[async_task(priority = 1, shared = [transport])]
     struct Screen {
-        display: Display,
+        display: Cpu0<Display>,
         updates: Receiver<'static, (), 1>,
     }
     impl RticAsyncTask for Screen {

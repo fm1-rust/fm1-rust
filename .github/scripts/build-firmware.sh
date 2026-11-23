@@ -32,4 +32,18 @@ if [[ $package == fm1-rticx ]]; then
     fi
     cat "$log"
     grep -Fq 'error[E0793]' "$log"
+
+    handoffs=(cargo rustc --color never --locked -p rticx-pi32v2 --example interrupt-handoffs
+        --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
+        -Zbuild-std-features=compiler-builtins-mem --)
+    cases=(bad_shared bad_local bad_input)
+    for flag in "${cases[@]}"; do handoffs+=(--check-cfg "cfg($flag)"); done
+    "${handoffs[@]}"
+    for flag in "${cases[@]}"; do
+        if "${handoffs[@]}" --cfg "$flag" >"$log" 2>&1; then
+            echo "unsafe RTICX call compiled: $flag" >&2
+            exit 1
+        fi
+        grep -F "error[E0277]" "$log" || { cat "$log" >&2; exit 1; }
+    done
 fi

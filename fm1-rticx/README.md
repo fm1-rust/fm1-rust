@@ -267,12 +267,12 @@ USB frame scheduling and host-side latency are outside the `MAX US` measurement.
 
 ## Application setup
 
-For a firmware project, add the published crate to `Cargo.toml`.
+For a firmware project, add the prerelease to `Cargo.toml`.
 Enable its `audio` feature to use the ALNK0 driver.
 
 ```toml
 [dependencies]
-fm1-rticx = "0.1.1"
+fm1-rticx = "0.2.0-pre"
 ```
 
 Annotate the application module with `#[fm1_rticx::app]`. In `#[init]`, call
@@ -292,6 +292,14 @@ priority, as in `#[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]`. Higher
 numbers can preempt lower numbers. Tasks at the same priority yield to one
 another at await points or when they finish. A shared peripheral belongs in
 `#[shared]` and is accessed through its field's `lock` closure.
+
+Task state, shared fields and spawn inputs cross interrupt contexts and must
+implement `Send`. To hand off a board driver, store `bsp::Cpu0<DisplayPort>`
+(or the corresponding driver type) and initialize it with `board.display.into()`.
+Use `port.into_inner()` on CPU0 when a driver method consumes the raw port.
+`fm1_audio::Output` and `Timer5` already support the handoff. Place an owned
+`Cell` under the resource lock and perform the complete operation inside the
+closure. A reference to a `Cell` cannot be handed to two tasks.
 
 For timed work, pass `board.timers` to `time::Clock::start` and give the
 returned handle to a TIMER5 task. Its handler calls `on_interrupt()`.
@@ -335,17 +343,17 @@ intentionally submit to this crate under the [MIT License][mit].
 [runtime]: https://docs.rs/rticx-pi32v2/
 [audio]: https://docs.rs/fm1-audio/
 [controls]: https://docs.rs/fm1-controls/
-[build-and-flash]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#build-and-flash
-[bsp-usb-log]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#usb-debug-log
-[rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-blink.rs
-[rticx-tone-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-tone.rs
-[rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-controls.rs
-[rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-piano.rs
-[rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/rticx-waveform.rs
+[build-and-flash]: ../fm1/README.md#build-and-flash
+[bsp-usb-log]: ../fm1/README.md#usb-debug-log
+[rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-blink.rs
+[rticx-tone-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-tone.rs
+[rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-controls.rs
+[rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-piano.rs
+[rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-waveform.rs
 [rticx-timing-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-timing.rs
-[usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1-rticx/examples/usb-log.rs
-[standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.1.1/fm1/README.md#use-from-another-crate
-[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/fm1/targets/pi32v2-none.json
+[usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/usb-log.rs
+[standalone]: ../fm1/README.md#use-from-another-crate
+[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/862c16498a68b92a2d174140edf0e73e021aaf22/fm1/targets/pi32v2-none.json
 [crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
 [crate]: https://crates.io/crates/fm1-rticx
 [docs-badge]: https://docs.rs/fm1-rticx/badge.svg

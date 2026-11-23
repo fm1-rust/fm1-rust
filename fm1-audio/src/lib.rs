@@ -20,7 +20,7 @@ pub const BLOCK_TICKS: u32 = FRAMES_PER_HALF as u32 * FRAME_RATE.1;
 /// A 128-frame DMA stream with one reusable staging block and smoothed MASTER gain.
 #[derive(Debug)]
 pub struct Output {
-    stream: Stream<'static, OUTPUT_FRAMES>,
+    stream: fm1::Cpu0<Stream<'static, OUTPUT_FRAMES>>,
     block: OutputBlock,
     gain: MasterLevel,
 }
@@ -32,7 +32,7 @@ impl Output {
     /// Propagates the BSP's clock and busy errors.
     pub fn start(port: AudioPort) -> Result<Self, StartError> {
         Ok(Self {
-            stream: port.into_stream_with_frames()?,
+            stream: port.into_stream_with_frames()?.into(),
             block: [[0; 2]; OUTPUT_FRAMES],
             gain: MasterLevel::MIN,
         })

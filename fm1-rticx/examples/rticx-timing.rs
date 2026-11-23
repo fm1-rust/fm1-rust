@@ -25,6 +25,7 @@ mod app {
     use fm1_audio::{MasterLevel, Output};
     use fm1_controls::{ScanQueue, ScanReceiver, ScanSender};
     use fm1_graphics::{TextGrid, palette};
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{
             Board,
@@ -138,7 +139,7 @@ mod app {
                 },
                 panel: Panel {
                     timer,
-                    controls: board.panel.into_controls(),
+                    controls: board.panel.into_controls().into(),
                     leds: Leds::default(),
                     sender: send,
                     phase: 0,
@@ -155,7 +156,7 @@ mod app {
                     metrics: WakeMetrics::default(),
                 },
                 usb_task: UsbTask {
-                    device: usb,
+                    device: usb.into(),
                     delay,
                     log: UsbLog::new(),
                     page: 0,
@@ -163,7 +164,7 @@ mod app {
                     metrics: WorkMetrics::default(),
                 },
                 screen: Screen {
-                    port: Some(board.display),
+                    port: Some(board.display.into()),
                 },
             },
         )
@@ -209,7 +210,7 @@ mod app {
     #[task(binds = TIMER5, priority = 4, shared = [panel])]
     struct Panel {
         timer: Timer5,
-        controls: Controls,
+        controls: Cpu0<Controls>,
         leds: Leds,
         sender: ScanSender<'static, SCANS>,
         phase: u8,
@@ -329,7 +330,7 @@ mod app {
 
     #[async_task(priority = 2, shared = [audio, panel, input, wake, lcd, cpu, usb])]
     struct UsbTask {
-        device: MidiDevice,
+        device: Cpu0<MidiDevice>,
         delay: Clock,
         log: UsbLog,
         page: u8,
@@ -489,13 +490,13 @@ mod app {
 
     #[async_task(priority = 1, shared = [audio, panel, input, lcd, cpu])]
     struct Screen {
-        port: Option<DisplayPort>,
+        port: Option<Cpu0<DisplayPort>>,
     }
     impl RticAsyncTask for Screen {
         type SpawnInput = ();
         async fn exec(&mut self, (): ()) {
             let Some(port) = self.port.take() else { return };
-            let Ok(mut lcd) = port.init_with_clock(SpiClock::Div1) else {
+            let Ok(mut lcd) = port.into_inner().init_with_clock(SpiClock::Div1) else {
                 return;
             };
             let mut text = TextGrid::new();

@@ -29,6 +29,7 @@ mod app {
     };
     use fm1_audio::{MasterLevel, OUTPUT_FRAMES, Output, Refill, Stats};
     use fm1_graphics::{TextGrid, Waveform, palette};
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{
             Board,
@@ -146,7 +147,7 @@ mod app {
                 },
                 panel: Panel {
                     timers,
-                    controls: board.panel.into_controls(),
+                    controls: board.panel.into_controls().into(),
                     timing: PanelTiming::default(),
                     leds,
                     voice,
@@ -154,7 +155,7 @@ mod app {
                     selection: Selection::default(),
                 },
                 draw: Draw {
-                    port: Some(board.display),
+                    port: Some(board.display.into()),
                     updates,
                     delay,
                 },
@@ -172,7 +173,7 @@ mod app {
     #[task(binds = TIMER5, priority = 3, shared = [settings, frame])]
     struct Panel {
         timers: Timer5,
-        controls: Controls,
+        controls: Cpu0<Controls>,
         timing: PanelTiming,
         leds: Leds,
         voice: Voice,
@@ -367,7 +368,7 @@ mod app {
 
     #[async_task(priority = 1, shared = [frame, audio_report])]
     struct Draw {
-        port: Option<DisplayPort>,
+        port: Option<Cpu0<DisplayPort>>,
         updates: Receiver<'static, (), 1>,
         delay: Clock,
     }
@@ -379,6 +380,7 @@ mod app {
                 .port
                 .take()
                 .expect("one LCD")
+                .into_inner()
                 .init_with_clock(SpiClock::Div1)
                 .expect("LCD");
             // This task lives across DMA waits. Its cell grid has dedicated storage.
