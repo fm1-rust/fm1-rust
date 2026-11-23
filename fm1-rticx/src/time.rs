@@ -1,13 +1,12 @@
 //! Hardware clocks for async delays, periodic deadlines and timeouts.
 mod deadline;
+mod queue;
 pub use deadline::{DeadlineClock, DeadlineDuration, DeadlineInstant};
 use fm1::time::Timers;
+pub use queue::TimerSlot;
+use queue::{Hardware, Queue};
 pub use rtic_time::{Timebase, fugit::ExtU32};
-use rtic_time::{
-    monotonic::TimerQueueBasedMonotonic,
-    timer_queue::{TimerQueue, TimerQueueBackend},
-};
-
+use static_cell::ConstStaticCell;
 const HZ: u64 = Timers::TICK_HZ as u64;
 
 /// A wrapping timestamp in units of 10 ms.
@@ -15,46 +14,50 @@ pub type Instant = rtic_time::fugit::WrappingInstant<u32, 1, HZ>;
 /// A duration in units of 10 ms.
 pub type Duration = rtic_time::fugit::Duration<u32, 1, HZ>;
 
-static QUEUE: TimerQueue<Clock> = TimerQueue::new();
+static QUEUE: Queue<Clock> = Queue::new();
 
 /// Wrapping TIMER5 timebase. Import [`Timebase`] to call `now`, `delay`,
 /// `delay_until` and the timeout methods. Schedule within half the tick range.
+///
+/// A new pending wait panics on poll if all slots are occupied. A slot becomes
+/// available when its wait completes or is dropped. See [`Self::start_with_slots`].
 #[derive(Clone, Copy, Debug)]
 pub struct Clock(());
 
 impl Clock {
     /// Start the delay queue during application initialisation. Give the
-    /// returned handle to the task bound to TIMER5.
+    /// returned handle to the task bound to TIMER5. Provides 16 timer slots.
+    ///
+    /// # Panics
+    /// Panics if this clock has already started.
     #[must_use]
     pub fn start(timers: Timers) -> Timer5 {
-        QUEUE.initialize(Self(()));
+        static SLOTS: ConstStaticCell<[TimerSlot; 16]> =
+            ConstStaticCell::new([const { TimerSlot::EMPTY }; 16]);
+        Self::start_with_slots(timers, SLOTS.take())
+    }
+
+    /// Start with one caller-supplied slot per outstanding delay or timeout.
+    ///
+    /// # Panics
+    /// Panics if the storage is empty or this clock has already started.
+    #[must_use]
+    pub fn start_with_slots(timers: Timers, slots: &'static mut [TimerSlot]) -> Timer5 {
+        QUEUE.initialize(slots);
         Timer5(timers.into())
     }
 }
 
-impl TimerQueueBasedMonotonic for Clock {
-    type Backend = Self;
-    type Instant = Instant;
-    type Duration = Duration;
-}
+queue::impl_timebase!(Clock, Instant, Duration, QUEUE);
 
 rtic_time::impl_embedded_hal_async_delay_fugit!(Clock);
 
-impl TimerQueueBackend for Clock {
-    type Ticks = u32;
-
+impl Hardware for Clock {
     fn now() -> u32 {
         fm1::time::ticks()
     }
-
-    // TIMER5 runs periodically. The next tick inspects the queue even if a
-    // new deadline was inserted immediately after the previous tick.
-    fn set_compare(_: u32) {}
-    fn clear_compare_flag() {}
-    fn pend_interrupt() {}
-    fn timer_queue() -> &'static TimerQueue<Self> {
-        &QUEUE
-    }
+    // TIMER5 runs periodically even when there are no delays.
+    fn program(_: Option<u32>) {}
 }
 
 /// The timer interrupt task's exclusive handle to TIMER5.
@@ -75,8 +78,9 @@ impl Timer5 {
         if self.0.ticks() == previous {
             return;
         }
-        // SAFETY: the queue is initialized by start. The unique handle serializes
-        // servicing it, and the application binds this call to TIMER5.
-        unsafe { QUEUE.on_monotonic_interrupt() };
+        QUEUE.service();
     }
 }
+
+#[cfg(test)]
+mod tests;

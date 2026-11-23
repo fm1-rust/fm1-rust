@@ -326,6 +326,31 @@ deadline. TIMER2 stops while the queue is empty. TIMER5 and panel scanning are
 optional. Schedule less than 2³¹ crystal cycles (about 89 s) ahead and advance
 periodic work from its previous deadline to carry phase across counter wrap.
 
+Each clock's `start` provides 16 slots. Count one slot for each delay or timeout
+that has returned `Pending` and has yet to complete or be dropped. This includes
+an expired delay whose task has yet to run. Dropping the future releases its
+slot. Forgetting a registered future keeps its slot occupied. Polling a new
+delay that needs a slot panics when all slots are in use.
+
+Use `start_with_slots` to choose a different budget per clock. For example,
+an application using `static_cell` can give TIMER2 room for 32 pending waits.
+
+```rust,ignore
+use fm1_rticx::time::{DeadlineClock, TimerSlot};
+use static_cell::ConstStaticCell;
+
+static SLOTS: ConstStaticCell<[TimerSlot; 32]> =
+    ConstStaticCell::new([const { TimerSlot::EMPTY }; 32]);
+DeadlineClock::start_with_slots::<3>(board.timers.take_alarm().unwrap(), SLOTS.take());
+```
+
+The queue scans the slot array with interrupts masked when finding the next
+deadline. Larger arrays increase the worst-case time for a scan. The clock
+owns the waker from the most recent poll and takes it out of the slot before
+calling it, so a wake can immediately cancel the delay and reuse its storage.
+Generic clock users should use the `Timebase` trait. The clocks no longer
+implement `rtic_time`'s `TimerQueueBackend` or `TimerQueueBasedMonotonic`.
+
 ## License
 
 Licensed under the [MIT License][mit].
