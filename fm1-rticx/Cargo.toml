@@ -13,7 +13,6 @@ critical-section = "1"
 fm1.workspace = true
 rtic-time = "3"
 rticx-pi32v2.workspace = true
-rticx-pi32v2-macro.workspace = true
 rtt-target = { version = "0.6.2", optional = true }
 
 [dev-dependencies]

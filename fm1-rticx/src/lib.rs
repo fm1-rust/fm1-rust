@@ -4,7 +4,7 @@
 pub use fm1 as bsp;
 pub use rticx_pi32v2 as rticx;
 #[doc(inline)]
-pub use rticx_pi32v2_macro::fm1_app as app;
+pub use rticx_pi32v2::fm1_app as app;
 pub mod time;
 
 /// Text logging in SRAM using the SEGGER RTT format.

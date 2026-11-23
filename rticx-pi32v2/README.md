@@ -44,6 +44,10 @@ after releasing the lock. The macro rejects that type in both shared storage
 and task initializers. The future created by an async task stays on its owning
 dispatcher and may keep task-local, non-`Send` values across an await.
 
+Drive async work with the generated `Task::spawn` method. The runtime initializes
+each slot once. A wake marks the slot pending. Only an initialized future can be
+polled.
+
 ## License
 
 Licensed under the [MIT License][mit].

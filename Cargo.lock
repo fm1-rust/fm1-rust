@@ -475,7 +475,6 @@ dependencies = [
  "futures-util",
  "rtic-time",
  "rticx-pi32v2",
- "rticx-pi32v2-macro",
  "rtt-target",
  "static_cell",
 ]
@@ -1069,17 +1068,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rticx-async"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccbc31147fe9f818e7e6ef4d85d0488bc946dd332f141b66cde168d5b0b04d9e"
-dependencies = [
- "critical-section",
- "heapless 0.9.4",
- "portable-atomic",
-]
-
-[[package]]
 name = "rticx-async-pass"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1115,8 +1103,8 @@ dependencies = [
  "cc",
  "critical-section",
  "heapless 0.9.4",
+ "portable-atomic",
  "rtic-sync",
- "rticx-async",
  "rticx-pi32v2-macro",
 ]
 

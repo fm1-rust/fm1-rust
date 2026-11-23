@@ -141,7 +141,11 @@ pub fn __entry(_: TokenStream, item: TokenStream) -> TokenStream {
             && matches!(&slot.pat, syn::Pat::Ident(pat) if pat.ident == "__s")
             && store.method == "store"
         {
-            entry.extend(block.block.stmts.iter().cloned());
+            let ptr = &store.receiver;
+            entry.push(syn::Stmt::Local(slot.clone()));
+            // SAFETY: the entry never returns. Both the permanent slot and every
+            // recovery use the same task wrapper to infer the future type.
+            entry.push(parse_quote!(unsafe { #ptr.install(&__s) };));
         } else {
             entry.push(stmt);
         }
@@ -338,7 +342,7 @@ impl SwPassBackend for Cpu0 {
 }
 impl AsyncPassBackend for Cpu0 {
     fn async_runtime_path(&self) -> Path {
-        parse_quote!(__rticx_backend::asynchronous)
+        parse_quote!(__rticx_backend)
     }
 }
 
