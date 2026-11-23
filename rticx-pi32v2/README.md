@@ -11,7 +11,9 @@ directly with `#[rticx_pi32v2::app(device = fm1, dispatchers = [SOFT0])]`.
 
 ## Interrupts and priorities
 
-CPU0 owns the interrupt controller and CPU1 stays parked. RTICX priorities
+CPU0 owns the RTICX interrupt sources, task state and resource ceilings.
+The opt-in [audio-block probe](../fm1-rticx/README.md#persistent-cpu1-audio-probe)
+runs a fixed DSP worker on CPU1 alongside the CPU0 executor. RTICX priorities
 1 through 8 map to hardware priorities 0 through 7. Priority zero runs in
 the idle context. The application supplies its startup code, CPU0 stacks
 and compiler-rt builtins through the BSP. `PI32V2_BIN` selects the same

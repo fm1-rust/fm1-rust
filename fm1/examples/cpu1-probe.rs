@@ -20,12 +20,12 @@ extern "C" fn fm1_cpu1_probe_word(challenge: u32) -> u32 {
 unsafe extern "C" fn probe_main() -> ! {
     #[link(name = "fm1_cpu1_probe", kind = "static")]
     unsafe extern "C" {
-        fn fm1_cpu1_probe_run() -> u32;
+        fn fm1_cpu1_probe_run(persistent: u32) -> u32;
     }
     // SAFETY: referencing the probe pulls its reset prefix into .entry.
     // It held CPU1 before _start copied .data and cleared .bss. This is the
     // first CPU0 call after that initialization, with interrupts still masked.
-    let status = unsafe { fm1_cpu1_probe_run() };
+    let status = unsafe { fm1_cpu1_probe_run(0) };
     // SAFETY: the probe has held CPU1 again and restored both RAM vectors.
     // CPU0 still owns the peripherals and has not enabled interrupts.
     let board = unsafe { fm1::Board::from_reset() };

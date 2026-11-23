@@ -14,6 +14,8 @@ mod asynchronous;
 pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
+mod status;
+pub use status::{ControlStall, EnumerationStage, RegisterTimeout, UsbStatus};
 #[cfg(feature = "usb-dma-probe")]
 mod dma_probe;
 #[cfg(feature = "usb-dma-probe")]
@@ -202,6 +204,7 @@ impl QualifiedMidiPort {
             #[cfg(feature = "usb-dma-probe")]
             probe: None,
             identity,
+            status: UsbStatus::default(),
             wait: Some((cycles(), Timers::CRYSTAL_HZ / 40)),
             control: Control::new(),
             interface: Interface::default(),
@@ -224,6 +227,7 @@ pub struct MidiDevice {
     #[cfg(feature = "usb-dma-probe")]
     probe: Option<dma_probe::Probe>,
     identity: Identity,
+    status: UsbStatus,
     wait: Option<(u32, u32)>,
     control: Control,
     interface: Interface,
@@ -259,15 +263,13 @@ impl MidiDevice {
         {
             let token = p.next_token();
             self.rx_pending = false;
-            if p.arm(
+            if let Err(error) = p.arm(
                 token,
                 0xff,
                 token.to_le_bytes()[0].wrapping_sub(1) & 1,
                 None,
-            )
-            .is_err()
-            {
-                self.retry();
+            ) {
+                self.retry(error);
             }
         }
     }
@@ -279,9 +281,20 @@ impl MidiDevice {
     /// Detaches and panics on a changed receive guard or an oversized packet
     /// count observed on a normal endpoint.
     pub fn poll(&mut self) {
-        if self.service(true).is_err() {
-            self.retry();
+        if let Err(error) = self.service(true) {
+            self.retry(error);
         }
+    }
+
+    /// Snapshot enumeration and controller timeouts for a local display or trace.
+    /// Copies observations from normal USB service without touching the hardware.
+    #[must_use]
+    pub fn status(&self) -> UsbStatus {
+        let mut status = self.status;
+        if status.stage == EnumerationStage::Configured && self.suspended {
+            status.stage = EnumerationStage::Suspended;
+        }
+        status
     }
 
     /// Identifies the current active host configuration. A reset, suspend or
@@ -313,7 +326,7 @@ impl MidiDevice {
             self.rx_pending = false;
             match controller::receive(buffer) {
                 Ok(count) => n = count,
-                Err(_) => self.retry(),
+                Err(error) => self.retry(error),
             }
         }
         &buffer[..n]
@@ -332,14 +345,17 @@ impl MidiDevice {
         controller::check_rx_guards();
         match controller::send(events) {
             Ok(n) => n,
-            Err(_) => {
-                self.retry();
+            Err(error) => {
+                self.retry(error);
                 0
             }
         }
     }
 
-    fn retry(&mut self) {
+    fn retry(&mut self, error: RegisterTimeout) {
+        self.status.stage = EnumerationStage::Retry;
+        self.status.retries = self.status.retries.saturating_add(1);
+        self.status.last_timeout = Some(error);
         #[cfg(feature = "usb-dma-probe")]
         if let Some(p) = &mut self.probe {
             p.retries = p.retries.saturating_add(1);
@@ -369,6 +385,7 @@ impl MidiDevice {
                 return Ok(());
             }
             controller::attach()?;
+            self.status.stage = EnumerationStage::Attached;
             #[cfg(feature = "usb-dma-probe")]
             if let Some(p) = &mut self.probe {
                 p.stage = p.stage.max(1);
@@ -376,6 +393,14 @@ impl MidiDevice {
             self.wait = None;
         }
         let flags = rd(controller::INTR_USB)?;
+        // INTR_USB clears on read. Retain the indication even if a later
+        // indexed access times out before the reset can be serviced.
+        if flags & controller::RESET != 0 {
+            self.status.resets = self.status.resets.saturating_add(1);
+            self.status.stage = EnumerationStage::Reset;
+        } else if flags & controller::DISCONNECT != 0 {
+            self.status.stage = EnumerationStage::Disconnected;
+        }
         let ep0 = rd(controller::INTR_TX)? & 1 != 0;
         let rx = rd(controller::INTR_RX)? & 2 != 0;
         if flags & (controller::RESET | controller::DISCONNECT) != 0 {
@@ -452,6 +477,13 @@ impl MidiDevice {
     }
 
     fn setup_reply(&mut self, setup: [u8; 8]) -> Reply {
+        self.status.last_setup = Some(setup);
+        if !matches!(
+            self.status.stage,
+            EnumerationStage::Addressed | EnumerationStage::Configured
+        ) {
+            self.status.stage = EnumerationStage::Setup;
+        }
         #[cfg(feature = "usb-dma-probe")]
         if let Some(probe) = &mut self.probe {
             probe.stage = probe.stage.max(2);
@@ -464,6 +496,12 @@ impl MidiDevice {
         self.control.request(&self.identity, self.interface, setup)
     }
 
+    fn stall_control(&mut self, reason: ControlStall) -> controller::Result<()> {
+        wr(CSR0, 0x60)?;
+        self.status.last_stall = Some(reason);
+        Ok(())
+    }
+
     fn endpoint_zero(&mut self, now: u32) -> controller::Result<()> {
         wr(INDEX, 0)?;
         let csr = rd(CSR0)?;
@@ -474,6 +512,11 @@ impl MidiDevice {
         } else if let Some(address) = self.address.take() {
             // The host completed SET_ADDRESS's IN status stage at the old address.
             wr(controller::FADDR, address)?;
+            self.status.stage = if address == 0 {
+                EnumerationStage::Setup
+            } else {
+                EnumerationStage::Addressed
+            };
             #[cfg(feature = "usb-dma-probe")]
             if let Some(p) = &mut self.probe {
                 p.stage = p.stage.max(3);
@@ -493,7 +536,7 @@ impl MidiDevice {
         let count = rd(controller::COUNT)?;
         controller::check_packet_count("EP0 byte count", u16::from(count));
         if count != 8 {
-            return wr(CSR0, 0x60);
+            return self.stall_control(ControlStall::ByteCount(count));
         }
         let setup = controller::setup();
         let requested = u16::from_le_bytes([setup[6], setup[7]]);
@@ -572,9 +615,16 @@ impl MidiDevice {
                 wr(INDEX, 0)?;
             }
             Reply::Ack | Reply::Data(_) => {}
-            Reply::Stall => return wr(CSR0, 0x60),
+            Reply::Stall => return self.stall_control(ControlStall::Request(setup)),
         }
         wr(CSR0, 0x48)?; // ServicedRxPktRdy | DataEnd, status IN sent by hardware.
+        if let Reply::Configure(configured) = reply {
+            self.status.stage = if configured {
+                EnumerationStage::Configured
+            } else {
+                EnumerationStage::Addressed
+            };
+        }
         #[cfg(feature = "usb-dma-probe")]
         if reply == Reply::Configure(true)
             && let Some(p) = &mut self.probe

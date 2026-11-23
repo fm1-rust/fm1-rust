@@ -102,8 +102,8 @@ impl MidiDevice {
                 controller::check_rx_guards();
             }
         }
-        if self.service(false).is_err() {
-            self.retry();
+        if let Err(error) = self.service(false) {
+            self.retry(error);
         }
     }
 }
