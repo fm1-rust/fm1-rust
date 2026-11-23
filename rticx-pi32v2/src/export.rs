@@ -5,6 +5,8 @@ use crate::registers::{CONFIG, config_word, vector_slot};
 pub use crate::{mask::SourceMask, queue::Queue};
 /// The thread-handoff bound used by the application macro.
 pub use core::marker::Send as HandoffSend;
+/// Storage types used by the application entry for task values and executor slots.
+pub use core::mem::{ManuallyDrop, MaybeUninit as TaskStorage};
 use core::{
     cell::Cell,
     ptr::{read_volatile, write_volatile},

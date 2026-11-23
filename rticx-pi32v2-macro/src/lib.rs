@@ -204,7 +204,24 @@ pub fn __entry(_: TokenStream, item: TokenStream) -> TokenStream {
             && store.method == "store"
         {
             let ptr = &store.receiver;
-            entry.push(syn::Stmt::Local(slot.clone()));
+            let Some(init) = &slot.init else {
+                return syn::Error::new_spanned(slot, "missing RTICX executor slot initializer")
+                    .into_compile_error()
+                    .into();
+            };
+            let Expr::Call(call) = init.expr.as_ref() else {
+                return syn::Error::new_spanned(
+                    &init.expr,
+                    "expected RTICX executor slot constructor",
+                )
+                .into_compile_error()
+                .into();
+            };
+            // Resolve the wrapper in the runtime. A lookalike ManuallyDrop::new
+            // could return an ExecSlot for a different future before type erasure.
+            let args = &call.args;
+            let pat = &slot.pat;
+            entry.push(parse_quote!(let #pat = __rticx_backend::export::ManuallyDrop::new(#args);));
             // SAFETY: the entry never returns. Both the permanent slot and every
             // recovery use the same task wrapper to infer the future type.
             entry.push(parse_quote!(unsafe { #ptr.install(&__s) };));
@@ -334,7 +351,7 @@ impl CorePassBackend for Cpu0 {
         // Always call the trait, whose receiver cannot escape this invocation.
         Some(quote! {
             #ack
-            RticTask::exec(unsafe { #storage.assume_init_mut() });
+            RticTask::exec(unsafe { __rticx_backend::export::TaskStorage::assume_init_mut(&mut #storage) });
         })
     }
 
