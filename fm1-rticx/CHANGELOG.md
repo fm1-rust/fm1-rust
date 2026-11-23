@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- [BREAKING] `Clock` and `DeadlineClock` own their pending timer registrations.
+  This fixes a use-after-free during expiry and wakes the most recent waker
+  after a repoll. Use `rtic_time::Timebase` in generic clock bounds. Each clock
+  provides 16 slots by default. Use `start_with_slots` for a different capacity.
+
 - [BREAKING] The async channel now uses local endpoints with nonblocking
   `try_send` and cancellable `recv().await`. Update explicit `rtic_sync` endpoint
   types to the runtime channel types. Callers of `send().await` must handle
