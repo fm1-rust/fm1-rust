@@ -2,6 +2,10 @@
 //! driver. Only the vendor diagnostic interface is claimed for raw transfers.
 extern crate alloc;
 mod history;
+#[allow(
+    unsafe_code,
+    reason = "libusb exposes isochronous transfers through its C API."
+)]
 mod iso;
 pub use history::read_log;
 

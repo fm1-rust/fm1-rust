@@ -32,8 +32,10 @@ pub const USB0_IRQ: u8 = 9;
 /// Called once from CPU0 startup with interrupts disabled.
 pub unsafe fn reset() {
     for word in 0..WORDS {
+        // SAFETY: word indexes the CPU0 configuration bank. Startup owns it with IRQs masked.
         unsafe { write_volatile(config_word(CONFIG, word), 0) };
     }
+    // SAFETY: LATCH_CLEAR is the word-aligned, write-one-to-clear CPU0 software IRQ register.
     unsafe { write_volatile(LATCH_CLEAR, 0xff) };
 }
 
@@ -43,6 +45,8 @@ pub unsafe fn reset() {
 /// CPU0 IRQs must be disabled. The vector must save interrupted state and
 /// return with `rti`. Priority must be in the RTICX range 1..=8.
 pub unsafe fn install(irq: Interrupt, priority: u16, vector: unsafe extern "C" fn()) {
+    // SAFETY: every Interrupt discriminant is a CPU0 source below 128. The caller
+    // supplies the native vector and priority while interrupts are masked.
     unsafe { install_at(irq as usize, priority, vector) };
 }
 
@@ -55,6 +59,8 @@ pub unsafe fn install_timer2(priority: u16) {
         fn __rticx_irq_TIMER2();
     }
     const TIMER2_IRQ: usize = 6; // AC79 SDK, asm/hwi.h: IRQ_TIMER2_IDX
+    // SAFETY: interrupt.S supplies the native TIMER2 trampoline for slot 6.
+    // The caller owns TIMER2 and supplies the priority with IRQs masked.
     unsafe { install_at(TIMER2_IRQ, priority, __rticx_irq_TIMER2) };
 }
 
@@ -65,6 +71,8 @@ pub unsafe fn install_timer2(priority: u16) {
 pub unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()) {
     let shift = (n % 8) * 4;
     let config = ((u32::from(priority) - 1) << 1) | 1;
+    // SAFETY: n < 128 selects a reserved RAM vector and one of 16 aligned MMIO
+    // words. The caller supplies a valid handler and excludes interrupt dispatch.
     unsafe {
         write_volatile(vector_slot(n), vector);
         let reg = config_word(CONFIG, n / 8);
@@ -81,6 +89,7 @@ pub unsafe fn install_at(n: usize, priority: u16, vector: unsafe extern "C" fn()
 /// All task state and every enabled vector must be initialised.
 pub unsafe fn enable() {
     INITIALIZED.store(true, Ordering::Relaxed);
+    // SAFETY: the caller has initialized the state and handlers the shim enables.
     unsafe { __rticx_enable() };
 }
 
@@ -96,12 +105,14 @@ pub const fn soft_bit(irq: Interrupt) -> u32 {
 
 /// Pend a software interrupt on CPU0.
 pub fn pend(irq: Interrupt) {
+    // SAFETY: LATCH_SET takes an aligned word write. soft_bit selects a software IRQ.
     unsafe { write_volatile(LATCH_SET, soft_bit(irq)) };
 }
 
 /// Clear a software interrupt before running its dispatcher, so a new wake
 /// during dispatch stays pending.
 pub fn acknowledge(irq: Interrupt) {
+    // SAFETY: LATCH_CLEAR takes an aligned word write. Only the selected IRQ is cleared.
     unsafe { write_volatile(LATCH_CLEAR, soft_bit(irq)) };
 }
 
@@ -124,6 +135,8 @@ impl Drop for Restore<'_> {
     fn drop(&mut self) {
         critical_section::with(|cs| {
             self.flag.0.borrow(cs).set(false);
+            // SAFETY: this guard restores the same bank after nested guards have
+            // dropped. The CPU0 critical section excludes interrupt access.
             unsafe { self.enabled.restore(CONFIG) };
         });
     }
@@ -147,6 +160,7 @@ pub unsafe fn with_ceiling<R>(mask: &SourceMask, flag: &BorrowFlag, f: impl FnOn
             "resource already borrowed"
         );
         Restore {
+            // SAFETY: CONFIG is the 16-word bank owned by CPU0 and IRQs are masked here.
             enabled: unsafe { mask.disable(CONFIG) },
             flag,
         }
@@ -156,15 +170,17 @@ pub unsafe fn with_ceiling<R>(mask: &SourceMask, flag: &BorrowFlag, f: impl FnOn
     result
 }
 
-// CPU1 is parked for this distribution. Saving the full ICFG value also
-// preserves a caller's disabled state when critical sections nest.
 struct Cpu0;
 critical_section::set_impl!(Cpu0);
+// SAFETY: CPU1 is parked. The shims mask CPU0 interrupts, synchronize memory,
+// and restore the full prior ICFG value when nested critical sections unwind.
 unsafe impl critical_section::Impl for Cpu0 {
     unsafe fn acquire() -> u32 {
+        // SAFETY: this shim saves the current ICFG before masking IRQs on the active CPU.
         unsafe { __rticx_irq_save() }
     }
     unsafe fn release(state: u32) {
+        // SAFETY: release receives the saved state from the matching acquire on CPU0.
         unsafe { __rticx_irq_restore(state) };
     }
 }

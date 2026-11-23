@@ -33,7 +33,18 @@ jobs:
           toolchain: 1.100.0
           components: clippy
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - run: cargo clippy --workspace --all-features --lib --bins --tests -- -Dwarnings
+      - run: cargo clippy --locked --workspace --all-features --all-targets -- -Dwarnings
+      - name: Check the production USB layout and the ordinary diagnostic arena
+        run: |
+          cargo clippy --locked -p fm1 --lib --no-default-features -- -Dwarnings
+          cargo clippy --locked -p fm1 --lib --features usb-dma-probe -- -Dwarnings
+      - name: Check safety documentation on private unsafe functions
+        env:
+          CLIPPY_CONF_DIR: ${{ github.workspace }}/.github/clippy-private
+        # The ordinary pass above checks public error and panic documentation.
+        run: >-
+          cargo clippy --locked --workspace --all-features --all-targets --
+          -Dwarnings -Aclippy::missing_errors_doc -Aclippy::missing_panics_doc
 
   rustfmt:
     runs-on: ubuntu-latest

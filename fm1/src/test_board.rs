@@ -132,6 +132,9 @@ extern "C" fn fm1_set_icfg(value: u32) {
 extern "C" fn fm1_timer5_isr() {
     time::rust_timer5_tick();
 }
+/// # Safety
+/// `p` must remain readable for `n` initialized bytes until the mock completes
+/// the transfer or discards it. The caller must hold the display test lock.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn fm1_spi1_dma(p: *const u8, n: u32) {
     CHIP.with_borrow_mut(|chip| {
@@ -198,7 +201,8 @@ fn green_play_indicator_restores_its_column_after_sampling() {
 #[test]
 fn blink_and_display_use_the_board_api() {
     let _display = DISPLAY.lock().expect("exclusive display");
-    // Isolated, single-core register model at boot.
+    // SAFETY: the thread-local chip starts at reset and only this test delivers
+    // its interrupts. DISPLAY guards the shared SPI staging buffer.
     let mut board = unsafe { Board::from_reset() };
     assert_eq!(read(0x10908), 59_999);
     assert_eq!(read(0x01ee_f100 + 28), 3 << 28);

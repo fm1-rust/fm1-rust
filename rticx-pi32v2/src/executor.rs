@@ -137,6 +137,11 @@ const WAKER: RawWakerVTable = RawWakerVTable::new(clone_waker, wake, wake, |_| {
 fn clone_waker(data: *const ()) -> RawWaker {
     RawWaker::new(data, &WAKER)
 }
+
+/// # Safety
+/// `data` must point to an aligned, initialized `fn()` value that stays live
+/// and immutable while any waker using it exists. The callback must be safe
+/// to invoke from any thread that can wake the task.
 unsafe fn wake(data: *const ()) {
     // SAFETY: only poll creates these wakers, with a permanent, initialized
     // fn() as data. The generated callback only signals the slot and its IRQ.

@@ -7,6 +7,18 @@ pub(crate) fn bus_address<T>(ptr: *const T) -> u32 {
     ptr.addr() as u32
 }
 
+/// Order CPU writes before notifying a peripheral or the bootloader.
+pub(crate) fn csync() {
+    #[cfg(fm1)]
+    {
+        unsafe extern "C" {
+            // The shim only issues CSYNC and has no caller preconditions.
+            safe fn fm1_csync();
+        }
+        fm1_csync();
+    }
+}
+
 pub(crate) const PA: usize = 0x50000;
 pub(crate) const PB: usize = 0x50040;
 pub(crate) const PC: usize = 0x50080;
@@ -22,10 +34,13 @@ pub(crate) const HD: usize = 28;
 
 #[cfg(not(test))]
 pub(crate) fn read(addr: usize) -> u32 {
+    // SAFETY: the BSP supplies word-aligned addresses of readable AC791N registers.
     unsafe { core::ptr::read_volatile(addr as *const u32) }
 }
 #[cfg(not(test))]
 pub(crate) fn write(addr: usize, value: u32) {
+    // SAFETY: the BSP supplies writable, word-aligned registers or words in the
+    // bootloader mailbox and interrupt table reserved outside Rust allocations.
     unsafe { core::ptr::write_volatile(addr as *mut u32, value) }
 }
 pub(crate) fn set(addr: usize, mask: u32) {
@@ -42,6 +57,8 @@ pub(crate) fn modify(addr: usize, clear: u32, set: u32) {
         unsafe extern "C" {
             fn fm1_modify(reg: *mut u32, clear: u32, set: u32);
         }
+        // SAFETY: callers select aligned, read/write MMIO words. The shim masks
+        // CPU0 interrupts across the read-modify-write and restores their prior state.
         unsafe { fm1_modify(addr as *mut u32, clear, set) };
     }
     #[cfg(not(fm1))]
