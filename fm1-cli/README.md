@@ -1,5 +1,8 @@
 # fm1-cli
 
+[![crates.io][crate-badge]][crate]
+[![Build status][ci-badge]][ci]
+
 Read the M-VAVE FM-1's USB log or the hardware timing diagnostic from a host
 terminal. From the workspace root, install the `fm1` command with a standard
 Rust toolchain.
@@ -136,3 +139,8 @@ command. [Board results and reproduction](../docs/usb-dma/stress.md) ·
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+[crate-badge]: https://img.shields.io/crates/v/fm1-cli?logo=rust
+[crate]: https://crates.io/crates/fm1-cli
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml/badge.svg?branch=main&event=push
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml

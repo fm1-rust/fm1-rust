@@ -5,9 +5,11 @@ on:
     tags:
       - 'fm1/v*'
       - 'fm1-audio/v*'
+      - 'fm1-cli/v*'
       - 'fm1-controls/v*'
       - 'fm1-graphics/v*'
       - 'fm1-rticx/v*'
+      - 'fm1-usb/v*'
       - 'rticx-pi32v2-macro/v*'
       - 'rticx-pi32v2/v*'
 
@@ -26,6 +28,7 @@ jobs:
       contents: read
     outputs:
       package: ${{ steps.verify.outputs.package }}
+      host: ${{ steps.verify.outputs.host }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # same runtime as v7.0.1
         with:
@@ -40,6 +43,13 @@ jobs:
               first(.packages[] | select("\(.name)/v\(.version)" == $tag) | .name)
                 // error("no workspace package matches tag \($tag)")
             ')
+          case "$package" in
+            fm1-cli|fm1-usb)
+              sudo apt-get update
+              sudo apt-get install -y libasound2-dev
+              echo 'host=true' >> "$GITHUB_OUTPUT"
+              ;;
+          esac
           cargo test --locked --all-features --package "$package"
           cargo publish --dry-run --locked --registry crates-io --package "$package"
           echo "package=$package" >> "$GITHUB_OUTPUT"
@@ -47,6 +57,7 @@ jobs:
   firmware:
     name: Check FM-1 firmware
     needs: verify
+    if: needs.verify.outputs.host != 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/pi32v2-firmware.yml
@@ -57,6 +68,10 @@ jobs:
   publish:
     name: Publish package
     needs: [verify, firmware]
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success' &&
+          (needs.firmware.result == 'success' ||
+           (needs.verify.outputs.host == 'true' && needs.firmware.result == 'skipped')) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
