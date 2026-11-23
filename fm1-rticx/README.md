@@ -209,12 +209,12 @@ outermost disable and restore around enqueue and dequeue. To measure interrupt
 response latency, capture the hardware event and entry into its handler on the
 same time base.
 
-USB receive DMA has a separate memory-safety requirement. The driver reserves
-68 bytes and advertises 64-byte OUT packets. It programs `RX_MAX` to `0xff`
-and clamps the count when copying from RAM, after DMA completes. Establish the
-controller's maximum write span for that setting, including any padding, and
-verify it fits the allocation. An instrumented receive buffer can check a
-documented bound on the board. `USB MAX` measures service time in microseconds.
+`USB MAX` measures service time in microseconds. Normal MIDI advertises
+64-byte EP1 OUT packets and reserves 2 KiB of staging each for EP0 and
+EP1 OUT. On the black FM-1, a legal 64-byte packet wrote its CRC at
+offsets 64–65, and a 69-byte diagnostic packet crossed the historical
+68-byte allocation. The controller's maximum DMA write extent remains
+unknown. [Board measurements and qualification requirements](../docs/usb-dma/README.md#fix-and-remaining-hardware-contract)
 
 The report stays in RAM until the FM-1 restarts. Hold **OCT-** and **OCT+**
 for two seconds to return to download mode.

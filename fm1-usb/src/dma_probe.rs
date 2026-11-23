@@ -1,5 +1,5 @@
-//! Raw host transport for the RXD3 diagnostic. MIDI devices keep their class
-//! driver. Only the vendor diagnostic interface is claimed for raw transfers.
+//! Raw host transport for the RXD3 and RXS1 diagnostics. MIDI devices keep
+//! their class driver. Raw transfers claim only the vendor diagnostic interface.
 extern crate alloc;
 mod history;
 #[allow(
@@ -28,7 +28,8 @@ pub enum Profile {
     Stress,
 }
 
-/// One packet's libusb completion, including both independent status fields.
+/// One packet's completion as reported by the host controller. Compare this
+/// with the device's [`Status`] and the bytes retained in [`DmaProbe::snapshot`].
 #[derive(Debug, Clone, Copy)]
 pub struct IsoCompletion {
     /// Overall libusb transfer status (zero means completed).
@@ -40,7 +41,8 @@ pub struct IsoCompletion {
 }
 
 const PAGE: usize = 64;
-/// Number of bytes in one complete, frozen EP1 OUT snapshot.
+const HELLO_LEN: usize = 12;
+/// Bytes in an RXD3 frozen snapshot. RXS1 uses an 8192-byte diagnostic arena.
 pub const ARENA: usize = 2048;
 /// First byte outside the original 64-byte payload and four-byte spare word.
 pub const BOUND: usize = 68;
@@ -67,7 +69,8 @@ impl Sample {
     }
 }
 
-/// An RXD3 trial status reply.
+/// Device register samples for an RXD3 or RXS1 trial. Zero ready packets and
+/// a clear RX interrupt can accompany a write visible in [`DmaProbe::snapshot`].
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
     /// Original response for the measurement record.
@@ -112,7 +115,7 @@ impl Status {
     }
 }
 
-/// A validated RXD3 protocol session on the numeric device found by fm1-usb.
+/// An RXD3 or RXS1 session verified over EP0 on the device found by VID/PID.
 #[derive(Debug)]
 pub struct DmaProbe {
     handle: Arc<DeviceHandle<Context>>,
@@ -122,6 +125,36 @@ pub struct DmaProbe {
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn parse_hello(reply: &[u8]) -> io::Result<Profile> {
+    let len = reply.len();
+    let (magic, fields) = reply.split_first_chunk::<4>().ok_or_else(|| {
+        invalid(&format!(
+            "diagnostic handshake returned {len} bytes, missing protocol identifier"
+        ))
+    })?;
+    match (magic, fields) {
+        (b"RXD3", [profile, _, 0, 8, 68, 0, 0xf4, 1]) => match profile {
+            0 => Ok(Profile::Midi),
+            1 => Ok(Profile::Bulk),
+            2 => Ok(Profile::Iso),
+            _ => Err(invalid(&format!("unknown RXD3 profile {profile}"))),
+        },
+        (b"RXS1", [3, _, 0, 32, 0, 8, 0xf4, 1]) => Ok(Profile::Stress),
+        (b"RXD3" | b"RXS1", _) if len != HELLO_LEN => Err(invalid(&format!(
+            "{} handshake returned {len} bytes, expected {HELLO_LEN}",
+            magic.escape_ascii()
+        ))),
+        (b"RXD3" | b"RXS1", _) => Err(invalid(&format!(
+            "{} handshake has unsupported profile, arena, boundary or window: {fields:02x?}",
+            magic.escape_ascii()
+        ))),
+        _ => Err(invalid(&format!(
+            "unsupported diagnostic protocol {} ({len} bytes returned, expected RXD3 or RXS1)",
+            magic.escape_ascii()
+        ))),
+    }
 }
 
 fn open_handle(device: &Device) -> io::Result<DeviceHandle<Context>> {
@@ -141,37 +174,22 @@ fn open_handle(device: &Device) -> io::Result<DeviceHandle<Context>> {
 }
 
 impl DmaProbe {
-    /// Verify the protocol over EP0 before claiming the vendor interface.
+    /// Verify the protocol and profile over EP0 before claiming the vendor interface.
+    /// The supported RXD3 and RXS1 handshakes each require a complete 12-byte reply.
     ///
     /// # Errors
     /// Returns an error on device change, failed control request or protocol mismatch.
     pub fn open(device: &Device, timeout: Duration) -> io::Result<Self> {
         let handle = open_handle(device)?;
-        let mut hello = [0; 12];
+        let mut hello = [0; HELLO_LEN];
         let len = handle
             .read_control(0xc0, 0x50, 0, 0, &mut hello, timeout)
             .map_err(|e| {
                 io::Error::other(format!(
-                    "RXD3 handshake failed ({e}). Check the image and its LCD enumeration stage"
+                    "probe handshake failed ({e}). Check the image and its LCD enumeration stage"
                 ))
             })?;
-        if len != hello.len() {
-            return Err(invalid("short diagnostic handshake"));
-        }
-        let profile = match (&hello[..4], hello[4], &hello[6..]) {
-            (b"RXD3", n, [0, 8, 68, 0, 0xf4, 1]) => match n {
-                0 => Profile::Midi,
-                1 => Profile::Bulk,
-                2 => Profile::Iso,
-                _ => return Err(invalid("unknown RXD3 profile")),
-            },
-            (b"RXS1", 3, [0, 32, 0, 8, 0xf4, 1]) => Profile::Stress,
-            _ => {
-                return Err(invalid(
-                    "unsupported diagnostic profile, arena, boundary or window",
-                ));
-            }
-        };
+        let profile = parse_hello(&hello[..len])?;
         if profile != Profile::Midi {
             handle.claim_interface(0).map_err(io::Error::other)?;
         }
@@ -231,7 +249,9 @@ impl DmaProbe {
             .map_err(io::Error::other)
     }
 
-    /// Start a 500 ms observation window. Arms use only the default control pipe.
+    /// Start a 500 ms observation window over EP0. `bytes` declares the intended
+    /// stimulus length. `max` selects a raw RX_MAX value to test. Inspect the
+    /// frozen snapshot for bytes that differ from the fill.
     ///
     /// # Errors
     /// Returns an error if the device rejects the arm or its status stage fails.
@@ -359,5 +379,41 @@ impl DmaProbe {
     /// Returns an error on invalid packet lengths or a libusb submission or dispatch failure.
     pub fn iso_train(&mut self, packets: &[&[u8]]) -> io::Result<Vec<IsoCompletion>> {
         iso::send(&self.handle, packets)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handshake_uses_the_returned_bytes_and_protocol() {
+        let legacy = b"RXD1\x01\x01\x01\x00\xa5\xff";
+        let error = parse_hello(legacy).expect_err("RXD1 has a different frame");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported diagnostic protocol RXD1 (10 bytes")
+        );
+
+        let mut rxd3 = *b"RXD3\x00\x00\x00\x08\x44\x00\xf4\x01";
+        let short = parse_hello(&rxd3[..10]).expect_err("truncated RXD3 frame");
+        assert!(
+            short
+                .to_string()
+                .contains("RXD3 handshake returned 10 bytes, expected 12")
+        );
+        for (id, profile) in [(0, Profile::Midi), (1, Profile::Bulk), (2, Profile::Iso)] {
+            rxd3[4] = id;
+            assert_eq!(parse_hello(&rxd3).expect("complete RXD3 frame"), profile);
+        }
+        assert_eq!(
+            parse_hello(b"RXS1\x03\x00\x00\x20\x00\x08\xf4\x01").expect("complete RXS1 frame"),
+            Profile::Stress
+        );
+        rxd3[8] = 0;
+        assert!(parse_hello(&rxd3).is_err());
+        assert!(parse_hello(b"RXD").is_err());
     }
 }

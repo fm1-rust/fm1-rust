@@ -134,7 +134,7 @@ fn classify(
     {
         return (Verdict::Inconclusive, "mismatched frozen trial");
     }
-    if t.bytes == 0 && (highest.is_some() || status.packets != 0) {
+    if t.bytes == 0 && (highest.is_some() || status.packets != 0 || status.saw_rx_irq) {
         return (Verdict::Inconclusive, "no-OUT control contaminated");
     }
     if highest.is_some_and(|i| i >= BOUND) {
@@ -147,6 +147,12 @@ fn classify(
         return (
             Verdict::Inconclusive,
             "host transfer failed, was short, or missed the window",
+        );
+    }
+    if t.bytes != 0 && highest.is_none() {
+        return (
+            Verdict::Inconclusive,
+            "nonempty stimulus left the frozen arena unchanged",
         );
     }
     if t.pair {
@@ -182,11 +188,7 @@ fn classify(
     if t.bytes != 0 && status.packets == 0 {
         return (
             Verdict::Observed,
-            if highest.is_some() {
-                "SRAM changed without RXPKTRDY; guard intact"
-            } else {
-                "host completed; no device-side evidence of this packet"
-            },
+            "SRAM changed without a sampled ready packet; guard intact",
         );
     }
     (Verdict::Observed, "guard intact in this trial")
@@ -530,6 +532,46 @@ mod tests {
         );
         assert_eq!(
             classify(trial, &arena, &data, &status, false).0,
+            Verdict::Inconclusive
+        );
+    }
+
+    #[test]
+    fn unchanged_nonempty_capture_is_inconclusive_with_or_without_a_ready_event() {
+        let (base, mut status, _) = iso64();
+        let trial = Trial { bytes: 65, ..base };
+        let arena = vec![trial.sentinel; ARENA];
+        let data = trial.payload();
+        status.ready[0].count = 65;
+        assert_eq!(
+            classify(trial, &arena, &data, &status, true).0,
+            Verdict::Inconclusive
+        );
+
+        status.packets = 0;
+        status.saw_rx_irq = false;
+        status.ready = [Sample::default(); 2];
+        assert_eq!(
+            classify(trial, &arena, &data, &status, true).0,
+            Verdict::Inconclusive
+        );
+    }
+
+    #[test]
+    fn no_out_control_requires_quiet_bytes_and_telemetry() {
+        let (base, mut status, _) = iso64();
+        let trial = Trial { bytes: 0, ..base };
+        let arena = vec![trial.sentinel; ARENA];
+        status.packets = 0;
+        status.ready = [Sample::default(); 2];
+        status.saw_rx_irq = false;
+        assert_eq!(
+            classify(trial, &arena, &[], &status, true).0,
+            Verdict::Observed
+        );
+        status.saw_rx_irq = true;
+        assert_eq!(
+            classify(trial, &arena, &[], &status, true).0,
             Verdict::Inconclusive
         );
     }
