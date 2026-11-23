@@ -43,6 +43,7 @@ return to USB download mode on a physical FM-1.
 | Example | What to look or listen for |
 | --- | --- |
 | [`blink`](fm1/examples/blink.rs) | The PLAY LED turns on for half a second and off for half a second. |
+| [`cpu1-probe`](fm1/README.md#cpu1-boot-probe) | Runs a Rust computation on the second core at boot and reports the result on PLAY. |
 | [`display`](fm1/examples/display.rs) | Three vertical bars fill the screen in red, green and blue. |
 | [`graphics`](fm1/examples/graphics.rs) | RGB swatches with the label ST7789. Hold PLAY at startup for the framebuffer version of the card. |
 | [`tone`](fm1/examples/tone.rs) | A quiet, continuous square wave at about 441 Hz. |

@@ -7,6 +7,7 @@ image=$example
 unset FM1_DMA_PROFILE
 case "$example" in
     blink|display) set -- ;;
+    cpu1-probe) set -- --features cpu1-probe ;;
     graphics) set -- --features embedded-graphics ;;
     tone) set -- --features audio ;;
     usb-log) package=fm1-rticx; set -- --features usb-log,rtt ;;
@@ -24,7 +25,7 @@ case "$example" in
         package=fm1-rticx
         set -- --features audio,async-usb,usb-log,usb-dma-probe ;;
     rticx-timing) package=fm1-rticx; set -- --features audio,async-usb,usb-log ;;
-    *) echo "usage: $0 [blink|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|cpu1-probe|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"

@@ -276,6 +276,59 @@ each example's required features.
    press **PLAY** to return. The graphics card normally reads **ST7789**.
    Hold **PLAY** at startup to select **FRAMEBUFFER**, then release it.
 
+### CPU1 boot probe
+
+Build the dedicated image with `./fm1/scripts/build-example.sh cpu1-probe`.
+Install `target/firmware/cpu1-probe.fwsc` as application firmware using the
+M-Bootloader procedure above. Power-cycle the unit and read the PLAY LED.
+
+| PLAY indicator | Observation |
+| --- | --- |
+| Steady green | CPU0 received the expected reply and checked CPU1's core number and three stack-register samples. |
+| One amber pulse | CPU0 reached the startup deadline or poll limit without a reply. |
+| Two amber pulses | A core or stack register failed validation. |
+| Three amber pulses | The computed reply was wrong or changed during shutdown. |
+| Four amber pulses | CPU1 reported an exception or CPU0 observed a new debug cause. |
+
+Amber pulses repeat every two seconds. Press PLAY to return to download mode.
+If the CPU0 reporter never starts, hold REC while powering on to reach the
+bootloader. A CPU0 exception during the probe or a failed hold-register readback
+stops startup. A dark LED alone cannot identify which instruction ran.
+
+The reset prefix holds CPU1 before the CRT initializes RAM. CPU0 installs
+the peer's SRAM entry at `0x01c7fff8`, also the SOFT6 vector, and temporarily
+opens the PC limits for the ROM handoff. CPU1 leaves the ROM context with
+`rti`, checks `cnum`, `usp`, `sp` and `ssp`, then calls a fixed Rust function
+with one timer-derived integer. It publishes its reply and parks in SRAM.
+CPU0 bounds the wait to 480,000 TIMER4 ticks (20 ms at 24 MHz), asserts hold,
+and restores the vectors, divider, PC limits and top-RAM protection before
+initializing the board. Both 1 KiB peer stacks and the two 32-byte mailbox
+lines belong to the probe for the lifetime of the image.
+
+Only this example links the probe startup archive. All Rust on CPU1 is the
+integer function in `examples/cpu1-probe.rs`. It has no access path to
+application callbacks, BSP peripherals or the CPU0 critical-section backend.
+Even a capture-free user function could reach a static protected by that
+backend on both cores. Masking CPU0 interrupts only excludes CPU0 handlers.
+The pi32v2 compiler runtime already takes the hardware `lockset` lock inside
+atomic read-modify-write helpers. A future critical-section backend using
+that lock must account for an atomic operation inside a critical section.
+During the exchange both cores access the mailbox in assembly. CPU0 inspects
+the frozen register samples after hold. This relies on aligned SRAM word
+transfers, the chip's synchronization instruction and the hardware hold.
+A passing boot tests those operations on that unit for this exchange.
+
+The [FM-1 hardware traces][cpu1-traces] record nine successful starts across
+whole-chip resets and a timeout on a late re-release. The [documented boot
+sequence][cpu1-sequence] gives the register and ROM details. The probe runs
+once per boot using the bootloader's power configuration. [Other FM-1 firmware
+has reported unit-dependent SRAM misreads under dual-core load][cpu1-units].
+RTICX tasks and resource ceilings on the FM-1 continue to execute on CPU0.
+
+[cpu1-traces]: https://github.com/jvitkauskas/pi32v2-isa/blob/058b89bb835d12b194a9f13f51ec153c1d6cc24b/hw/fm1-2026-10-24-app4/README.md
+[cpu1-sequence]: https://github.com/jvitkauskas/pi32v2-isa/blob/058b89bb835d12b194a9f13f51ec153c1d6cc24b/docs/CPU1.md
+[cpu1-units]: https://sbegueria.github.io/fm1-dev-wiki/Second-Core.html
+
 ## Use from another crate
 
 Add `fm1 = "0.2.0-pre"` under `[dependencies]` in your application's
