@@ -18,6 +18,7 @@ const ORIGINAL_RX_BYTES: u16 = 68;
 const TICKS_PER_MS: u32 = Timers::CRYSTAL_HZ / 1000;
 const DRAIN_TICKS: u32 = 3 * TICKS_PER_MS;
 const WINDOW_MS: u16 = 500;
+const WINDOW_TICKS: u32 = WINDOW_MS as u32 * TICKS_PER_MS;
 const DELAY_MS: u32 = 50;
 const PAGE: usize = 64;
 
@@ -295,6 +296,39 @@ impl Probe {
         Ok(())
     }
 
+    fn ticks_until_window_end(&self, now: u32) -> u32 {
+        let duration = if self.requested.is_some() {
+            WINDOW_TICKS
+        } else {
+            3000 * TICKS_PER_MS
+        };
+        duration.saturating_sub(now.wrapping_sub(self.started))
+    }
+
+    fn ticks_until_ack(&self, now: u32) -> Option<u32> {
+        let first = self.pending_at?;
+        let delay = if self.delayed && self.packets == 1 {
+            DELAY_MS * TICKS_PER_MS
+        } else {
+            0
+        };
+        Some(delay.saturating_sub(now.wrapping_sub(first)))
+    }
+
+    /// Crystal ticks until the next probe operation that can progress without an IRQ.
+    #[cfg(feature = "async-usb")]
+    pub(super) fn ticks_until_service(&self, now: u32, rx_pending: bool) -> Option<u32> {
+        match self.phase {
+            Phase::Armed => {
+                let window = self.ticks_until_window_end(now);
+                let ack = self.ticks_until_ack(now).filter(|_| rx_pending);
+                Some(ack.map_or(window, |ticks| ticks.min(window)))
+            }
+            Phase::Settling => Some(DRAIN_TICKS.saturating_sub(now.wrapping_sub(self.gated))),
+            Phase::Idle | Phase::Frozen => None,
+        }
+    }
+
     pub(super) fn advance(&mut self, now: u32, rx_pending: &mut bool) -> controller::Result<()> {
         match self.phase {
             Phase::Armed => {
@@ -320,10 +354,8 @@ impl Probe {
                 }
                 // PLAY on the MIDI image captures the first ready packet, or three
                 // seconds of silence. Leave that packet unacknowledged until gating.
-                let stop = match self.requested {
-                    None => csr & 1 != 0 || ms >= 3000,
-                    Some(_) => ms >= u32::from(WINDOW_MS),
-                };
+                let stop = self.ticks_until_window_end(now) == 0
+                    || (self.requested.is_none() && csr & 1 != 0);
                 if stop {
                     self.last = obs;
                     *rx_pending = false;
@@ -331,14 +363,7 @@ impl Probe {
                     hw::point_at(RxBuffer::Normal);
                     self.gated = cycles();
                     self.phase = Phase::Settling;
-                } else if *rx_pending
-                    && csr & 1 != 0
-                    && self.pending_at.is_some_and(|first| {
-                        !self.delayed
-                            || self.packets != 1
-                            || now.wrapping_sub(first) / TICKS_PER_MS >= DELAY_MS
-                    })
-                {
+                } else if *rx_pending && csr & 1 != 0 && self.ticks_until_ack(now) == Some(0) {
                     // Collect register samples while armed. Read LIVE only
                     // after redirecting EP1, waiting for the drain and syncing.
                     controller::sync_rx();
@@ -652,6 +677,35 @@ mod tests {
         in_halted: false,
         out_halted: false,
     };
+
+    #[cfg(feature = "async-usb")]
+    #[test]
+    fn deadlines_follow_the_capture_across_clock_wrap_and_reset() {
+        let mut p = Probe::new(ProbeProfile::Midi);
+        let start = u32::MAX - TICKS_PER_MS;
+        let at = |ms: u32| start.wrapping_add(ms * TICKS_PER_MS);
+        assert_eq!(p.ticks_until_service(start, false), None);
+
+        p.phase = Phase::Armed;
+        p.started = start;
+        assert_eq!(p.ticks_until_service(at(2999), false), Some(TICKS_PER_MS));
+        p.requested = Some(64);
+        p.delayed = true;
+        p.packets = 1;
+        p.pending_at = Some(at(20));
+        assert_eq!(p.ticks_until_service(at(69), true), Some(TICKS_PER_MS));
+        assert_eq!(p.ticks_until_service(at(70), true), Some(0));
+        assert_eq!(p.ticks_until_service(at(499), false), Some(TICKS_PER_MS));
+        p.pending_at = Some(at(499));
+        assert_eq!(p.ticks_until_service(at(500), true), Some(0));
+
+        p.phase = Phase::Settling;
+        p.gated = at(500);
+        assert_eq!(p.ticks_until_service(at(502), false), Some(TICKS_PER_MS));
+        assert_eq!(p.ticks_until_service(at(503), false), Some(0));
+        p.reset();
+        assert_eq!(p.ticks_until_service(at(503), true), None);
+    }
 
     #[test]
     fn personalities_expose_only_their_own_alternates() {
