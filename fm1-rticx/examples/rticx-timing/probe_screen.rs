@@ -105,7 +105,14 @@ pub(super) fn draw(grid: &mut TextGrid, profile: &str, state: ProbeDisplay) {
                 if r.requested == Some(0) && (r.highest.is_some() || r.packets != 0) {
                     ("QUIET CHANGED", AMBER)
                 } else if r.first_guard.is_some() {
-                    ("PAST BYTE 67", RED)
+                    (
+                        if profile == "stress" {
+                            "PAST BYTE 2047"
+                        } else {
+                            "PAST BYTE 67"
+                        },
+                        RED,
+                    )
                 } else if r.highest.is_none() {
                     ("NO SRAM CHANGE", MUTED)
                 } else {
@@ -123,7 +130,19 @@ pub(super) fn draw(grid: &mut TextGrid, profile: &str, state: ProbeDisplay) {
         if profile == "midi" {
             row(grid, 8, CYAN, format_args!("PLAY  CAPTURE 3 SEC"));
         } else {
-            row(grid, 8, CYAN, format_args!("RUN FM1 DMA-PROBE"));
+            row(
+                grid,
+                8,
+                CYAN,
+                format_args!(
+                    "RUN FM1 {}",
+                    if profile == "stress" {
+                        "DMA-STRESS"
+                    } else {
+                        "DMA-PROBE"
+                    }
+                ),
+            );
         }
     }
     if let Some(hit) = state.first_hit {

@@ -21,17 +21,17 @@ fn run(mut board: Board) -> ! {
     let mut rtt = rtt::init();
     record(&mut log, &mut rtt, "ready");
     let port = board.take_usb().expect("one USB port");
-    // SAFETY: this logging example runs on a controlled bus using ordinary
-    // control transfers and the 64-byte MIDI class endpoint, including after
-    // reconnect. The application reserves 2 KiB for each receive destination.
-    let mut usb = unsafe {
-        port.into_midi(Identity {
-            vendor_id: 0x1209,
-            product_id: 0x0001, // pid.codes shared test identity
-            manufacturer: "fm1-rust",
-            product: "FM-1 USB Log",
-        })
-    };
+    // SAFETY: run this image only on the qualified bench. The physical host
+    // and its OS restrict traffic to control and ordinary MIDI across resets
+    // and reconnects. We rely on this FM-1 to confine writes to the two 2 KiB
+    // destinations and to respect the ready/idle handoffs on that traffic.
+    let port = unsafe { port.assume_midi_dma() };
+    let mut usb = port.into_midi(Identity {
+        vendor_id: 0x1209,
+        product_id: 0x0001, // pid.codes shared test identity
+        manufacturer: "fm1-rust",
+        product: "FM-1 USB Log",
+    });
     let mut rx = PacketBuffer::default();
     let mut pressed_since = None;
     let mut last_sample = board.timers.ticks();

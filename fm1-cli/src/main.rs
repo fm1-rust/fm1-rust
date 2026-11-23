@@ -1,6 +1,7 @@
 //! Read FM-1 diagnostics from the host.
 
 mod dma_probe;
+mod dma_stress;
 
 use clap::{Parser, Subcommand};
 use core::time::Duration;
@@ -31,6 +32,21 @@ enum Command {
     Log,
     /// Read the 25-page rticx-timing report after the LCD shows DONE.
     Timing,
+    /// Exercise the 2 KiB EP1 OUT boundary and verify endpoint recovery on RXS1.
+    DmaStress {
+        /// Board identification to save with the snapshots.
+        #[arg(long, required_unless_present = "replay")]
+        board_revision: Option<String>,
+        /// Re-evaluate an existing results directory offline, including older RXS1 reports.
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["board_revision","out","reconnect"])]
+        replay: Option<std::path::PathBuf>,
+        /// Wait for one physical disconnect/reconnect and verify the first bulk packet.
+        #[arg(long)]
+        reconnect: bool,
+        /// New results directory.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
     /// Measure EP1 OUT DMA on a board running an rticx-dma image.
     DmaProbe {
         /// Board identification to record with the measurements.
@@ -53,6 +69,12 @@ fn parse_timeout(s: &str) -> Result<Duration, &'static str> {
 }
 
 fn run(args: Args) -> io::Result<()> {
+    if let Command::DmaStress {
+        replay: Some(dir), ..
+    } = &args.command
+    {
+        return dma_stress::replay(dir);
+    }
     let device = Device::find()?;
     let info = device.info();
     eprintln!(
@@ -97,6 +119,20 @@ fn run(args: Args) -> io::Result<()> {
             .0
             .connect(|_, _| {})?
             .read_timing(args.timeout)?,
+        Command::DmaStress {
+            board_revision,
+            reconnect,
+            out,
+            ..
+        } => {
+            let board = board_revision
+                .as_deref()
+                .ok_or_else(|| io::Error::other("missing --board-revision"))?;
+            let dir = out
+                .as_deref()
+                .unwrap_or_else(|| std::path::Path::new("dma-stress-results"));
+            return dma_stress::run(&device, board, dir, args.timeout, reconnect);
+        }
         Command::DmaProbe {
             board_revision,
             out,
@@ -126,6 +162,16 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_stress_replay_needs_no_board() {
+        assert!(Args::try_parse_from(["fm1", "dma-stress", "--replay", "saved"]).is_ok());
+        assert!(Args::try_parse_from(["fm1", "dma-stress"]).is_err());
+        assert!(
+            Args::try_parse_from(["fm1", "dma-stress", "--replay", "saved", "--reconnect"])
+                .is_err()
+        );
+    }
 
     #[test]
     fn accepts_fractional_timeouts_and_filters_after_subcommand() {

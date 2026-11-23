@@ -34,6 +34,91 @@ fn record(m: &mut Machine, seq: u16) -> Vec<u8> {
 fn field(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
+fn stress(m: &mut Machine) {
+    let info = control(m, 0xc0, 0x50, 0, 0, 12);
+    assert_eq!(&info, b"RXS1\x03\x00\x00\x20\x00\x08\xf4\x01");
+    let mut seq = 0;
+    for (n, code, max, silent, fill) in [
+        (0, 0, 0xff, false, 0xa5),
+        (69, 0, 0xff, false, 0x5a),
+        (2048, 0, 0xff, true, 0xa5),
+        (3072, 2, 0x08, true, 0x5a),
+        (64, 2, 0x08, false, 0xa5),
+    ] {
+        seq += 1;
+        let alt = if n == 64 { 1 } else { 2 };
+        control(m, 1, 11, 0, 0, 0);
+        control(m, 1, 11, alt, 0, 0);
+        let token = field(&control(m, 0xc0, 0x54, 0, 0, 2), 0);
+        control(
+            m,
+            0x40,
+            0x60 + 2 * code,
+            n | if fill == 0x5a { 0x8000 } else { 0 },
+            token,
+            0,
+        );
+        let armed = control(m, 0xc0, 0x52, 0, token, 24);
+        assert_eq!(&armed[2..6], &[1, fill, max, 0]);
+        m.soc.usb.test_silent = silent;
+        let data = vec![0x39; usize::from(n)];
+        if n != 0 {
+            m.soc.usb.test_q.push_back(data.clone());
+        }
+        advance(m, 535);
+        let row = record(m, seq);
+        assert_eq!(
+            (row[2], row[3], row[4], row[6], row[23]),
+            (
+                3,
+                fill,
+                max,
+                u8::from(n != 0 && !silent),
+                u8::from(n != 0 && !silent)
+            )
+        );
+        let mut snap = Vec::new();
+        for page in 0..128 {
+            snap.extend(control(m, 0xc0, 0x53, page, token, 64));
+        }
+        assert_eq!(snap.len(), 8192);
+        assert_eq!(&snap[..usize::from(n)], data);
+        assert!(snap[usize::from(n)..].iter().all(|b| *b == fill));
+        let first = field(&row, 30);
+        assert_eq!(field(&row, 28), n.checked_sub(1).unwrap_or(0xffff));
+        assert_eq!(first, if n > 2048 { 2048 } else { 0xffff });
+        println!(
+            "injected {n} bytes; silent={silent}, register={max:#04x}, first_guard={first:#06x}"
+        );
+        if n == 3072 {
+            advance(m, 200);
+            assert!(m.soc.lcd.fb.iter().any(|&b| b != 0));
+            if let Ok(path) = std::env::var("FM1_PROBE_LCD") {
+                fm1_soc::write_bmp(&path, &m.soc.lcd.fb, m.soc.lcd.inverted).unwrap();
+            }
+        }
+    }
+    let interrupted = field(&control(m, 0xc0, 0x54, 0, 0, 2), 0);
+    control(m, 0x40, 0x60, 0, interrupted, 0);
+    m.soc.usb.cable = false;
+    advance(m, 300);
+    m.soc.usb_plug();
+    until(m, 1000, |m| m.soc.usb.product().is_some());
+    let h = head(m);
+    assert_eq!((field(&h, 4), field(&h, 14)), (seq, interrupted));
+    control(m, 1, 11, 1, 0, 0);
+    let next = field(&control(m, 0xc0, 0x54, 0, 0, 2), 0);
+    control(m, 0x40, 0x60, 64, next, 0);
+    m.soc.usb.test_q.push_back(vec![0x45; 64]);
+    advance(m, 535);
+    let row = record(m, seq + 1);
+    assert_eq!(
+        (row[6], field(&row, 9), field(&row, 28), field(&row, 30)),
+        (1, 64, 63, 0xffff)
+    );
+    println!("re-enumerated after interrupting an arm; received a fresh 64-byte bulk packet");
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let mut xip = vec![0xff; 0x120];
@@ -51,27 +136,63 @@ fn main() {
     let prod = m.soc.usb.product().unwrap().to_owned();
     let conf = m.soc.usb.test_config().to_vec();
     println!("enum {:?}, config {} bytes", prod, conf.len());
+    if args[2] == "stress" {
+        assert_eq!((prod.as_str(), conf.len()), ("FM-1 DMA Stress", 50));
+        stress(&mut m);
+        return;
+    }
     if args[2] == "stock" {
         assert_eq!(conf.len(), 101);
         std::fs::write(&args[3], &conf).unwrap();
         return;
     }
-    if args[2] == "normal" {
+    if matches!(
+        args[2].as_str(),
+        "normal" | "normal-count" | "normal-silent" | "normal-ep0"
+    ) {
         assert_eq!(conf, std::fs::read(&args[3]).unwrap());
         let cycles = m.soc.periph.cycles;
         let ep0 = m.soc.usb.read(0x11818, cycles);
         let ep1 = m.soc.usb.read(0x11820, cycles);
-        assert!(ep0.abs_diff(ep1) >= 2048);
+        assert!(ep0.abs_diff(ep1) >= 2048 + 16);
         let start = ep1.checked_sub(fm1_soc::RAM_BASE).unwrap();
-        let payload = vec![0x32; 1023];
-        let tail: Vec<_> = (1023..2048).map(|i| m.soc.ram.read8(start + i)).collect();
-        m.soc.usb.test_q.push_back(payload.clone());
-        advance(&mut m, 40);
-        let read_back = |offset| m.soc.ram.read8(start + offset);
-        assert!((0..1023).map(read_back).eq(payload));
-        assert!((1023..2048).map(read_back).eq(tail));
-        assert_eq!(control(&mut m, 0x80, 8, 0, 0, 1), [1]); // GET_CONFIGURATION
-        println!("normal MIDI RX used disjoint staging and survived a modeled 1023-byte write");
+        m.soc.usb.test_q.push_back(vec![0x32; 64]);
+        advance(&mut m, 30);
+        assert!((0..64).all(|i| m.soc.ram.read8(start + i) == 0x32));
+        assert_eq!(control(&mut m, 0x80, 8, 0, 0, 1), [1]);
+        match args[2].as_str() {
+            "normal" => {
+                // Exactly the data budget, no IRQ, no reported count, no guard change.
+                m.soc.usb.test_silent = true;
+                m.soc.usb.test_q.push_back(vec![0x45; 2048]);
+                advance(&mut m, 140);
+                assert_eq!(m.soc.ram.read8(start + 2047), 0x45);
+                assert_eq!(control(&mut m, 0x80, 8, 0, 0, 1), [1]);
+                println!("64-byte MIDI and a silent write contained in staging kept USB online");
+                return;
+            }
+            "normal-count" => m.soc.usb.test_q.push_back(vec![0x32; 65]),
+            "normal-silent" => {
+                m.soc.usb.test_silent = true;
+                m.soc.usb.test_q.push_back(vec![0x45; 2049]);
+            }
+            "normal-ep0" => {
+                // Inject a changed guard word with no EP0 event.
+                let offset = ep0 - fm1_soc::RAM_BASE + 2048 + 15;
+                m.soc.ram.write8(offset, m.soc.ram.read8(offset) ^ 1);
+            }
+            _ => unreachable!(),
+        }
+        // The examples' panic handler leaves this mailbox in retained RAM.
+        let mailbox = 0x01c7_fd80 - fm1_soc::RAM_BASE;
+        until(&mut m, 300, |m| {
+            b"usb_update_mode\0"
+                .iter()
+                .enumerate()
+                .all(|(i, &b)| m.soc.ram.read8(mailbox + i as u32) == b)
+        });
+        assert_eq!(m.soc.usb.read(0x11800, m.soc.periph.cycles) & 1, 0);
+        println!("{} detached USB0 and entered the panic handler", args[2]);
         return;
     }
     if args[2] == "midi" {
@@ -187,7 +308,7 @@ fn main() {
     }
     m.soc.usb.test_silent = false;
     if profile == 0 {
-        use fm1_soc::periph::{key_id, Action};
+        use fm1_soc::periph::{Action, key_id};
         let id = key_id("play").unwrap();
         m.soc.periph.apply(&Action::Key { id, down: true });
         advance(&mut m, 100);
@@ -245,5 +366,7 @@ fn main() {
     advance(&mut m, 530);
     let quiet = record(&mut m, interrupted);
     assert_eq!((field(&quiet, 0), field(&quiet, 28)), (next, 0xffff));
-    println!("LCD painted, records survived re-enumeration, and the first arm after interruption captured a clean quiet window");
+    println!(
+        "LCD painted, records survived re-enumeration, and the first arm after interruption captured a clean quiet window"
+    );
 }

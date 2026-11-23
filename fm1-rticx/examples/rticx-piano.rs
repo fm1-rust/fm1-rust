@@ -198,9 +198,10 @@ mod app {
         let mut board = Board::take().expect("CPU0 board");
         // pid.codes shared test VID/PID, for the diagnostic only.
         let port = board.take_usb().expect("one USB device");
-        // SAFETY: this bench example requires a controlled host for the whole
-        // connection, including reconnects. Its MIDI class driver sends only
-        // the advertised control and 64-byte bulk traffic into the 2 KiB buffers.
+        // SAFETY: the bench operator keeps this port on the controlled host,
+        // including at enumeration and reconnect. With standard control and
+        // MIDI bulk packets we rely on this FM-1's 2 KiB write bounds and
+        // EP0/EP1 ownership handoffs. A MIDI client cannot enforce those.
         let device = unsafe {
             port.into_midi(Identity {
                 vendor_id: 0x1209,

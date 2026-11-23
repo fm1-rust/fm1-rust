@@ -13,13 +13,18 @@ case "$example" in
     rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
     rticx-piano) package=fm1-rticx; set -- --features audio,async-usb ;;
     rticx-tone|rticx-waveform) package=fm1-rticx; set -- --features audio ;;
+    rticx-dma-stress)
+        export FM1_DMA_PROFILE=stress
+        example=rticx-timing
+        package=fm1-rticx
+        set -- --features audio,async-usb,usb-log,usb-dma-stress ;;
     rticx-dma-midi|rticx-dma-bulk|rticx-dma-iso)
         export FM1_DMA_PROFILE=${example#rticx-dma-}
         example=rticx-timing
         package=fm1-rticx
         set -- --features audio,async-usb,usb-log,usb-dma-probe ;;
     rticx-timing) package=fm1-rticx; set -- --features audio,async-usb,usb-log ;;
-    *) echo "usage: $0 [blink|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso}]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|display|graphics|tone|usb-log|rticx-blink|rticx-controls|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"

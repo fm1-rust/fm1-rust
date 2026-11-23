@@ -83,10 +83,12 @@ fn read_records(
         0 => "MIDI",
         1 => "BULK",
         2 => "ISO",
+        3 => "STRESS",
         _ => return Err(invalid("unknown probe profile")),
     };
     let mut out = Vec::new();
-    writeln!(out, "RXD3 {profile} READY")?;
+    let protocol = if h[9] == 3 { "RXS1" } else { "RXD3" };
+    writeln!(out, "{protocol} {profile} READY")?;
     writeln!(
         out,
         "enum={} retries={} phase={} completed={} retained={} last_aborted={}",

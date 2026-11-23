@@ -44,16 +44,37 @@ pub(super) const MAX_PACKET: usize = 64;
 // a legal transfer and reached offset 1023 under the oversized-packet probe.
 // 2 KiB is the tested staging allocation. See UsbPort::into_midi for the
 // separate platform obligation on the maximum DMA write before Rust can poll.
-const RX_DMA_BYTES: usize = 2048;
+pub(super) const RX_DMA_BYTES: usize = 2048;
+// Between targeted trials, stray EP1 traffic must also have a sacrificial destination.
+#[cfg(feature = "usb-dma-stress")]
+const STAGING: usize = super::dma_probe::BYTES;
+#[cfg(not(feature = "usb-dma-stress"))]
+const STAGING: usize = RX_DMA_BYTES;
 
 // The controller receives the wrapper address and the CPU accesses its first field.
-#[repr(C, align(4))]
+#[repr(C, align(8))]
 struct Buffer<const N: usize>([u8; N]);
+// Keep the first forbidden word in reserved RAM. The controller receives the
+// address of data; its 2 KiB production budget excludes the trailing guard.
+#[repr(C, align(8))]
+struct RxStorage {
+    data: [u8; STAGING],
+    guard: [u32; 4],
+}
+impl RxStorage {
+    const EMPTY: Self = Self {
+        data: [0; STAGING],
+        guard: [0; 4],
+    };
+}
+const _: () = assert!(core::mem::offset_of!(RxStorage, guard) == STAGING);
+const RX_GUARD: [u32; 4] = [0x13a5_f96c, 0xc82e_715b, 0x6d03_b894, 0xfa57_20de];
+static GUARDS_SEEDED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // EP0 shares its RX and TX address. Give it the same capacity for incoming
 // traffic; the footprint measurements in docs/usb-dma cover EP1 only.
-static mut CONTROL: Buffer<RX_DMA_BYTES> = Buffer([0; RX_DMA_BYTES]);
+static mut CONTROL: RxStorage = RxStorage::EMPTY;
 static mut TX: Buffer<MAX_PACKET> = Buffer([0; MAX_PACKET]);
-static mut RX: Buffer<RX_DMA_BYTES> = Buffer([0; RX_DMA_BYTES]);
+static mut RX: RxStorage = RxStorage::EMPTY;
 
 #[derive(Debug)]
 pub(super) struct Timeout;
@@ -89,8 +110,70 @@ pub(super) fn detach() {
     write(IO, 0x0c);
 }
 
+fn guards() -> [(&'static str, *mut [u32; 4]); 2] {
+    // SAFETY: project raw pointers to permanent fields without borrowing or
+    // reading the payloads, which USB0 may own.
+    unsafe {
+        [
+            ("EP0 changed trailing guard word", &raw mut CONTROL.guard),
+            ("EP1 changed trailing guard word", &raw mut RX.guard),
+        ]
+    }
+}
+
+pub(super) fn init_rx_guards() {
+    // UsbPort serializes owners. Preserve damage across a drop and reacquisition.
+    use core::sync::atomic::Ordering;
+    if GUARDS_SEEDED.load(Ordering::Relaxed) {
+        check_rx_guards();
+        return;
+    }
+    for (_, guard) in guards() {
+        // SAFETY: the port owner initializes the two aligned static fields
+        // while detached, before the first possible attach after startup.
+        unsafe { guard.write_volatile(RX_GUARD) };
+    }
+    sync_tx();
+    GUARDS_SEEDED.store(true, Ordering::Relaxed);
+}
+
+pub(super) fn check_rx_guards() {
+    sync_rx();
+    for (fault, guard) in guards() {
+        for (i, expected) in RX_GUARD.into_iter().enumerate() {
+            // SAFETY: all four words belong to the aligned guard field. Under
+            // the DMA contract USB0 only writes data, so the CPU can inspect
+            // this field while attached. Detection after a breach is best effort.
+            if unsafe { guard.cast::<u32>().add(i).read_volatile() } != expected {
+                rx_fault(fault, i);
+            }
+        }
+    }
+}
+
+pub(super) fn check_packet_count(fault: &'static str, count: u16) {
+    if usize::from(count) > MAX_PACKET {
+        rx_fault(fault, usize::from(count));
+    }
+}
+
+#[cold]
+#[inline(never)]
+#[allow(
+    clippy::panic,
+    reason = "A USB RX breach must stop this firmware session."
+)]
+fn rx_fault(fault: &'static str, value: usize) -> ! {
+    detach();
+    sync_tx();
+    panic!("USB0 {fault} {value}");
+}
+
 pub(super) fn attach() -> Result<()> {
     clear(CLOCK, 3); // USB clock comes from the 48 MHz PLL.
+    // SAFETY: install permanent, aligned RAM destinations before exposing D+.
+    // Enumeration can write EP0 before a host application opens a MIDI port.
+    // Activation must already cover control traffic and outstanding old writes.
     write(EP0_ADR, bus_address(&raw mut CONTROL));
     for reg in [EP1_RX, 0x11828, 0x11830, 0x1183c] {
         write(reg, bus_address(RxBuffer::Normal.ptr()));
@@ -144,9 +227,10 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
         return wr(RX_ENABLE, 0);
     }
     write(EP1_TX, bus_address(&raw mut TX));
-    // The port owner validated the USB0 DMA contract at activation. Both
-    // destinations are word-aligned static SRAM. Set addresses before opening
-    // the EP1 gate. RX_MAX=0x40 allowed changes through byte 511 on this board.
+    // SAFETY: the RX allocation is published before opening EP1's gate.
+    // The owner established its write bound at activation. RX_MAX programs
+    // the receiver. At 0x40 a rejected 1023-byte packet still changed SRAM
+    // through byte 511 with no ready event on the black FM-1.
     write(EP1_RX, bus_address(RxBuffer::Normal.ptr()));
     wr(INDEX, 1)?;
     wr(TX_MAX, 0xff)?; // AC79 maximum packet register, as in the SDK.
@@ -207,12 +291,14 @@ pub(super) fn halt(input: bool, halted: bool) -> Result<()> {
 
 pub(super) fn setup() -> [u8; 8] {
     sync_rx();
-    // SAFETY: an 8-byte setup packet is ready. DMA waits for ServicedRxPktRdy.
-    core::array::from_fn(|i| unsafe { (&raw mut CONTROL.0).cast::<u8>().add(i).read_volatile() })
+    // SAFETY: EP0 reported RXPKTRDY and a low COUNT byte of 8. The activation
+    // contract keeps those eight bytes CPU-owned through acknowledgement.
+    core::array::from_fn(|i| unsafe { (&raw mut CONTROL.data).cast::<u8>().add(i).read_volatile() })
 }
 
 pub(super) fn control_in(bytes: &[u8], last: bool) -> Result<()> {
-    // SAFETY: USB0 owns CONTROL, and the previous IN packet has completed.
+    // SAFETY: the previous IN transfer is idle. Activation requires USB0 to
+    // respect CPU ownership of this shared EP0 RX/TX storage while filling it.
     unsafe { publish((&raw mut CONTROL).cast(), EP0_ADR, EP0_CNT, bytes) };
     wr(CSR0, if last { 0x0a } else { 0x02 })
 }
@@ -224,7 +310,17 @@ pub(super) fn receive(events: &mut super::PacketBuffer) -> Result<usize> {
         return Ok(0);
     }
     let count = rx_count()?;
+    check_packet_count("EP1 byte count", count);
     service_packet(events, RxBuffer::Normal, csr, count)
+}
+
+/// Check a newly signaled normal endpoint even if the application never reads MIDI.
+pub(super) fn check_ready_midi_count() -> Result<()> {
+    wr(INDEX, 1)?;
+    if rd(RXCSR)? & 1 != 0 {
+        check_packet_count("EP1 byte count", rx_count()?);
+    }
+    Ok(())
 }
 
 fn rx_count() -> Result<u16> {
@@ -241,10 +337,10 @@ pub(super) fn service_packet(
     let n = usize::from(count).min(MAX_PACKET) / 4;
     sync_rx();
     for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
-        // SAFETY: the sole USB owner sampled RXPKTRDY for this destination.
-        // Hardware holds it until the acknowledgement below. SSYNC precedes
-        // the volatile reads; each index is below 64 in an aligned static
-        // allocation of at least 64 bytes. This clamp bounds only CPU reads.
+        // SAFETY: the sole USB owner sampled RXPKTRDY. Activation requires the
+        // ready packet's CPU-read prefix to remain stable until acknowledgement.
+        // SSYNC precedes these volatile reads. Each index is below 64 in the
+        // aligned allocation. The write extent is a separate hardware obligation.
         *b = unsafe { buffer.ptr().add(i).read_volatile() };
     }
     wr(RXCSR, (csr & !0x64) | 0x10)?;
@@ -337,13 +433,42 @@ mod tests {
 
     #[test]
     fn receive_destinations_have_space_for_full_speed_data_and_its_trailer() {
-        fn capacity<const N: usize>(_: *const Buffer<N>) -> usize {
+        fn capacity<const N: usize>(_: *const [u8; N]) -> usize {
             N
         }
-        for size in [capacity(&raw const CONTROL), capacity(&raw const RX)] {
-            assert!(size >= 1023 + 2);
-        }
+        let storage = RxStorage::EMPTY;
+        assert!(capacity(&raw const storage.data) >= 1023 + 2);
         assert_eq!(MAX_PACKET, 64); // Keep the advertised MIDI payload independent.
+    }
+
+    #[test]
+    fn reacquisition_preserves_guard_damage_and_detaches_before_panicking() {
+        extern crate std;
+        // No USB DMA master runs in the host fixture. Hold the same exclusive
+        // claim as a real caller while changing the guard and restoring it.
+        let _port = crate::Board::init().take_usb().expect("fixture USB port");
+        init_rx_guards();
+        let last = RX_GUARD.len() - 1;
+        // SAFETY: the fixture owns the static guard for this test. The chosen
+        // index is the final aligned word of EP0's guard.
+        let word = unsafe {
+            let word = guards()[0].1.cast::<u32>().add(last);
+            word.write_volatile(!RX_GUARD[last]);
+            word
+        };
+        write(CON0, 1);
+        let detected = std::panic::catch_unwind(init_rx_guards);
+        // SAFETY: restore the same word while the fixture is still idle.
+        unsafe { word.write_volatile(RX_GUARD[last]) };
+        assert!(detected.is_err());
+        assert_eq!(read(CON0), 0);
+        init_rx_guards();
+
+        write(CON0, 1);
+        check_packet_count("EP0 byte count", 64);
+        assert_eq!(read(CON0), 1);
+        assert!(std::panic::catch_unwind(|| check_packet_count("EP0 byte count", 65)).is_err());
+        assert_eq!(read(CON0), 0);
     }
 
     #[test]
