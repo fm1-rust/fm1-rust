@@ -111,8 +111,8 @@ pub fn __generate_app(input: TokenStream) -> TokenStream {
         .into()
 }
 
-fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
-    let mut async_priorities = HashSet::new();
+fn validate_cores(module: &syn::ItemMod) -> syn::Result<Vec<(Ident, u16)>> {
+    let mut async_tasks = Vec::new();
     let Some((_, items)) = &module.content else {
         return Err(syn::Error::new(
             module.ident.span(),
@@ -120,9 +120,9 @@ fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
         ));
     };
     for item in items {
-        let attrs = match item {
-            syn::Item::Fn(f) => &f.attrs,
-            syn::Item::Struct(s) => &s.attrs,
+        let (ident, attrs) = match item {
+            syn::Item::Fn(f) => (&f.sig.ident, &f.attrs),
+            syn::Item::Struct(s) => (&s.ident, &s.attrs),
             _ => continue,
         };
         for attr in attrs {
@@ -143,23 +143,23 @@ fn validate_cores(module: &syn::ItemMod) -> syn::Result<HashSet<u16>> {
                 ));
             }
             if name == "async_task" {
-                async_priorities.insert(args.take_u16("priority")?.unwrap_or(0));
+                async_tasks.push((ident.clone(), args.take_u16("priority")?.unwrap_or(0)));
             }
         }
     }
-    Ok(async_priorities)
+    Ok(async_tasks)
 }
 
 fn expand(args: Tokens, module: syn::ItemMod, cpu: Cpu0) -> syn::Result<Tokens> {
     let source_file = module.ident.span().unwrap().local_file();
     validate_args(&args)?;
-    let priorities = validate_cores(&module)?;
+    let async_tasks = validate_cores(&module)?;
     let mut builder = RticMacroBuilder::new(cpu.clone());
     builder.bind_pre_core_pass(AsyncPass::new(cpu));
     let generated = builder.build_rtic_macro2(args, module, source_file);
     let mut file = syn::parse2::<syn::File>(generated.clone())?;
     if let [syn::Item::Mod(app)] = file.items.as_mut_slice() {
-        dispatcher::protect(app, &priorities)?;
+        dispatcher::protect(app, &async_tasks)?;
         return Ok(quote!(#app));
     }
     if !file.items.is_empty() && file.items.iter().all(|item| {

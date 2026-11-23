@@ -6,7 +6,7 @@ use rticx_sw_pass::common::codegen::{dispatcher_ident, priority_ty_ident};
 use std::collections::HashSet;
 use syn::{Expr, Fields, Item, ItemMod, Type, parse_quote, visit_mut::VisitMut};
 
-pub(super) fn protect(module: &mut ItemMod, priorities: &HashSet<u16>) -> syn::Result<()> {
+pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Result<()> {
     let Some((_, items)) = &mut module.content else {
         return Err(syn::Error::new(
             module.ident.span(),
@@ -14,7 +14,8 @@ pub(super) fn protect(module: &mut ItemMod, priorities: &HashSet<u16>) -> syn::R
         ));
     };
     let mut dispatchers = HashSet::new();
-    for &priority in priorities {
+    let priorities: HashSet<_> = tasks.iter().map(|&(_, p)| p).collect();
+    for priority in priorities {
         let group = priority_ty_ident(priority, 0);
         let installer = format_ident!("__rticx_internal__{group}__try_install");
         let dispatcher = if priority == 0 {
@@ -24,6 +25,12 @@ pub(super) fn protect(module: &mut ItemMod, priorities: &HashSet<u16>) -> syn::R
         };
         let mut saw_installer = false;
         let mut saw_receiver = false;
+        let mut saw_dispatch = false;
+        let task_trait = if priority == 0 {
+            "RticIdleTask"
+        } else {
+            "RticTask"
+        };
         for item in &mut *items {
             match item {
                 Item::Fn(f) if f.sig.ident == installer => {
@@ -32,7 +39,7 @@ pub(super) fn protect(module: &mut ItemMod, priorities: &HashSet<u16>) -> syn::R
                         #[doc = "# Safety\nThe owning dispatcher must serialize calls after the task \
                                  and its slot are initialized. The selected task must have a queued input."]
                     });
-                    StorageReads.visit_block_mut(&mut f.block);
+                    DispatcherBody.visit_block_mut(&mut f.block);
                     saw_installer = true;
                 }
                 Item::Struct(s) if s.ident == dispatcher && matches!(s.fields, Fields::Unit) => {
@@ -41,16 +48,44 @@ pub(super) fn protect(module: &mut ItemMod, priorities: &HashSet<u16>) -> syn::R
                     s.semi_token = None;
                     saw_receiver = true;
                 }
+                Item::Impl(i)
+                    if matches!(i.self_ty.as_ref(), Type::Path(ty) if ty.path.is_ident(&dispatcher))
+                        && i.trait_
+                            .as_ref()
+                            .is_some_and(|(_, path, _)| path.is_ident(task_trait)) =>
+                {
+                    DispatcherBody.visit_item_impl_mut(i);
+                    saw_dispatch = true;
+                }
                 _ => {}
             }
         }
-        if !(saw_installer && saw_receiver) {
+        if !(saw_installer && saw_receiver && saw_dispatch) {
             return Err(syn::Error::new(
                 module.ident.span(),
                 format!("unexpected RTICX dispatcher for priority {priority}"),
             ));
         }
         dispatchers.insert(dispatcher);
+    }
+    // The async pass emits one wake function per task, including priority zero.
+    // Restrict rewriting to these callbacks and the generated dispatcher bodies.
+    let mut wakes: HashSet<_> = tasks
+        .iter()
+        .map(|(task, _)| format_ident!("__rticx_internal__{task}__wake"))
+        .collect();
+    for item in &mut *items {
+        if let Item::Fn(f) = item
+            && wakes.remove(&f.sig.ident)
+        {
+            DispatcherBody.visit_block_mut(&mut f.block);
+        }
+    }
+    if !wakes.is_empty() {
+        return Err(syn::Error::new(
+            module.ident.span(),
+            "missing RTICX wake callback",
+        ));
     }
     if !dispatchers.is_empty() {
         // The application can re-export the runtime under its expected crate name.
@@ -158,10 +193,25 @@ impl VisitMut for Startup<'_> {
     }
 }
 
-// The async pass accesses task state inside its generated installers.
-struct StorageReads;
-impl VisitMut for StorageReads {
+// The async pass uses method syntax where the app's extension traits are in scope.
+// A by-value trait method can take the handle before Rust borrows it for an
+// inherent method. In particular, a wake caller must never gain authority to poll.
+struct DispatcherBody;
+impl VisitMut for DispatcherBody {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let Expr::MethodCall(call) = expr
+            && let Expr::Path(exec) = call.receiver.as_ref()
+            && exec.path.is_ident("exec")
+            && matches!(
+                call.method.to_string().as_str(),
+                "set_pending" | "try_allocate" | "spawn" | "poll"
+            )
+        {
+            let method = &call.method;
+            let args = &call.args;
+            *expr = parse_quote!(__rticx_backend::executor::Installed::#method(&#exec, #args));
+            return;
+        }
         if let Expr::MethodCall(call) = expr
             && call.method == "assume_init_mut"
             && call.args.is_empty()
