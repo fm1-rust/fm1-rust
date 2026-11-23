@@ -54,6 +54,23 @@ slot storage once. Only its owning interrupt or idle dispatcher may install
 and poll a future. A wake marks the slot pending, even if it arrives before
 the future is installed.
 
+### Async channels
+
+Use `rticx_pi32v2::asynchronous::make_channel!(T, N)` once at startup to
+create a bounded FIFO with cloneable producers and one receiver. Each producer
+calls `try_send`. On `Full(value)` the caller retains the value and decides
+whether to coalesce, drop or retry it later. Values move under the interrupt
+mask. For large payloads, send a handle, as the waveform example does for
+render jobs. The receiver can use `recv().await` or `try_recv()` and drains
+buffered values after the last sender drops.
+
+In v0.2, import endpoints from `asynchronous::channel`. The previous
+`rtic-sync` endpoint types were exposed directly and supported `send().await`.
+A custom waker could cancel a blocked sender while its intrusive queue node
+was being accessed. A waker clone could also send while the receiver was
+registering. The replacement keeps only a receiver waker and runs waker
+callbacks and payload destructors outside the channel's critical section.
+
 ## License
 
 Licensed under the [MIT License][mit].

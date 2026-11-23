@@ -25,17 +25,18 @@ path = "tests/ui/dispatcher_access.rs"
 crate-type = ["rlib"]
 
 [dependencies]
+critical-section = "1"
+heapless = "0.9"
+static_cell = "2.1.1"
 rtic-sync = { version = "1.6.1", default-features = false }
 portable-atomic = { version = "1", default-features = false }
 rticx-pi32v2-macro.workspace = true
 
 [target.'cfg(target_arch = "pi32v2")'.dependencies]
 critical-section = { version = "1", features = ["restore-state-u32"] }
-heapless = "0.9"
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
-heapless = "0.9"
 
 [build-dependencies]
 cc = "1"
