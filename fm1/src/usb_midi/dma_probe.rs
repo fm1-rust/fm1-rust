@@ -1,7 +1,7 @@
 //! EP1 OUT measurements for the opt-in timing firmware. One CPU0 USB task owns
 //! both DMA destinations and the frozen copy. No arena is stored in its future.
 use super::{
-    Identity, PacketBuffer,
+    Identity,
     control::{Control, Interface, Reply},
     controller::{self, RxBuffer, probe as hw},
 };
@@ -339,8 +339,10 @@ impl Probe {
                             || now.wrapping_sub(first) / TICKS_PER_MS >= DELAY_MS
                     })
                 {
-                    let mut events = PacketBuffer::default();
-                    controller::service_packet(&mut events, RxBuffer::Live, csr, count)?;
+                    // Collect register samples while armed. Read LIVE only
+                    // after redirecting EP1, waiting for the drain and syncing.
+                    controller::sync_rx();
+                    controller::acknowledge_rx(csr)?;
                     self.pending_at = None;
                     *rx_pending = false;
                 }

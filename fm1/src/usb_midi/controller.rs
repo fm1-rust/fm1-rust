@@ -311,7 +311,15 @@ pub(super) fn receive(events: &mut super::PacketBuffer) -> Result<usize> {
     }
     let count = rx_count()?;
     check_packet_count("EP1 byte count", count);
-    service_packet(events, RxBuffer::Normal, csr, count)
+    let n = usize::from(count).min(MAX_PACKET) / 4;
+    sync_rx();
+    for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
+        // SAFETY: the count check bounds the copy to one MIDI packet. The
+        // activation contract keeps this ready prefix stable until acknowledgement.
+        *b = unsafe { RxBuffer::Normal.ptr().add(i).read_volatile() };
+    }
+    acknowledge_rx(csr)?;
+    Ok(n)
 }
 
 /// Check a newly signaled normal endpoint even if the application never reads MIDI.
@@ -327,25 +335,10 @@ fn rx_count() -> Result<u16> {
     Ok(u16::from_le_bytes([rd(COUNT)?, rd(COUNT + 1)?]))
 }
 
-// Both callers supply the currently programmed static DMA buffer with RXPKTRDY set.
-pub(super) fn service_packet(
-    events: &mut super::PacketBuffer,
-    buffer: RxBuffer,
-    csr: u8,
-    count: u16,
-) -> Result<usize> {
-    let n = usize::from(count).min(MAX_PACKET) / 4;
-    sync_rx();
-    for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
-        // SAFETY: the sole USB owner sampled RXPKTRDY. Activation requires the
-        // ready packet's CPU-read prefix to remain stable until acknowledgement.
-        // SSYNC precedes these volatile reads. Each index is below 64 in the
-        // aligned allocation. The write extent is a separate hardware obligation.
-        *b = unsafe { buffer.ptr().add(i).read_volatile() };
-    }
+/// Acknowledge a ready packet with EP1 selected and its sampled RXCSR.
+pub(super) fn acknowledge_rx(csr: u8) -> Result<()> {
     wr(RXCSR, (csr & !0x64) | 0x10)?;
-    wr(RXCSR + 1, 0)?;
-    Ok(n)
+    wr(RXCSR + 1, 0)
 }
 
 #[cfg(feature = "usb-dma-probe")]
