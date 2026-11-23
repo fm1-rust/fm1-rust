@@ -12,8 +12,17 @@ mod __rticx_backend {
     }
 }
 
-static FIRST: AtomicPtr<u32> = AtomicPtr::new(ptr::null_mut());
-static SECOND: AtomicPtr<u32> = AtomicPtr::new(ptr::null_mut());
+struct SlotPtr(AtomicPtr<u32>);
+impl SlotPtr {
+    const fn new() -> Self {
+        Self(AtomicPtr::new(ptr::null_mut()))
+    }
+    unsafe fn install(&self, slot: &u32) {
+        self.0.store(ptr::from_ref(slot).cast_mut(), Relaxed);
+    }
+}
+static FIRST: SlotPtr = SlotPtr::new();
+static SECOND: SlotPtr = SlotPtr::new();
 
 // The async pass emits one such block per task. Only compare addresses while
 // entry is running. The target entry lives for the lifetime of the application.
@@ -27,7 +36,7 @@ fn distinct_slots() -> bool {
         let __s = ManuallyDrop::new(0u32);
         SECOND.store(ptr::from_ref(&*__s).cast_mut(), Relaxed);
     }
-    FIRST.load(Relaxed) != SECOND.load(Relaxed)
+    FIRST.0.load(Relaxed) != SECOND.0.load(Relaxed)
 }
 
 #[test]

@@ -3,6 +3,8 @@
 
 pub mod asynchronous;
 #[doc(hidden)]
+pub mod executor;
+#[doc(hidden)]
 #[cfg(pi32v2)]
 pub mod export;
 #[cfg(any(pi32v2, test))]
@@ -13,7 +15,7 @@ mod queue;
 mod registers;
 pub use rticx_pi32v2_macro::app;
 #[doc(hidden)]
-pub use rticx_pi32v2_macro::{__entry, __interrupt};
+pub use rticx_pi32v2_macro::{__entry, __interrupt, fm1_app};
 
 /// CPU0 interrupt sources currently supported on the AC791N.
 /// The discriminants are indices in the SoC's RAM vector table.

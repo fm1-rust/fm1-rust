@@ -2,8 +2,9 @@
 //!
 //! Import endpoint and error types from [`channel`]. They come from the same
 //! `rtic-sync` implementation as [`make_channel!`].
+pub use portable_atomic;
 pub use rtic_sync::{channel, make_channel};
-pub use rticx_async::{executor, portable_atomic, yield_now};
+pub mod yield_now;
 
 #[cfg(test)]
 mod tests {

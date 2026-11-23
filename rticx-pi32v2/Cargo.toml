@@ -21,7 +21,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 rtic-sync = { version = "1.6.1", default-features = false }
-rticx-async = "0.2"
+portable-atomic = { version = "1", default-features = false }
 rticx-pi32v2-macro.workspace = true
 
 [target.'cfg(target_arch = "pi32v2")'.dependencies]
