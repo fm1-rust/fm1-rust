@@ -5,12 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.0 (Unreleased)
+
+### Changed
 
 - [BREAKING] The async channel now uses local endpoints with nonblocking
   `try_send` and cancellable `recv().await`. Update explicit `rtic_sync` endpoint
   types to the runtime channel types. Callers of `send().await` must handle
   `TrySendError::Full(value)` or arrange a separate capacity notification.
+- [BREAKING] Remove the `asynchronous::executor` re-export. Submit work with
+  the generated `Task::spawn` method.
+- [BREAKING] Add `Interrupt::USB0` for vector 9 and mark `Interrupt`
+  non-exhaustive. Downstream matches need a wildcard arm.
+
+### Fixed
+
+- Track executor slot reservation separately from initialization so an early or
+  stale wake cannot poll uninitialized storage. A completed future is dropped
+  in place before its slot can be reused.
 
 ## 0.1.2 (2026-11-21)
 

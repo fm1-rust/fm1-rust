@@ -5,17 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.0 (Unreleased)
+
+### Added
+
+- Add the `rticx-timing` diagnostic for measuring interrupt and async-task
+  timing on the board, with reports available over USB.
+- Add `rticx-cpu1-audio`, which runs a fixed audio worker on CPU1 while
+  CPU0 owns RTICX, the audio interrupt, the display and the USB log.
+
+### Changed
 
 - [BREAKING] `Clock` and `DeadlineClock` own their pending timer registrations.
   This fixes a use-after-free during expiry and wakes the most recent waker
   after a repoll. Use `rtic_time::Timebase` in generic clock bounds. Each clock
   provides 16 slots by default. Use `start_with_slots` for a different capacity.
-
 - [BREAKING] The async channel now uses local endpoints with nonblocking
   `try_send` and cancellable `recv().await`. Update explicit `rtic_sync` endpoint
   types to the runtime channel types. Callers of `send().await` must handle
   `TrySendError::Full(value)` or arrange a separate capacity notification.
+- [BREAKING] `#[fm1_rticx::app]` requires `Send` for shared fields, task and
+  idle state, and async spawn inputs. Wrap supported owned BSP handles in
+  `bsp::Cpu0` when handing them to interrupt tasks. Task-local futures may
+  keep non-`Send` values across an await.
 
 ## 0.1.1 (2026-11-21)
 

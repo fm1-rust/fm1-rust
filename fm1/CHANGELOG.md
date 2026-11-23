@@ -5,15 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.0 (Unreleased)
+
+### Added
+
+- Add `Cpu0<T>` for passing an owned BSP peripheral between tasks on CPU0.
+  Access, extraction and drop check which core is executing.
+- Add the opt-in `cpu1-probe` boot example and linker support for a fixed
+  SRAM worker on CPU1.
+- Add `usb-dma-probe` and `usb-dma-stress` firmware support for measuring
+  EP1 OUT writes on a qualified board.
 
 ### Changed
 
-- Starting USB-MIDI now requires an unsafe call to `UsbPort::into_midi`.
-  USB0's EP1 OUT DMA exceeded the original 68-byte allocation on hardware.
-  EP0 and normal EP1 now have separate 2 KiB receive destinations. The
-  caller must establish the controller's receive DMA bounds and handoffs.
-  [Measurements and migration](../docs/usb-dma/README.md#fix-and-remaining-hardware-contract)
+- [BREAKING] Starting USB-MIDI now requires the board to establish the DMA
+  write bounds and ownership handoffs. Call `unsafe { port.assume_midi_dma() }`
+  during board setup and pass the resulting `QualifiedMidiPort` to code that
+  calls `into_midi` safely. Direct activation through `UsbPort::into_midi` is unsafe.
+
+### Fixed
+
+- Give EP0 and normal EP1 OUT separate, guarded 2 KiB receive buffers. On the
+  black FM-1, EP1 DMA wrote beyond the former 68-byte allocation. The maximum
+  write extent remains a board qualification requirement.
+  [Hardware measurements](../docs/usb-dma/README.md#fix-and-remaining-hardware-contract)
+- Acknowledge EP1 OUT during a diagnostic trial without reading the live
+  payload. Gate and retarget DMA, allow the old destination to drain, then
+  take the snapshot. Deferred acknowledgements and capture deadlines now
+  make progress even on a quiet bus.
 
 ## 0.1.3 (2026-11-21)
 
