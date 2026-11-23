@@ -132,6 +132,30 @@ fn main() {
         },
     );
     m.soc.usb_plug();
+    if args[2] == "piano-detached" {
+        use fm1_soc::periph::{Action, key_id};
+        m.soc.periph.apply(&Action::Adc { ch: 4, value: 800 });
+        advance(&mut m, 300);
+        let start = m.soc.periph.audio.len();
+        assert!(start > 0 && m.soc.periph.audio.iter().all(|&s| s == 0));
+        m.soc.periph.apply(&Action::Key {
+            id: key_id("C4").unwrap(),
+            down: true,
+        });
+        m.soc.usb.cable = false;
+        advance(&mut m, 50);
+        m.soc.usb_plug();
+        advance(&mut m, 300);
+        assert!(m.soc.periph.audio[start..].iter().any(|&s| s != 0));
+        assert_eq!(m.soc.usb.sie_accesses, 0);
+        let cycles = m.soc.periph.cycles;
+        for addr in [0x11800, 0x11818, 0x11820] {
+            // USB0 control, EP0 and EP1 RX addresses
+            assert_eq!(m.soc.usb.read(addr, cycles), 0);
+        }
+        println!("local C4 produced audio across a cable reconnect with USB0 disabled");
+        return;
+    }
     until(&mut m, 1000, |m| m.soc.usb.product().is_some());
     let prod = m.soc.usb.product().unwrap().to_owned();
     let conf = m.soc.usb.test_config().to_vec();

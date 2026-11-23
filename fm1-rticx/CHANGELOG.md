@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `rticx-piano` example uses checked USB-MIDI startup and plays locally
+  when the BSP reports DMA protection unavailable.
 - [BREAKING] `Clock` and `DeadlineClock` own their pending timer registrations.
   This fixes a use-after-free during expiry and wakes the most recent waker
   after a repoll. Use `rtic_time::Timebase` in generic clock bounds. Each clock

@@ -44,7 +44,7 @@ These screenshots show the examples running in [fm1-emu](https://github.com/joak
 | ![Front panel with the PLAY lamp lit](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-blink.png) | [`rticx-blink`][rticx-blink-example]<br>Watch the **PLAY** lamp blink. TIMER5 wakes one async task to toggle the lamp every 500 ms and another to sample the button every 10 ms. The LCD stays dark. |
 | ![Tone playing with a green LCD above, muted with a red LCD below](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-tone.png) | [`rticx-tone`][rticx-tone-example]<br>Tap **PLAY/STOP** to mute the stereo square wave. The LCD changes from green to red and the PLAY indicator changes from green to amber. Tap again to resume. A magenta strip along the bottom marks a late DMA refill. |
 | ![Controls display with SELECT at +3, PRESETS at +2 and the SAVE lamp enabled](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-controls.png) | [`rticx-controls`][rticx-controls-example]<br>Turn **SELECT** to change its count, tap **SAVE** to toggle its lamp, or hold a piano key to light its LED. **PLAY** cycles through green, red, both and off. TIMER5 scans one column every 100 µs while separate tasks read completed sweeps and paint the LCD. |
-| ![Piano display with C4, E4 and G4 held and USB connected](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-piano.png) | [`rticx-piano`][rticx-piano-example]<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume, or [record the chord over USB-MIDI](#record-and-play-a-midi-clip). |
+| ![Piano display with C4, E4 and G4 held and USB connected](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-piano.png) | [`rticx-piano`][rticx-piano-example]<br>Play a C-major chord. The held notes turn green on the LCD and their key LEDs light up. The keyboard spans F3–G5 (MIDI 53–79). Turn **MASTER** to set the volume. |
 | ![Oscilloscope showing an A4 sine wave at the DAC output](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/rticx-waveform.png) | [`rticx-waveform`][rticx-waveform-example]<br>Turn **PRESETS** to cycle through sine, triangle, sawtooth and square waves. With **SEL DAC** displayed, press **FX** to halve the output and watch the trace shrink. **SEL** switches between the oscillator and DAC. Tap a key to latch F3–G5, transpose up to an octave with **SELECT**, set velocity (0–127) with **MASTER**, or mute and resume with **PLAY/STOP**. |
 | ![Host terminal showing ready followed by two play+ and play- pairs](https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1-rticx/v0.1.1/docs/images/usb-log.png) | [`usb-log`][usb-log-example]<br>Tap and release **PLAY**, then [read the log over USB](#read-a-log-over-usb). The firmware records `ready` at startup, `play+` on press and `play-` on release. The LCD stays dark. |
 
@@ -128,6 +128,8 @@ drops the newest sweep. The next accepted one restores held levels, key LEDs
 and MASTER. The diagnostic counts only button presses and encoder detents it
 actually received.
 
+The piano starts its local keyboard and audio even if the BSP cannot start
+protected USB-MIDI. The current AC791N build takes this path and shows `USB-`.
 On the piano display, held notes are green and notes played since boot stay
 cyan after release. `SEEN` counts distinct keys. `LAST` keeps the most recent
 note name and MIDI number on screen. `VEL` shows the last strike velocity. `PRESS`
@@ -137,6 +139,8 @@ stereo mix.
 
 ### Read a log over USB
 
+The USB log, timing and DMA probe images are for a
+[qualified board and host](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1).
 Run `./fm1/scripts/build-example.sh usb-log` and install
 `target/firmware/usb-log.fwsc` with M-Flasher. Connect the USB data cable and
 tap PLAY. Run the host reader from the workspace root.
@@ -222,7 +226,8 @@ for two seconds to return to download mode.
 
 ### Record and play a MIDI clip
 
-Connect the piano to a computer with a USB data cable. The USB indicator changes from `USB-` to
+These steps require a piano build with active USB-MIDI. Connect the piano
+to a computer with a USB data cable. The USB indicator changes from `USB-` to
 green `USB+` when the host configures **FM-1 MIDI Piano**. To try it in Ableton Live, record and play back a chord.
 
 1. Under **Settings → Link, Tempo & MIDI**, enable **Track** for the FM-1 input
@@ -518,7 +523,7 @@ intentionally submit to this crate under the [MIT License][mit].
 [rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-blink.rs
 [rticx-tone-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-tone.rs
 [rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-controls.rs
-[rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-piano.rs
+[rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-piano.rs
 [rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-waveform.rs
 [rticx-timing-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-timing.rs
 [usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/usb-log.rs

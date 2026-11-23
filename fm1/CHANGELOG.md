@@ -18,10 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [BREAKING] Starting USB-MIDI now requires the board to establish the DMA
-  write bounds and ownership handoffs. Call `unsafe { port.assume_midi_dma() }`
-  during board setup and pass the resulting `QualifiedMidiPort` to code that
-  calls `into_midi` safely. Direct activation through `UsbPort::into_midi` is unsafe.
+- [BREAKING] `UsbPort::into_midi` is safe and panics if the BSP cannot establish
+  receive DMA confinement and ownership. Use `UsbPort::try_into_midi` to keep
+  running without USB. On AC791N it returns `UsbError::DmaProtectionUnavailable`
+  with USB detached. Bench code that met the RC's unsafe startup contract can
+  migrate to `unsafe { port.assume_midi_dma() }.into_midi(identity)`.
 
 ### Fixed
 

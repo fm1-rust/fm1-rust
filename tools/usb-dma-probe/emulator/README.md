@@ -62,8 +62,11 @@ write of exactly 2048 bytes leave USB online. A 65-byte ready count, a
 2049-byte silent EP1 write and a changed last byte of EP0's guard each
 detach USB and reach the timing firmware's panic handler in a fresh boot.
 The harness checks its retained download-mode mailbox and the disabled USB0
-controller. To exercise the same cases in the piano firmware, build
-`rticx-piano` and supply its unpacked binary in place of `normal.bin`.
+controller. The piano uses checked startup and plays locally on AC791N.
+Build `rticx-piano` and run
+`check_probe target/firmware/rticx-piano.bin piano-detached` to press C4 and
+reconnect the cable. The harness checks for audio output while USB0 stays
+disabled and both receive address registers remain at reset.
 The diagnostic
 checks include a clean no-OUT control, two serviced packets, a 69-byte
 crossing, a 1023-byte silent write, local PLAY capture, the MIDI marker, and

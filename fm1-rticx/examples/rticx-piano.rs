@@ -1,4 +1,5 @@
-//! Play the FM-1 keyboard locally or over USB MIDI. Hold both octave buttons for two seconds for USB download.
+//! Play the FM-1 keyboard locally, with USB MIDI when protected DMA is available.
+//! Hold both octave buttons for two seconds for USB download.
 #![allow(missing_docs, reason = "RTICX generates task traits and initialisers.")]
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
@@ -199,18 +200,14 @@ mod app {
         let mut board = Board::take().expect("CPU0 board");
         // pid.codes shared test VID/PID, for the diagnostic only.
         let port = board.take_usb().expect("one USB device");
-        // SAFETY: the bench operator keeps this port on the controlled host,
-        // including at enumeration and reconnect. With standard control and
-        // MIDI bulk packets we rely on this FM-1's 2 KiB write bounds and
-        // EP0/EP1 ownership handoffs. A MIDI client cannot enforce those.
-        let device = unsafe {
-            port.into_midi(Identity {
+        let device = port
+            .try_into_midi(Identity {
                 vendor_id: 0x1209,
                 product_id: 0x0001,
                 manufacturer: "fm1-rust",
                 product: "FM-1 MIDI Piano",
             })
-        };
+            .ok();
         DeadlineClock::start::<3>(board.timers.take_alarm().expect("one TIMER2 alarm"));
         let controls = board.panel.into_touch_controls();
         let audio_output = AudioOutput::start(board.audio).expect("audio clock");
@@ -236,7 +233,7 @@ mod app {
                 midi: Midi {
                     updates,
                     delay,
-                    device: device.into(),
+                    device: device.map(Cpu0::from),
                     clock: MidiClock::default(),
                     session: None,
                     remote: Notes::default(),
@@ -356,7 +353,7 @@ mod app {
     struct Midi {
         updates: Receiver<'static, (), 1>,
         delay: Clock,
-        device: Cpu0<MidiDevice>,
+        device: Option<Cpu0<MidiDevice>>,
         clock: MidiClock,
         session: Option<u32>,
         remote: Notes,
@@ -367,15 +364,18 @@ mod app {
         type SpawnInput = ();
 
         async fn exec(&mut self, (): ()) {
+            let Some(mut device) = self.device.take() else {
+                return;
+            };
             let mut buffer = PacketBuffer::default();
             let mut link_check = None;
             loop {
                 let woke = DeadlineClock::now();
                 if link_check.is_some_and(|at| woke.checked_duration_since(at).is_some()) {
-                    self.device.poll();
+                    device.poll();
                     link_check = None;
                 }
-                let session = self.device.session();
+                let session = device.session();
                 let new_session = session != self.session;
                 let previous = self.remote;
                 if new_session {
@@ -386,7 +386,7 @@ mod app {
                 }
                 let mut last = None;
                 let mut seen = 0;
-                for &event in self.device.receive(&mut buffer) {
+                for &event in device.receive(&mut buffer) {
                     if let Some(key) = self.remote.apply(event) {
                         last = Some((key, event[3]));
                         seen |= 1 << key.index();
@@ -411,15 +411,15 @@ mod app {
                     // Host input never enters this queue, even when a physical
                     // key and an incoming note have the same pitch.
                     self.clock
-                        .service(woke, playing, |event| self.device.send(&[event]) == 1);
+                        .service(woke, playing, |event| device.send(&[event]) == 1);
                     self.output.observe(&physical);
-                    let n = self.device.send(self.output.pending());
+                    let n = device.send(self.output.pending());
                     self.output.sent(n);
                     self.output
-                        .send_pressure(&physical, |events| self.device.send(events));
+                        .send_pressure(&physical, |events| device.send(events));
                 }
                 // A failed send or receive can take the device offline during this pass.
-                if self.device.session() != session {
+                if device.session() != session {
                     continue;
                 }
                 // Protect sounding host notes if a cable pull produces no bus interrupt.
@@ -429,7 +429,7 @@ mod app {
                 } else {
                     link_check.get_or_insert(woke + DeadlineDuration::from_millis(100));
                 }
-                let usb = pin!(self.device.wait_for_activity(&mut self.delay));
+                let usb = pin!(device.wait_for_activity(&mut self.delay));
                 let panel = pin!(self.updates.recv());
                 let activity = select(usb, panel);
                 if let Some(at) = self.clock.wake_by(playing, link_check) {
