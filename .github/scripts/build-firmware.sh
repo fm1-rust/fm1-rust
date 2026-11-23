@@ -46,4 +46,24 @@ if [[ $package == fm1-rticx ]]; then
         fi
         grep -F "error[E0277]" "$log" || { cat "$log" >&2; exit 1; }
     done
+
+    dispatch=(cargo rustc --color never --locked -p rticx-pi32v2 --example dispatcher-access
+        --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
+        -Zbuild-std-features=compiler-builtins-mem --)
+    cases=(forge_irq forge_idle call_installer replace_slot forge_facade forge_token)
+    for flag in "${cases[@]}"; do dispatch+=(--check-cfg "cfg($flag)"); done
+    "${dispatch[@]}"
+    for flag in "${cases[@]}"; do
+        case "$flag" in
+            forge_irq|forge_idle) expect=E0423 ;;
+            forge_facade) expect=E0308 ;;
+            forge_token) expect=E0603 ;;
+            *) expect=E0133 ;;
+        esac
+        if "${dispatch[@]}" --cfg "$flag" >"$log" 2>&1; then
+            echo "unsafe RTICX call compiled: $flag" >&2
+            exit 1
+        fi
+        grep -F "error[$expect]" "$log" || { cat "$log" >&2; exit 1; }
+    done
 fi

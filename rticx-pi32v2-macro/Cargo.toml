@@ -18,7 +18,7 @@ syn = { version = "2", features = ["full", "visit-mut"] }
 # Entry and resource generation adapt the shapes emitted by these releases.
 rticx-async-pass = "=0.2.1"
 rticx-core = "=0.2.0"
-rticx-sw-pass = "0.2"
+rticx-sw-pass = "=0.2.0"
 
 [lints]
 workspace = true
