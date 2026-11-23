@@ -1,6 +1,6 @@
 [package]
 name = "rticx-pi32v2-macro"
-version = "0.1.1"
+version.workspace = true
 edition = "2024"
 description = "RTICX application macro for pi32v2"
 license = "MIT"

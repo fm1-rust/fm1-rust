@@ -1,6 +1,6 @@
 [package]
 name = "fm1-graphics"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Allocation-free text and waveform rendering for the M-VAVE FM-1"
 license = "MIT"
@@ -10,7 +10,7 @@ categories = ["embedded", "graphics", "no-std"]
 
 [dependencies]
 embedded-graphics-core = "0.4"
-fm1 = "0.1.2"
+fm1.workspace = true
 
 [features]
 async-display = ["fm1/async-display"]

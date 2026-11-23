@@ -35,6 +35,15 @@ passes. With the pinned 0.2 releases, it keeps each executor slot in the
 non-returning entry frame and projects shared fields through raw pointers
 before locking. Size task futures for the application's startup stack.
 
+### Values crossing interrupt priorities
+
+Task and idle state, each shared field, and each async spawn input must implement
+`Send`. A shared `Cell<u32>` can be used inside its lock. A shared
+`&Cell<u32>` would let both priorities copy the reference and access the cell
+after releasing the lock. The macro rejects that type in both shared storage
+and task initializers. The future created by an async task stays on its owning
+dispatcher and may keep task-local, non-`Send` values across an await.
+
 ## License
 
 Licensed under the [MIT License][mit].

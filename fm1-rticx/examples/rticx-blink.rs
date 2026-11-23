@@ -9,6 +9,7 @@
 #[cfg(target_os = "none")]
 #[fm1_rticx::app(dispatchers = [SOFT0, SOFT1])]
 mod app {
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{Board, embedded_hal::digital::StatefulOutputPin, panel::Play},
         time::{Clock, Duration, ExtU32, Timebase, Timer5},
@@ -16,14 +17,16 @@ mod app {
 
     #[shared]
     struct Shared {
-        panel: Play,
+        panel: Cpu0<Play>,
     }
 
     #[init]
     fn init() -> (Shared, TaskInits) {
         let board = Board::take().expect("CPU0 board");
         (
-            Shared { panel: board.panel },
+            Shared {
+                panel: board.panel.into(),
+            },
             TaskInits {
                 tick: Tick(Clock::start(board.timers)),
             },

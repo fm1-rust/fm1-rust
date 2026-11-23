@@ -28,7 +28,7 @@ impl Clock {
     #[must_use]
     pub fn start(timers: Timers) -> Timer5 {
         QUEUE.initialize(Self(()));
-        Timer5(timers)
+        Timer5(timers.into())
     }
 }
 
@@ -59,7 +59,7 @@ impl TimerQueueBackend for Clock {
 
 /// The timer interrupt task's exclusive handle to TIMER5.
 #[derive(Debug)]
-pub struct Timer5(Timers);
+pub struct Timer5(fm1::Cpu0<Timers>);
 impl Timer5 {
     /// Obtain a delay provider for peripherals using `embedded-hal-async`.
     #[must_use]

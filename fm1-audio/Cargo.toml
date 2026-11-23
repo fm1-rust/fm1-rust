@@ -1,6 +1,6 @@
 [package]
 name = "fm1-audio"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Allocation-free stereo output and mixing for the M-VAVE FM-1"
 license = "MIT"
@@ -9,7 +9,7 @@ keywords = ["fm1", "audio", "pcm"]
 categories = ["embedded", "multimedia::audio", "no-std"]
 
 [dependencies]
-fm1 = { version = "0.1.2", features = ["audio"] }
+fm1 = { workspace = true, features = ["audio"] }
 wavegraph-sample = { version = "0.1", default-features = false }
 
 [lints]

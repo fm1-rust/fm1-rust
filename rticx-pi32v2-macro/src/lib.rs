@@ -182,7 +182,7 @@ impl CorePassBackend for Cpu0 {
     fn generate_global_definitions(
         &self,
         _: &AppArgs,
-        _: &SubApp,
+        app: &SubApp,
         analysis: &SubAnalysis,
     ) -> Option<Tokens> {
         let mut entries = Vec::new();
@@ -197,8 +197,23 @@ impl CorePassBackend for Cpu0 {
             }
         }
         let runtime = &self.0;
+        let tasks = app.tasks.iter().chain(app.idle.iter()).map(RticTask::name);
+        let fields = app.shared.iter().flat_map(|s| &s.resources).map(|f| &f.ty);
+        let inputs = app
+            .tasks
+            .iter()
+            .filter(|t| t.args.task_trait == "RticAsyncTask")
+            .map(RticTask::name);
         Some(quote! {
             use #runtime as __rticx_backend;
+            const _: () = {
+                fn require_send<T: ::core::marker::Send>() {}
+                fn check_handoffs() {
+                    #(require_send::<#tasks>();)*
+                    #(require_send::<#fields>();)*
+                    #(require_send::<<#inputs as RticAsyncTask>::SpawnInput>();)*
+                }
+            };
             const fn __rticx_source_mask(ceiling: u16) -> __rticx_backend::export::SourceMask {
                 __rticx_backend::export::SourceMask::through(&[#(#entries),*], ceiling) #(#additional)*
             }

@@ -92,10 +92,10 @@ jobs:
         run: |
           cargo miri test --release --locked -p fm1-controls --lib
           cargo miri test --release --locked -p rticx-pi32v2-macro --test slots
-      - name: Check audio refill, display DMA, and USB-MIDI
+      - name: Check peripheral affinity, audio refill, display DMA, and USB-MIDI
         run: >-
           cargo miri test --locked --all-features -p fm1 --lib --
-          audio:: usb_midi:: test_board::async_display::
+          cpu0:: audio:: usb_midi:: test_board::async_display::
           test_board::completion_before_resuming_after_preemption_wins
 
   careful:

@@ -11,6 +11,7 @@ mod app {
         ScanQueue, ScanReceiver, ScanSender, Switch,
     };
     use fm1_graphics::{TextGrid, palette};
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{
             Board,
@@ -201,7 +202,7 @@ mod app {
             TaskInits {
                 panel: Panel {
                     timer,
-                    controls: board.panel.into_controls(),
+                    controls: board.panel.into_controls().into(),
                     sender,
                     leds: view.leds,
                     refresh_leds: false,
@@ -209,7 +210,9 @@ mod app {
                     octave_since: None,
                 },
                 input: Input { receiver },
-                draw: Draw { display },
+                draw: Draw {
+                    display: display.into(),
+                },
             },
         )
     }
@@ -223,7 +226,7 @@ mod app {
     #[task(binds = TIMER5, priority = 3, shared = [leds, peak_irq_ticks])]
     struct Panel {
         timer: Timer5,
-        controls: Controls,
+        controls: Cpu0<Controls>,
         sender: ScanSender<'static, SCAN_CAPACITY>,
         leds: Leds,
         refresh_leds: bool,
@@ -285,7 +288,7 @@ mod app {
 
     #[async_task(priority = 1, shared = [view, peak_irq_ticks])]
     struct Draw {
-        display: Display,
+        display: Cpu0<Display>,
     }
     impl RticAsyncTask for Draw {
         type SpawnInput = ();

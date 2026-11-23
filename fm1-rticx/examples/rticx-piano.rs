@@ -32,6 +32,7 @@ mod app {
     use core::pin::pin;
     use fm1_audio::{MasterLevel, Output as AudioOutput, Stats};
     use fm1_graphics::{TextGrid, palette};
+    use fm1_rticx::bsp::Cpu0;
     use fm1_rticx::{
         bsp::{
             Board,
@@ -225,7 +226,7 @@ mod app {
             TaskInits {
                 panel: Panel {
                     changed,
-                    controls,
+                    controls: controls.into(),
                     timer,
                     timing: PanelTiming::default(),
                     lit: 0,
@@ -235,7 +236,7 @@ mod app {
                 midi: Midi {
                     updates,
                     delay,
-                    device,
+                    device: device.into(),
                     clock: MidiClock::default(),
                     session: None,
                     remote: Notes::default(),
@@ -246,7 +247,7 @@ mod app {
                     synth: Synth::default(),
                 },
                 draw: Draw {
-                    port: Some(board.display),
+                    port: Some(board.display.into()),
                 },
             },
         )
@@ -262,7 +263,7 @@ mod app {
     #[task(binds = TIMER5, priority = 4, shared = [keyboard])]
     struct Panel {
         changed: Sender<'static, (), 1>,
-        controls: TouchControls,
+        controls: Cpu0<TouchControls>,
         timer: Timer5,
         timing: PanelTiming,
         lit: u32,
@@ -355,7 +356,7 @@ mod app {
     struct Midi {
         updates: Receiver<'static, (), 1>,
         delay: Clock,
-        device: MidiDevice,
+        device: Cpu0<MidiDevice>,
         clock: MidiClock,
         session: Option<u32>,
         remote: Notes,
@@ -442,7 +443,7 @@ mod app {
 
     #[async_task(priority = 1, shared = [keyboard, audio_stats])]
     struct Draw {
-        port: Option<DisplayPort>,
+        port: Option<Cpu0<DisplayPort>>,
     }
     impl RticAsyncTask for Draw {
         type SpawnInput = ();
@@ -450,7 +451,7 @@ mod app {
         async fn exec(&mut self, (): ()) {
             // The keyboard and audio can run while the LCD wakes up.
             let Some(port) = self.port.take() else { return };
-            let Ok(mut display) = port.init_with_clock(SpiClock::Div1) else {
+            let Ok(mut display) = port.into_inner().init_with_clock(SpiClock::Div1) else {
                 return;
             };
             let mut screen = TextGrid::new();

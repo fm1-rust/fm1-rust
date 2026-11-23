@@ -7,6 +7,8 @@ pub use embedded_hal_async;
 
 #[cfg(feature = "audio")]
 pub mod audio;
+mod cpu0;
+pub use cpu0::Cpu0;
 pub mod display;
 pub mod panel;
 mod registers;
@@ -57,10 +59,7 @@ impl Board {
     pub fn take() -> Option<Self> {
         #[cfg(fm1)]
         {
-            unsafe extern "C" {
-                fn fm1_core_id() -> u32;
-            }
-            if unsafe { fm1_core_id() } == 0 && !TAKEN.swap(true, Ordering::Relaxed) {
+            if cpu0::on_cpu0() && !TAKEN.swap(true, Ordering::Relaxed) {
                 return Some(Self::init());
             }
         }
