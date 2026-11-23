@@ -70,9 +70,12 @@ the register value written and read back, host completion, device events,
 the expected bytes, the first changed guard byte and the highest changed
 offset. Isochronous requests use one libusb packet descriptor and record
 both transfer and packet status. Failed transfers still get a snapshot
-when EP0 remains available. A failed quiet or 64-byte control stops dependent
-tests for that setting and polarity. Both an observed overrun and an
-inconclusive run produce a nonzero exit status.
+when EP0 remains available. For a nonempty stimulus, a snapshot that still
+matches the fill everywhere is inconclusive, even after a ready event.
+A quiet control requires an unchanged arena, zero ready packets and no EP1
+RX IRQ. A failed quiet or 64-byte control stops dependent tests for that
+setting and polarity. Both an observed overrun and an inconclusive run
+produce a nonzero exit status.
 
 RXD3 always tests the original 68-byte boundary from `2721022`, including
 when built with larger normal buffers. At `RX_MAX = 0xff`, a repeatable change

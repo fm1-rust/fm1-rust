@@ -73,6 +73,26 @@ run, offsets 1024 through 8191 retained the original fill. The highest
 observed offset is a lower bound on the hardware's possible write extent.
 [Black FM-1 stress results and offline replay](stress.md#results-from-the-black-fm-1)
 
+### Interpreting an RXD3 verdict
+
+Compare the host completion with the EP1 register samples and the frozen
+SRAM bytes. A successful submission can
+leave every byte at its fill. Even a sampled ready packet cannot establish
+a write footprint in that case. Conversely, ISO trials 49 and 60 changed
+offset 511 with no ready event or RX IRQ.
+
+| Frozen trial | RXD3 verdict |
+| --- | --- |
+| No OUT submitted, fill intact, no ready packet or EP1 RX IRQ | `Observed` for the quiet control. Any changed byte or endpoint event contaminates that control. |
+| Nonempty submission, all bytes still equal to the fill | `Inconclusive`, including when the host completed or the board sampled a ready packet. |
+| Nonempty submission, a byte changed at offset 68 or higher | `Overrun` of the historical allocation, even when the host reports a short or failed transfer. |
+
+Use both fills and the expected packet bytes to interpret a changed region.
+A final snapshot can miss a transient store or a byte rewritten with its
+original value. The 64-byte positive control and the two-packet test also
+check the expected payload before reporting an intact boundary.
+[RXD3 runner](../../fm1-cli/src/dma_probe.rs) · [Archived ISO journal](black-fm1/iso.log)
+
 ## Fix and remaining hardware contract
 
 The BSP at `2462b9817` already reserves **2048 bytes each** for normal EP1 OUT and the shared
@@ -222,6 +242,33 @@ method safe is a compatible API relaxation for a subsequent release. The
 earlier release which first required an unsafe block remains source-breaking.
 [Cargo SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html#fn-unsafe-safe)
 
+## Lessons from the macOS enumeration experiments
+
+An early diagnostic replaced the firmware's EP0 control engine as well as
+changing EP1. The application ran on the black FM-1, but several images
+never appeared in macOS USB enumeration. One warm enumeration was followed
+by a cold-start failure. The first failing control transaction is unknown.
+
+| Board experiment | Result |
+| --- | --- |
+| Restore the replacement engine's EP0 allocation to 68 bytes, keeping EP1 enlarged | Enumeration still failed. |
+| Service the replacement engine from the production USB0 IRQ and 10 ms polling fallback | Enumeration still failed. |
+| Enlarge EP1 to 2 KiB in the working timing firmware, then try a 1 ms poll | Both timing images enumerated and returned data. |
+| Add vendor bulk and ISO alternates to the production control engine | Both images enumerated and supplied captures. |
+
+Keep production EP0 reset, address and configuration handling when changing
+EP1. Record the image digest and test cold power-on, bootloader-to-app and
+reconnect separately. The timing image's LCD records the furthest
+enumeration stage and retry count when the host cannot fetch a log.
+
+On macOS, filtering by product or CoreMIDI name missed the board. Discover
+the candidate by VID/PID (`1209:0001`) and verify its protocol and profile
+over EP0. An early runner requested 32 bytes and received ten beginning
+with `RXD1`. The returned length and four-byte identifier distinguish that
+legacy reply from a truncated `RXD3` reply. Current `RXD3` and `RXS1`
+handshakes are both 12 bytes.
+[Host discovery](../../fm1-usb/src/lib.rs) · [Handshake validation](../../fm1-usb/src/dma_probe.rs)
+
 ## Reproduce on a board
 
 1. On the Mac, build the host CLI from this checkout with standard Rust. The
@@ -278,11 +325,14 @@ earlier release which first required an unsafe block remains source-breaking.
    xxd -g 1 -s 68 -l 4 iso-results/trial-031.bin
    ```
 
-The timing application's USB0 interrupt and 10 ms fallback drive the probe.
-After a 500 ms observation window it gates EP1 and redirects it to a separate
-normal buffer. It waits at least 3 ms, executes the receive barrier and
-copies the entire live arena into CPU-owned memory. The offset scan and
-32 EP0 page reads therefore work even when no RX event occurred. The log
+While EP1 owns the arena, the driver samples RXCSR and COUNT and can ACK a
+ready packet without reading its payload. The driver's async wait services
+the deferred ACK, 500 ms capture window and drain deadlines even on a quiet
+bus. The timing application also polls every 10 ms. To freeze a capture,
+the driver gates EP1, redirects DMA to a separate buffer, waits at least
+3 ms under the board's drain assumption, executes the receive barrier and
+copies the arena into CPU-owned memory. The host reads those frozen bytes
+in 32 EP0 pages using the same trial token. The log
 retains 64 trial summaries for the powered session. The LCD retains the
 last trial, first crossing, enumeration stage and controller retries. On
 the configured MIDI image, PLAY arms a local capture for the first ready

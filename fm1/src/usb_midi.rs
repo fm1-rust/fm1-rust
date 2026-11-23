@@ -33,9 +33,10 @@ pub use log::{InvalidLogLine, UsbLog};
 /// A USB-MIDI 1.0 event packet. Byte 0 contains the cable (high nibble,
 /// zero for this device) and Code Index Number; bytes 1..=3 carry MIDI.
 pub type EventPacket = [u8; 4];
-/// Maximum number of USB-MIDI events in one full-speed bulk transfer.
+/// Number of four-byte events that fit in one advertised 64-byte EP1 packet.
 pub const MAX_EVENTS: usize = controller::MAX_PACKET / 4;
-/// Storage for one transfer from the host.
+/// Caller-owned storage for events copied by [`MidiDevice::receive`].
+/// USB0 writes to a separate DMA staging area maintained by the driver.
 pub type PacketBuffer = [EventPacket; MAX_EVENTS];
 
 /// Device descriptors supplied by the firmware. Strings use up to 31 UTF-16 code units each.
