@@ -1,5 +1,9 @@
 # fm1-usb
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
+[![Build status][ci-badge]][ci]
+
 A host-side Rust library for the M-VAVE FM-1. It enumerates USB devices with
 `nusb` and uses the system MIDI driver through `midir`. The firmware can keep
 using its existing USB-MIDI descriptors and log protocol.
@@ -56,3 +60,10 @@ for the physical and software assumptions behind a controlled setup.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+[crate-badge]: https://img.shields.io/crates/v/fm1-usb?logo=rust
+[crate]: https://crates.io/crates/fm1-usb
+[docs-badge]: https://docs.rs/fm1-usb/badge.svg
+[docs]: https://docs.rs/fm1-usb/
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-usb.yml/badge.svg?branch=main&event=push
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-usb.yml
