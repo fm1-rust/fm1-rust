@@ -71,8 +71,8 @@ impl RxStorage {
 const _: () = assert!(core::mem::offset_of!(RxStorage, guard) == STAGING);
 const RX_GUARD: [u32; 4] = [0x13a5_f96c, 0xc82e_715b, 0x6d03_b894, 0xfa57_20de];
 static GUARDS_SEEDED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-// EP0 shares its RX and TX address. Give it the same capacity for incoming
-// traffic; the footprint measurements in docs/usb-dma cover EP1 only.
+// EP0 shares its RX and TX address. On the black board an eight-byte SETUP
+// also stored its two CRC bytes. Both endpoints still need a general bound.
 static mut CONTROL: RxStorage = RxStorage::EMPTY;
 static mut TX: Buffer<MAX_PACKET> = Buffer([0; MAX_PACKET]);
 static mut RX: RxStorage = RxStorage::EMPTY;

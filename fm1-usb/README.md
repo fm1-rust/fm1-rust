@@ -57,9 +57,14 @@ test alternate setting. The host API cannot set the device's maximum SRAM
 write address. See the [FM-1 board qualification](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1)
 for the physical and software assumptions behind a controlled setup.
 
+With the `dma-probe` feature, `dma_probe::window::WindowProbe` connects to
+the `usb-window` bench firmware and retrieves the frozen SRAM for each trial
+after a warm reboot. The `fm1 dma-window` command captures and replays these
+records. [EP0 and EP1 experiment](https://github.com/fm1-rust/fm1-rust/blob/main/docs/usb-dma/window.md)
+
 ## License
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](https://github.com/fm1-rust/fm1-rust/blob/main/fm1-usb/LICENSE).
 
 [crate-badge]: https://img.shields.io/crates/v/fm1-usb?logo=rust
 [crate]: https://crates.io/crates/fm1-usb

@@ -15,6 +15,8 @@ pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
 mod status;
+#[cfg(feature = "usb-window-probe")]
+mod window;
 pub use status::{ControlStall, EnumerationStage, RegisterTimeout, UsbStatus};
 #[cfg(feature = "usb-dma-probe")]
 mod dma_probe;
@@ -138,8 +140,9 @@ impl UsbPort {
         // the claim, without touching endpoint storage or scheduling attachment.
         controller::detach();
         controller::sync_tx();
-        // The WL82 range comparator's first-store suppression and the endpoint
-        // handoffs are unverified. See docs/usb-dma/README.md.
+        // USB0 crossed the tested WL82 write window on the black FM-1. The BSP
+        // lacks an independent write bound and a verified endpoint handoff.
+        // See docs/usb-dma/window.md.
         Err(UsbError::DmaProtectionUnavailable)
     }
 
@@ -234,6 +237,8 @@ impl QualifiedMidiPort {
             #[cfg(feature = "usb-dma-probe")]
             probe: None,
             identity,
+            #[cfg(feature = "usb-window-probe")]
+            window: false,
             status: UsbStatus::default(),
             wait: Some((cycles(), Timers::CRYSTAL_HZ / 40)),
             control: Control::new(),
@@ -257,6 +262,8 @@ pub struct MidiDevice {
     #[cfg(feature = "usb-dma-probe")]
     probe: Option<dma_probe::Probe>,
     identity: Identity,
+    #[cfg(feature = "usb-window-probe")]
+    window: bool,
     status: UsbStatus,
     wait: Option<(u32, u32)>,
     control: Control,
@@ -517,6 +524,10 @@ impl MidiDevice {
         #[cfg(feature = "usb-dma-probe")]
         if let Some(probe) = &mut self.probe {
             probe.stage = probe.stage.max(2);
+            #[cfg(feature = "usb-window-probe")]
+            if self.window && setup[0] & 0x60 == 0x40 {
+                return window::request(&mut self.control, self.interface, probe.alt, setup);
+            }
             if let Some(reply) =
                 probe.request(&mut self.control, &self.identity, self.interface, setup)
             {
@@ -578,6 +589,10 @@ impl MidiDevice {
                 self.control.start(available, requested);
                 let (bytes, last) = self.control.chunk();
                 return controller::control_in(bytes, last);
+            }
+            #[cfg(feature = "usb-window-probe")]
+            Reply::WindowTrial { case, token } => {
+                return window::run(case, token);
             }
             Reply::Address(address) => self.address = Some(address),
             Reply::Configure(configured) => {

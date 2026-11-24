@@ -31,6 +31,11 @@ embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
 usb-dma-probe = []
 usb-dma-stress = ["usb-dma-probe"]
+usb-window-probe = ["usb-dma-probe"]
+
+[[example]]
+name = "usb-window"
+required-features = ["usb-window-probe", "embedded-graphics"]
 
 [[example]]
 name = "cpu1-probe"

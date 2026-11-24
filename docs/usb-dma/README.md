@@ -99,10 +99,13 @@ The BSP at `2462b9817` already reserves **2048 bytes each** for normal EP1 OUT a
 EP0 receive/transmit destination. The normal MIDI limit remains 64 bytes
 and the original receiver register values are preserved. An enlarged EP1
 destination contains every write observed here and has room for a 1023-byte
-full-speed payload, its two CRC bytes and word padding. Growing EP0 is a
-precaution for a second bus-writable destination. This investigation measured
-EP1. RXD3 keeps comparing against the **historical** boundary of 68 so future
-builds can still reproduce the original result.
+full-speed payload, its two CRC bytes and word padding. RXD3 measured EP1.
+The WND3 black-board captures also show both CRC bytes after an eight-byte
+EP0 SETUP at two DMA destinations. JieLi reserves four extra bytes per
+USB0 receive buffer for CRC storage. The maximum write on rejected traffic
+and the event that returns ownership to the CPU remain open questions.
+RXD3 keeps comparing against the **historical** boundary of 68.
+[WND3 captures and vendor sources](window.md#what-reached-sram-on-the-black-fm-1)
 
 Taking the USB port performs no DMA. Applications can call the safe
 `UsbPort::try_into_midi(identity)` with any host connected. On AC791N it detaches USB0
@@ -111,17 +114,16 @@ destination. `UsbPort::into_midi(identity)` panics on the same error.
 Returning a working device requires the BSP to cover malformed and rejected
 packets, all receive destinations and outstanding writes across reconnects.
 
-The WL82 SDK has a concrete lead for hardware confinement. Its
-`dev_write_range_limit` programs low/high address registers, a permitted
-peripheral ID and an out-of-range error enable. Its header identifies
-`DBG_FUSB` as `0x81` and `DBG_FUSB1` as `0x82`. The code shows how to
-configure and report a violation. Establish which master and SRAM aliases
-are covered and whether **the offending store is suppressed before it
-commits**. A useful qualification test places a guard *inside* a larger
-reserved diagnostic allocation, programs the candidate window to end before
-that guard, sends a known crossing and checks the SRAM after the fault.
-Include crossings within a final bus beat, EP0 traffic, reset, detach and
-reconnect. The current AC791N driver leaves the range monitor disabled.
+The WL82 SDK's `dev_write_range_limit` programs low/high address registers,
+a permitted peripheral ID and an out-of-range error enable. It identifies
+`DBG_FUSB` as `0x81` and `DBG_FUSB1` as `0x82`. On the black FM-1,
+slot 7 was configured for FUSB0. On all eight narrow-window trials, a
+legal EP0 SETUP or EP1 OUT packet and its CRC reached SRAM across the
+programmed upper boundary. Each trial took an exception. The tested
+configuration cannot confine USB0 writes. The normal AC791N driver
+leaves the monitor disabled.
+[R4 boundary measurements and register readbacks](window.md#slot-7-allowed-usb0-writes-past-its-upper-limit) ·
+[Combined R1–R4 captures (JSON)](black-fm1/window-runs.json) ·
 [WL82 range setup](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/cpu/wl82/debug.c#L836-L890) ·
 [WL82 bus-master IDs](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/include_lib/driver/cpu/wl82/asm/debug.h#L6-L11)
 
@@ -222,14 +224,12 @@ also exposes EP0 to EP1 still needs a handoff design preventing writes to
 bytes the CPU is using. Set protection before enabling D+ and retain it
 through reset, detach, in-flight writes and forgotten handles.
 
-The first comparator experiment can use one ordinary 64-byte EP1 OUT packet.
-Reserve the entire test area and place the proposed hardware boundary inside
-the known payload. With the comparator off, verify the expected payload on
-both sides. With it on, confirm the transfer reached the allowed prefix and
-inspect the first forbidden byte and the rest of the arena after the fault.
-Use an independent readout that preserves SRAM if USB stops responding.
-Repeat with a boundary inside a bus beat, then exercise EP0 and reset during
-RX. A fault that commits the forbidden byte rules this mechanism out.
+R4 recorded the first forbidden byte and the rest of each packet at both
+aligned and unaligned cuts on EP0 and EP1. Every frozen image matched its
+unprotected delivery control. A working safe port needs an independent
+confinement mechanism or a justified bound on USB0's address generator.
+[R4 captures](window.md#slot-7-allowed-usb0-writes-past-its-upper-limit)
+
 The separately named `axi_ram_write_range_limit`
 accepts addresses in `0x01bfe000..0x01c00000`. The BSP links ordinary data
 from `0x01c40000`. That routine cannot directly protect these buffers.

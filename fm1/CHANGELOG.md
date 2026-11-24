@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SRAM worker on CPU1.
 - Add `usb-dma-probe` and `usb-dma-stress` firmware support for measuring
   EP1 OUT writes on a qualified board.
+- Add the opt-in `usb-window` example for measuring EP0 SETUP and EP1 OUT
+  writes across an internal SRAM boundary on a qualified board.
+  On the black FM-1, USB0 wrote the full packet and CRC past the slot-7
+  limit on all eight crossing trials.
+  [Probe protocol and black FM-1 evidence](../docs/usb-dma/window.md)
 
 ### Changed
 

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add host transport for the WND1 and WND3 EP0 SETUP and EP1 OUT write-range probes.
+
 - Discover an FM-1 over USB, connect to its system MIDI ports, and read
   firmware log snapshots and timing reports. Named MIDI ports can also be
   used with instruments that do not implement the log protocol.
