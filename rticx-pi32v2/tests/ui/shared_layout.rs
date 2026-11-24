@@ -10,6 +10,15 @@
 
 #[rticx_pi32v2::app(device = crate, dispatchers = [])]
 mod app {
+    // Application names take precedence over RTICX's glob re-export.
+    pub trait RticTask {
+        fn exec(&'static mut self);
+    }
+    #[cfg(not(capture_task))]
+    pub trait RticIdleTask {
+        fn exec(&'static mut self) -> !;
+    }
+
     pub struct Inner {
         second: u32,
     }
@@ -51,7 +60,7 @@ mod app {
                 #[cfg(not(deref_shared))]
                 second: 2,
             },
-            TaskInits {},
+            TaskInits { tick: Tick(0) },
         )
     }
 
@@ -67,7 +76,7 @@ mod app {
             }
         }
     }
-    impl RticIdleTask for Idle {
+    impl rticx_traits::RticIdleTask for Idle {
         fn exec(&mut self) -> ! {
             loop {
                 core::hint::spin_loop()
@@ -75,22 +84,43 @@ mod app {
         }
     }
 
-    #[task(binds = TIMER5, priority = 1, shared = [first, second], init = generated)]
-    struct Tick;
+    #[task(binds = TIMER5, priority = 1, shared = [first, second])]
+    struct Tick(u32);
 
     // An inherent method must never capture the runtime's static task borrow.
     impl Tick {
         #[allow(dead_code)]
         fn exec(&'static mut self, _: ()) {}
     }
-    impl RticTask for Tick {
+    #[cfg(not(capture_task))]
+    impl rticx_traits::RticTask for Tick {
         fn exec(&mut self) {
+            self.0 = self.0.wrapping_add(1);
             self.shared().first.lock(|inner| {
                 self.shared().second.lock(|word| {
                     *word = 4;
                     inner.second = 3;
                 });
             });
+        }
+    }
+
+    // Placing this impl in a module lets rustc select it after macro expansion.
+    #[cfg(capture_task)]
+    mod capture {
+        use super::{RticTask, Tick};
+        use core::cell::Cell;
+        use critical_section::Mutex;
+
+        impl RticTask for Tick {
+            fn exec(&'static mut self) {
+                static SAVED: Mutex<Cell<Option<&'static mut Tick>>> = Mutex::new(Cell::new(None));
+                critical_section::with(|cs| {
+                    if let Some(previous) = SAVED.borrow(cs).replace(Some(self)) {
+                        previous.0 = previous.0.wrapping_add(1);
+                    }
+                });
+            }
         }
     }
 }

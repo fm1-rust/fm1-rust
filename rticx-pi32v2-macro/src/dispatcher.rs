@@ -54,6 +54,8 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
                             .as_ref()
                             .is_some_and(|(_, path, _)| path.is_ident(task_trait)) =>
                 {
+                    let (_, path, _) = i.trait_.as_mut().expect("matched dispatcher trait");
+                    *path = parse_quote!(self::rticx_traits::#path);
                     DispatcherBody.visit_item_impl_mut(i);
                     saw_dispatch = true;
                 }
@@ -125,9 +127,19 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
     };
     startup.visit_block_mut(&mut entry.block);
 
-    // Bind only statics initialized by generated startup. Keep application
-    // type names in task fields and hand-written code in their original scope.
     for item in items {
+        if let Item::Mod(checks) = item
+            && checks.ident == "__rticx_trait_checks"
+            && let Some((_, body)) = &mut checks.content
+        {
+            // Explicit imports take precedence over the core pass's `use super::*`.
+            body.push(parse_quote! {
+                #[allow(unused_imports)]
+                use super::rticx_traits::{RticIdleTask, RticTask};
+            });
+        }
+        // Bind only statics initialized by generated startup. Keep application
+        // type names in task fields and hand-written code in their original scope.
         if let Item::Static(slot) = item
             && startup.storage.remove(&slot.ident)
         {
@@ -185,7 +197,11 @@ impl VisitMut for Startup<'_> {
                 && receiver.method == "assume_init_mut"
             {
                 let slot = &receiver.receiver;
-                *expr = parse_quote!(RticIdleTask::exec(__rticx_backend::export::TaskStorage::assume_init_mut(&mut #slot)));
+                *expr = parse_quote! {
+                    self::rticx_traits::RticIdleTask::exec(
+                        __rticx_backend::export::TaskStorage::assume_init_mut(&mut #slot)
+                    )
+                };
                 return;
             }
         }

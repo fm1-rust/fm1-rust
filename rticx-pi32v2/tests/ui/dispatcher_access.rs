@@ -43,6 +43,10 @@ impl<F: core::future::Future<Output = ()> + 'static> ExecutorMethods
 
 #[rticx_pi32v2::app(device = crate, dispatchers = [SOFT0])]
 mod app {
+    // Generated dispatcher impls must bind to RTICX even with app-local names.
+    pub trait RticTask {}
+    pub trait RticIdleTask {}
+
     #[allow(
         unused_imports,
         reason = "Only an unqualified executor call uses this trait."
@@ -70,12 +74,12 @@ mod app {
 
     #[cfg(forge_irq)]
     fn forge_irq() {
-        RticTask::exec(&mut Core0Priority1Dispatcher);
+        rticx_traits::RticTask::exec(&mut Core0Priority1Dispatcher);
     }
 
     #[cfg(forge_idle)]
     fn forge_idle() {
-        RticIdleTask::exec(&mut __RticxAsyncPrio0ExecutorCore0);
+        rticx_traits::RticIdleTask::exec(&mut __RticxAsyncPrio0ExecutorCore0);
     }
 
     #[cfg(call_installer)]
@@ -88,7 +92,7 @@ mod app {
         let mut dispatcher = Core0Priority1Dispatcher {
             _dispatch: crate::executor::DispatchToken::new(),
         };
-        RticTask::exec(&mut dispatcher);
+        rticx_traits::RticTask::exec(&mut dispatcher);
     }
 
     #[cfg(forge_token)]
