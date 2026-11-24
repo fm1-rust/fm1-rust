@@ -45,8 +45,34 @@ startup or call `invalidate()` to paint the entire grid. Invalidate a widget
 after another view draws over its area. The waveform's first paint covers
 its entire rectangle. Place the text you update outside that rectangle.
 
-For proportional layouts, other fonts and general drawing primitives, enable
-the `embedded-graphics` feature on `fm1`. See the [BSP drawing guide][bsp-graphics].
+## Drawing with embedded-graphics
+
+Enable the `embedded-graphics` feature on `fm1-graphics` to use the upstream
+fonts, text styles and primitives through `fm1_graphics::embedded_graphics`.
+Enable `bsp-display` to also use the BSP's dirty-row `Framebuffer` and
+its ST7789 `MipidsiDisplay` draw target. See the [BSP drawing guide][bsp-graphics] for
+initialization and DMA transfers.
+
+```rust
+# #[cfg(feature = "bsp-display")]
+# {
+use fm1_graphics::{Framebuffer, palette, embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyle},
+    prelude::*,
+    text::{Baseline, Text},
+}};
+
+let mut strip = Framebuffer::<96, 12>::new();
+Text::with_baseline("CUTOFF", Point::zero(),
+    MonoTextStyle::new(&FONT_6X10, palette::CYAN), Baseline::Top)
+    .draw(&mut strip).unwrap();
+assert!(strip.take_dirty().is_some());
+# }
+```
+
+`TextGrid::draw` (via the `Drawable` trait) renders the full 240 × 240 grid
+to any RGB565 target. Its dirty cells remain available for the next
+`paint` or `paint_async` on the LCD.
 
 ## License
 

@@ -506,6 +506,7 @@ dependencies = [
 name = "fm1-graphics"
 version = "0.2.0-rc.0"
 dependencies = [
+ "embedded-graphics",
  "embedded-graphics-core",
  "fm1",
 ]

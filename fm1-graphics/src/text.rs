@@ -205,6 +205,50 @@ impl TextGrid {
     }
 }
 
+#[cfg(feature = "embedded-graphics")]
+impl embedded_graphics::geometry::OriginDimensions for TextGrid {
+    fn size(&self) -> embedded_graphics::geometry::Size {
+        embedded_graphics::geometry::Size::new(SIZE.into(), SIZE.into())
+    }
+}
+
+/// Draw the full grid, including its background. Drawing leaves pending LCD
+/// updates intact. Use a translated target to position the grid.
+#[cfg(feature = "embedded-graphics")]
+impl embedded_graphics::Drawable for TextGrid {
+    type Color = Rgb565;
+    type Output = ();
+
+    fn draw<D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>>(
+        &self,
+        target: &mut D,
+    ) -> Result<(), D::Error> {
+        use embedded_graphics::{
+            geometry::{Point, Size},
+            image::{Image, ImageRawBE},
+            primitives::Rectangle,
+        };
+
+        let bounds = target.bounding_box();
+        let cell_size = Size::new(CELL_W.into(), CELL_H.into());
+        for (y, row) in (0..).step_by(CELL_H.into()).zip(&self.cells) {
+            for (x, &cell) in (0..).step_by(CELL_W.into()).zip(row) {
+                let origin = Point::new(x, y);
+                if Rectangle::new(origin, cell_size)
+                    .intersection(&bounds)
+                    .is_zero_sized()
+                {
+                    continue;
+                }
+                let pixels = render(cell, self.background);
+                let image = ImageRawBE::new(pixels.as_flattened().as_flattened(), CELL_W.into());
+                Image::new(&image, origin).draw(target)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn render(cell: Cell, background: Rgb565) -> CellPixels {
     let mut pixels = [[background.to_be_bytes(); CELL_W as usize]; CELL_H as usize];
     let ink = cell.ink.to_be_bytes();
@@ -311,6 +355,22 @@ mod tests {
         assert_eq!(grid.cells[0].map(|c| c.ch), *b" +0***-2147483648 9 ");
         grid.number(0, 0, usize::MAX, u32::MAX, palette::CYAN);
         assert_eq!(grid.cells[0].map(|c| c.ch), *b"          4294967295");
+    }
+
+    #[cfg(feature = "bsp-display")]
+    #[test]
+    fn drawable_renders_clean_cells_and_preserves_pending_lcd_updates() {
+        use crate::Framebuffer;
+        use embedded_graphics::prelude::*;
+
+        let mut grid = TextGrid::with_background(palette::RED);
+        grid.text(1, 0, "A", palette::CYAN);
+        let mut strip = Framebuffer::<14, 1>::new();
+        grid.draw(&mut strip.translated(Point::new(-2, 0)))
+            .expect("infallible");
+        assert_eq!(strip.pixel(0, 0), Some(palette::RED));
+        assert_eq!(strip.pixel(13, 0), Some(palette::CYAN));
+        assert_eq!(grid.dirty[0], 1 << 1);
     }
 
     #[test]
