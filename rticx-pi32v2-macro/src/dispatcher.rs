@@ -3,8 +3,8 @@
 use proc_macro2::Ident;
 use quote::format_ident;
 use rticx_sw_pass::common::codegen::{dispatcher_ident, priority_ty_ident};
-use std::collections::HashSet;
-use syn::{Expr, Fields, Item, ItemMod, Type, parse_quote, visit_mut::VisitMut};
+use std::collections::{HashMap, HashSet};
+use syn::{Expr, Fields, Item, ItemMod, Type, ext::IdentExt, parse_quote, visit_mut::VisitMut};
 
 pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Result<()> {
     let Some((_, items)) = &mut module.content else {
@@ -14,16 +14,16 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
         ));
     };
     let mut dispatchers = HashSet::new();
+    let mut installers = Vec::new();
     let priorities: HashSet<_> = tasks.iter().map(|&(_, p)| p).collect();
     for priority in priorities {
         let group = priority_ty_ident(priority, 0);
-        let installer = format_ident!("__rticx_internal__{group}__try_install");
+        installers.push(format_ident!("__rticx_internal__{group}__try_install"));
         let dispatcher = if priority == 0 {
             format_ident!("__RticxAsyncPrio0ExecutorCore0")
         } else {
             dispatcher_ident(priority, 0)
         };
-        let mut saw_installer = false;
         let mut saw_receiver = false;
         let mut saw_dispatch = false;
         let task_trait = if priority == 0 {
@@ -33,16 +33,16 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
         };
         for item in &mut *items {
             match item {
-                Item::Fn(f) if f.sig.ident == installer => {
-                    f.sig.unsafety = Some(parse_quote!(unsafe));
-                    f.attrs.push(parse_quote! {
-                        #[doc = "# Safety\nThe owning dispatcher must serialize calls after the task \
-                                 and its slot are initialized. The selected task must have a queued input."]
-                    });
-                    DispatcherBody.visit_block_mut(&mut f.block);
-                    saw_installer = true;
-                }
-                Item::Struct(s) if s.ident == dispatcher && matches!(s.fields, Fields::Unit) => {
+                Item::Struct(s) if s.ident.unraw() == dispatcher => {
+                    if saw_receiver {
+                        return Err(ambiguous(&s.ident));
+                    }
+                    if !matches!(s.fields, Fields::Unit) {
+                        return Err(syn::Error::new_spanned(
+                            &s.fields,
+                            "expected a unit dispatcher",
+                        ));
+                    }
                     s.fields =
                         Fields::Named(parse_quote!({ _dispatch: self::__rticx_dispatch::Token }));
                     s.semi_token = None;
@@ -54,6 +54,9 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
                             .as_ref()
                             .is_some_and(|(_, path, _)| path.is_ident(task_trait)) =>
                 {
+                    if saw_dispatch {
+                        return Err(ambiguous(&dispatcher));
+                    }
                     let (_, path, _) = i.trait_.as_mut().expect("matched dispatcher trait");
                     *path = parse_quote!(self::rticx_traits::#path);
                     DispatcherBody.visit_item_impl_mut(i);
@@ -62,32 +65,13 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
                 _ => {}
             }
         }
-        if !(saw_installer && saw_receiver && saw_dispatch) {
+        if !(saw_receiver && saw_dispatch) {
             return Err(syn::Error::new(
                 module.ident.span(),
                 format!("unexpected RTICX dispatcher for priority {priority}"),
             ));
         }
         dispatchers.insert(dispatcher);
-    }
-    // The async pass emits one wake function per task, including priority zero.
-    // Restrict rewriting to these callbacks and the generated dispatcher bodies.
-    let mut wakes: HashSet<_> = tasks
-        .iter()
-        .map(|(task, _)| format_ident!("__rticx_internal__{task}__wake"))
-        .collect();
-    for item in &mut *items {
-        if let Item::Fn(f) = item
-            && wakes.remove(&f.sig.ident)
-        {
-            DispatcherBody.visit_block_mut(&mut f.block);
-        }
-    }
-    if !wakes.is_empty() {
-        return Err(syn::Error::new(
-            module.ident.span(),
-            "missing RTICX wake callback",
-        ));
     }
     if !dispatchers.is_empty() {
         // The application can re-export the runtime under its expected crate name.
@@ -104,63 +88,100 @@ pub(super) fn protect(module: &mut ItemMod, tasks: &[(Ident, u16)]) -> syn::Resu
             }
         });
     }
-    let entry = items
-        .iter_mut()
-        .find_map(|item| match item {
-            Item::Fn(f)
-                if f.sig.ident == "main"
-                    && f.attrs.iter().any(|a| {
-                        a.path()
-                            .segments
-                            .last()
-                            .is_some_and(|s| s.ident == "__entry")
-                    }) =>
-            {
-                Some(f)
+    // The app macro runs before cfg removes nested items. Index all definitions
+    // before taking any of the ones on which the generated unsafe code relies.
+    let mut functions = HashMap::new();
+    let mut statics = HashMap::new();
+    for item in items {
+        match item {
+            Item::Fn(f) => record(&mut functions, f.sig.ident.unraw(), f),
+            Item::Static(s) => record(&mut statics, s.ident.unraw(), s),
+            Item::Mod(checks) if checks.ident == "__rticx_trait_checks" => {
+                if let Some((_, body)) = &mut checks.content {
+                    // Explicit imports take precedence over the core pass's `use super::*`.
+                    body.push(parse_quote! {
+                        #[allow(unused_imports)]
+                        use super::rticx_traits::{RticIdleTask, RticTask};
+                    });
+                }
             }
-            _ => None,
-        })
-        .ok_or_else(|| syn::Error::new(module.ident.span(), "missing RTICX startup"))?;
+            _ => {}
+        }
+    }
+    for name in installers {
+        let f = required(&mut functions, &name)?;
+        f.sig.unsafety = Some(parse_quote!(unsafe));
+        f.attrs.push(parse_quote! {
+            #[doc = "# Safety\nThe owning dispatcher must serialize calls after the task \
+                     and its slot are initialized. The selected task must have a queued input."]
+        });
+        DispatcherBody.visit_block_mut(&mut f.block);
+    }
+    for (task, _) in tasks {
+        let name = format_ident!("__rticx_internal__{task}__wake");
+        let f = required(&mut functions, &name)?;
+        DispatcherBody.visit_block_mut(&mut f.block);
+    }
+    let entry = required(&mut functions, &format_ident!("main"))?;
+    if !entry.attrs.iter().any(|a| {
+        a.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "__entry")
+    }) {
+        return Err(syn::Error::new(
+            entry.sig.ident.span(),
+            "missing RTICX startup attribute",
+        ));
+    }
     let mut startup = Startup {
         dispatchers: &dispatchers,
         storage: HashSet::new(),
     };
     startup.visit_block_mut(&mut entry.block);
 
-    for item in items {
-        if let Item::Mod(checks) = item
-            && checks.ident == "__rticx_trait_checks"
-            && let Some((_, body)) = &mut checks.content
-        {
-            // Explicit imports take precedence over the core pass's `use super::*`.
-            body.push(parse_quote! {
-                #[allow(unused_imports)]
-                use super::rticx_traits::{RticIdleTask, RticTask};
-            });
-        }
-        // Bind only statics initialized by generated startup. Keep application
-        // type names in task fields and hand-written code in their original scope.
-        if let Item::Static(slot) = item
-            && startup.storage.remove(&slot.ident)
-        {
-            let Type::Path(ty) = slot.ty.as_mut() else {
-                return Err(syn::Error::new_spanned(
-                    &slot.ty,
-                    "unexpected RTICX storage type",
-                ));
-            };
-            let args = &ty.path.segments.last().expect("type path").arguments;
-            ty.path = parse_quote!(__rticx_backend::export::TaskStorage #args);
-            slot.expr = parse_quote!(__rticx_backend::export::TaskStorage::uninit());
-        }
-    }
-    if !startup.storage.is_empty() {
-        return Err(syn::Error::new(
-            module.ident.span(),
-            "missing RTICX storage",
-        ));
+    // Bind only statics initialized by generated startup. Keep application
+    // type names in task fields and hand-written code in their original scope.
+    for name in startup.storage {
+        let slot = required(&mut statics, &name)?;
+        let Type::Path(ty) = slot.ty.as_mut() else {
+            return Err(syn::Error::new_spanned(
+                &slot.ty,
+                "unexpected RTICX storage type",
+            ));
+        };
+        let args = &ty.path.segments.last().expect("type path").arguments;
+        ty.path = parse_quote!(__rticx_backend::export::TaskStorage #args);
+        slot.expr = parse_quote!(__rticx_backend::export::TaskStorage::uninit());
     }
     Ok(())
+}
+
+// None marks a duplicate. Only a name requested by code generation needs
+// to be unique; ordinary application items may have cfg-selected alternatives.
+fn record<T>(items: &mut HashMap<Ident, Option<T>>, name: Ident, item: T) {
+    items
+        .entry(name)
+        .and_modify(|value| *value = None)
+        .or_insert(Some(item));
+}
+
+fn required<T>(items: &mut HashMap<Ident, Option<T>>, name: &Ident) -> syn::Result<T> {
+    match items.remove(&name.unraw()) {
+        Some(Some(item)) => Ok(item),
+        Some(None) => Err(ambiguous(name)),
+        None => Err(syn::Error::new(
+            name.span(),
+            format!("missing generated RTICX item `{name}`"),
+        )),
+    }
+}
+
+fn ambiguous(name: &Ident) -> syn::Error {
+    syn::Error::new(
+        name.span(),
+        format!("ambiguous generated RTICX item `{name}`"),
+    )
 }
 
 struct Startup<'a> {
