@@ -275,7 +275,6 @@ impl CorePassBackend for Cpu0 {
         });
         let runtime = &self.0;
         let tasks = app.tasks.iter().chain(app.idle.iter()).map(RticTask::name);
-        let fields = app.shared.iter().flat_map(|s| &s.resources).map(|f| &f.ty);
         let inputs = app
             .tasks
             .iter()
@@ -287,7 +286,6 @@ impl CorePassBackend for Cpu0 {
                 fn require_send<T: #runtime::export::HandoffSend>() {}
                 fn check_handoffs() {
                     #(require_send::<#tasks>();)*
-                    #(require_send::<#fields>();)*
                     #(require_send::<<#inputs as RticAsyncTask>::SpawnInput>();)*
                 }
             };
@@ -329,9 +327,16 @@ impl CorePassBackend for Cpu0 {
                 __rticx_backend::export::BorrowFlag::FREE;
             let _ = task_priority;
             let shared_ptr: *mut #ty = resource_ptr;
+            // The nested mutable reference is invariant in T. An application
+            // DerefMut cannot coerce a different physical field to the proxy type.
+            fn check_field<T: __rticx_backend::export::HandoffSend>(_: &mut &mut T) {}
             unsafe {
                 // Project the field directly so rustc checks packed-field alignment.
-                __rticx_backend::export::with_ceiling(&MASK, &BORROW, || f(&mut (*shared_ptr).#member))
+                __rticx_backend::export::with_ceiling(&MASK, &BORROW, || {
+                    let mut field = &mut (*shared_ptr).#member;
+                    check_field::<Self::ResourceType>(&mut field);
+                    f(field)
+                })
             }
         }));
         lock
