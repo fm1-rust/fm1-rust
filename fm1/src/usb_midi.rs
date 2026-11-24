@@ -14,6 +14,8 @@ mod asynchronous;
 pub use asynchronous::on_usb0_interrupt;
 mod control;
 mod controller;
+#[cfg(feature = "usb-midi-copy")]
+mod copied;
 mod status;
 #[cfg(feature = "usb-window-probe")]
 mod window;
@@ -146,6 +148,50 @@ impl UsbPort {
         Err(UsbError::DmaProtectionUnavailable)
     }
 
+    /// Start normal USB-MIDI on a qualified FM-1 using private CPU snapshots.
+    /// USB owns its endpoint SRAM permanently. A second DMA engine copies
+    /// payloads in both directions. Replacements may tear a packet.
+    ///
+    /// # Safety
+    /// From before startup through reset, suspend, reconnect, detach, and any
+    /// outstanding activity after drop or forget, USB0 must restrict accesses
+    /// to its programmed permanent endpoint areas. This build reserves 2048
+    /// data bytes plus 16 guard bytes per receive area. EP1 IN may only read
+    /// from its 68-byte area.
+    /// USB0 may access those areas during a copy. Arbitration must preserve
+    /// access confinement even when their contents tear. No other USB writes
+    /// may reach Rust storage, including the copy descriptor and staging.
+    ///
+    /// Give CPU0 exclusive use of the WL82 memory-copy peripheral and its IRQ,
+    /// initially idle. It must honor the four-word descriptor and its 68-byte
+    /// payload or 16-byte guard length, order SRAM with CSYNC/SSYNC, and report fresh DONE only when all
+    /// descriptor and payload accesses have retired. No other bus master or
+    /// core may access private staging or the descriptor. Preserve these
+    /// obligations across bootloader handoff and before any restart clears RAM.
+    /// A failed copy permanently quarantines the storage for this boot.
+    ///
+    /// # Panics
+    /// Detaches and panics if calibration, a guard or the copy engine fails,
+    /// or if direct USB DMA already used the shared arenas in this boot.
+    /// A reset is required to change between direct and copied DMA.
+    ///
+    /// ```compile_fail,E0133
+    /// # use fm1::usb_midi::{Identity, UsbPort};
+    /// fn start(port: UsbPort, id: Identity) {
+    ///     let _ = port.into_midi_with_dma_copy(id);
+    /// }
+    /// ```
+    #[cfg(feature = "usb-midi-copy")]
+    #[must_use]
+    pub unsafe fn into_midi_with_dma_copy(self, identity: Identity) -> MidiDevice {
+        // SAFETY: the caller assigns and initially quiesces both peripherals,
+        // provides bounded DMA and orders and retires each private copy.
+        let engine = unsafe { copied::Engine::new() };
+        // SAFETY: the boot mode latch dedicates these arenas to USB. No CPU payload
+        // access conflicts with USB0. The caller supplies the bus contracts.
+        unsafe { MidiDevice::detached(self, identity, controller::Buffers::Copied(engine)) }
+    }
+
     /// Qualify normal MIDI for a controlled bench setup. This only moves the
     /// owned port. The resulting [`QualifiedMidiPort`] can start USB later.
     ///
@@ -220,6 +266,8 @@ impl QualifiedMidiPort {
     ///
     /// # Panics
     /// A changed receive guard retained from a previous session is fatal.
+    /// When built with `usb-midi-copy`, selecting direct DMA after copied DMA
+    /// requires a fresh boot.
     ///
     /// ```
     /// use fm1::usb_midi::{Identity, MidiDevice, QualifiedMidiPort};
@@ -230,10 +278,27 @@ impl QualifiedMidiPort {
     /// ```
     #[must_use]
     pub fn into_midi(self, identity: Identity) -> MidiDevice {
+        // SAFETY: the consumed qualification covers all direct DMA accesses.
+        unsafe { MidiDevice::detached(self.0, identity, controller::Buffers::Direct) }
+    }
+}
+
+impl MidiDevice {
+    /// # Safety
+    /// The selected mode must be qualified at startup and for every future
+    /// service, reset and drop. Direct requires exclusive CPU handoffs.
+    /// Copied requires the caller's confinement and copy-retirement contract.
+    unsafe fn detached(
+        port: UsbPort,
+        identity: Identity,
+        mut buffers: controller::Buffers,
+    ) -> Self {
         controller::detach();
-        controller::init_rx_guards();
-        MidiDevice {
-            _port: self.0,
+        controller::sync_tx();
+        buffers.init();
+        Self {
+            _port: port,
+            buffers,
             #[cfg(feature = "usb-dma-probe")]
             probe: None,
             identity,
@@ -259,6 +324,7 @@ impl QualifiedMidiPort {
 #[derive(Debug)]
 pub struct MidiDevice {
     _port: UsbPort,
+    buffers: controller::Buffers,
     #[cfg(feature = "usb-dma-probe")]
     probe: Option<dma_probe::Probe>,
     identity: Identity,
@@ -359,9 +425,9 @@ impl MidiDevice {
         }
         let mut n = 0;
         if self.session().is_some() && !self.interface.out_halted && self.rx_pending {
-            controller::check_rx_guards();
+            self.buffers.check();
             self.rx_pending = false;
-            match controller::receive(buffer) {
+            match controller::receive(&mut self.buffers, buffer) {
                 Ok(count) => n = count,
                 Err(error) => self.retry(error),
             }
@@ -379,8 +445,8 @@ impl MidiDevice {
         if self.session().is_none() || self.interface.in_halted {
             return 0;
         }
-        controller::check_rx_guards();
-        match controller::send(events) {
+        self.buffers.check();
+        match controller::send(&mut self.buffers, events) {
             Ok(n) => n,
             Err(error) => {
                 self.retry(error);
@@ -415,7 +481,7 @@ impl MidiDevice {
     }
 
     fn service(&mut self, sample_frames: bool) -> controller::Result<()> {
-        controller::check_rx_guards();
+        self.buffers.check();
         let now = cycles();
         if let Some((since, delay)) = self.wait {
             if now.wrapping_sub(since) < delay {
@@ -570,7 +636,7 @@ impl MidiDevice {
         if csr & 1 == 0 {
             if self.control.sending && csr & 2 == 0 {
                 let (bytes, last) = self.control.chunk();
-                controller::control_in(bytes, last)?;
+                controller::control_in(&mut self.buffers, bytes, last)?;
             }
             return Ok(());
         }
@@ -579,7 +645,10 @@ impl MidiDevice {
         if count != 8 {
             return self.stall_control(ControlStall::ByteCount(count));
         }
-        let setup = controller::setup();
+        let (setup, valid) = controller::setup(&mut self.buffers);
+        if !valid {
+            return self.stall_control(ControlStall::Request(setup));
+        }
         let requested = u16::from_le_bytes([setup[6], setup[7]]);
         self.control.sending = false;
         let reply = self.setup_reply(setup);
@@ -588,7 +657,7 @@ impl MidiDevice {
                 wr(CSR0, 0x40)?;
                 self.control.start(available, requested);
                 let (bytes, last) = self.control.chunk();
-                return controller::control_in(bytes, last);
+                return controller::control_in(&mut self.buffers, bytes, last);
             }
             #[cfg(feature = "usb-window-probe")]
             Reply::WindowTrial { case, token } => {

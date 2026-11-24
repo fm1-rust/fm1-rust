@@ -1,7 +1,4 @@
-use super::{
-    MidiDevice,
-    controller::{self, CON0},
-};
+use super::{MidiDevice, controller::CON0};
 use crate::{
     registers::{clear, read, set},
     time::{Timers, cycles},
@@ -65,7 +62,7 @@ impl MidiDevice {
                     .await;
             }
         } else {
-            controller::check_rx_guards();
+            self.buffers.check();
             let mut irq = pin!(wait_for_irq());
             loop {
                 #[cfg(feature = "usb-dma-probe")]
@@ -99,7 +96,7 @@ impl MidiDevice {
                 if service_on_timeout {
                     break;
                 }
-                controller::check_rx_guards();
+                self.buffers.check();
             }
         }
         if let Err(error) = self.service(false) {

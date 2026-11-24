@@ -54,10 +54,12 @@ const STAGING: usize = RX_DMA_BYTES;
 
 // The controller receives the wrapper address and the CPU accesses its first field.
 #[repr(C, align(8))]
+#[cfg_attr(feature = "usb-midi-copy", repr(align(32)))]
 struct Buffer<const N: usize>([u8; N]);
 // Keep the first forbidden word in reserved RAM. The controller receives the
 // address of data; its 2 KiB production budget excludes the trailing guard.
 #[repr(C, align(8))]
+#[cfg_attr(feature = "usb-midi-copy", repr(align(32)))]
 struct RxStorage {
     data: [u8; STAGING],
     guard: [u32; 4],
@@ -69,13 +71,81 @@ impl RxStorage {
     };
 }
 const _: () = assert!(core::mem::offset_of!(RxStorage, guard) == STAGING);
-const RX_GUARD: [u32; 4] = [0x13a5_f96c, 0xc82e_715b, 0x6d03_b894, 0xfa57_20de];
+pub(super) const RX_GUARD: [u32; 4] = [0x13a5_f96c, 0xc82e_715b, 0x6d03_b894, 0xfa57_20de];
 static GUARDS_SEEDED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // EP0 shares its RX and TX address. On the black board an eight-byte SETUP
 // also stored its two CRC bytes. Both endpoints still need a general bound.
 static mut CONTROL: RxStorage = RxStorage::EMPTY;
-static mut TX: Buffer<MAX_PACKET> = Buffer([0; MAX_PACKET]);
+#[cfg(feature = "usb-midi-copy")]
+const TX_STORAGE: usize = super::copied::BLOCK;
+#[cfg(not(feature = "usb-midi-copy"))]
+const TX_STORAGE: usize = MAX_PACKET;
+static mut TX: Buffer<TX_STORAGE> = Buffer([0; TX_STORAGE]);
 static mut RX: RxStorage = RxStorage::EMPTY;
+
+#[derive(Clone, Copy)]
+pub(super) enum Endpoint {
+    Control,
+    Out,
+    In,
+}
+
+#[derive(Debug)]
+pub(super) enum Buffers {
+    Direct,
+    #[cfg(feature = "usb-midi-copy")]
+    Copied(super::copied::Engine),
+}
+
+impl Endpoint {
+    pub(super) fn address(self) -> *mut u8 {
+        match self {
+            Self::Control => (&raw mut CONTROL).cast(),
+            Self::Out => RxBuffer::Normal.ptr(),
+            Self::In => (&raw mut TX).cast(),
+        }
+    }
+}
+
+impl Buffers {
+    pub(super) fn init(&mut self) {
+        #[cfg(feature = "usb-midi-copy")]
+        {
+            // A detached USB master can retain its previous address. No code
+            // may reintroduce CPU accesses to endpoint storage later in a
+            // copied boot, including through a legacy diagnostic constructor.
+            static MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+            let which = match self {
+                Self::Direct => 1,
+                Self::Copied(_) => 2,
+            };
+            if !select_mode(&MODE, which) {
+                rx_fault("restart before changing USB DMA mode", usize::from(which));
+            }
+        }
+        match self {
+            Self::Direct => init_rx_guards(),
+            #[cfg(feature = "usb-midi-copy")]
+            Self::Copied(engine) => engine.start(),
+        }
+    }
+    pub(super) fn check(&mut self) {
+        match self {
+            Self::Direct => check_rx_guards(),
+            #[cfg(feature = "usb-midi-copy")]
+            Self::Copied(engine) => engine.guards(),
+        }
+    }
+}
+
+#[cfg(feature = "usb-midi-copy")]
+fn select_mode(mode: &core::sync::atomic::AtomicU8, desired: u8) -> bool {
+    use core::sync::atomic::Ordering;
+    match mode.compare_exchange(0, desired, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(previous) => previous == desired,
+    }
+}
 
 pub(super) type Result<T> = core::result::Result<T, super::RegisterTimeout>;
 
@@ -161,9 +231,9 @@ pub(super) fn attach() -> Result<()> {
     // SAFETY: install permanent, aligned RAM destinations before exposing D+.
     // Enumeration can write EP0 before a host application opens a MIDI port.
     // Activation must already cover control traffic and outstanding old writes.
-    write(EP0_ADR, bus_address(&raw mut CONTROL));
+    write(EP0_ADR, bus_address(Endpoint::Control.address()));
     for reg in [EP1_RX, 0x11828, 0x11830, 0x1183c] {
-        write(reg, bus_address(RxBuffer::Normal.ptr()));
+        write(reg, bus_address(Endpoint::Out.address()));
     }
     set(IO, (1 << 10) | (1 << 9));
     clear(IO, 1 << 11);
@@ -181,7 +251,7 @@ pub(super) fn attach() -> Result<()> {
 }
 
 pub(super) fn reset() -> Result<()> {
-    write(EP0_ADR, bus_address(&raw mut CONTROL));
+    write(EP0_ADR, bus_address(Endpoint::Control.address()));
     // Only EP0 participates until SET_CONFIGURATION.
     set(CON0, 0x1e << 19);
     clear(CON0, 1 << 19);
@@ -213,12 +283,12 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
         wr(TX_ENABLE, 1)?;
         return wr(RX_ENABLE, 0);
     }
-    write(EP1_TX, bus_address(&raw mut TX));
+    write(EP1_TX, bus_address(Endpoint::In.address()));
     // SAFETY: the RX allocation is published before opening EP1's gate.
     // The owner established its write bound at activation. RX_MAX programs
     // the receiver. At 0x40 a rejected 1023-byte packet still changed SRAM
     // through byte 511 with no ready event on the black FM-1.
-    write(EP1_RX, bus_address(RxBuffer::Normal.ptr()));
+    write(EP1_RX, bus_address(Endpoint::Out.address()));
     wr(INDEX, 1)?;
     wr(TX_MAX, 0xff)?; // AC79 maximum packet register, as in the SDK.
     wr(TXCSR, 0x48)?; // Flush FIFO and reset data toggle.
@@ -278,21 +348,33 @@ pub(super) fn halt(input: bool, halted: bool) -> Result<()> {
     wr(reg, value)
 }
 
-pub(super) fn setup() -> [u8; 8] {
-    sync_rx();
-    // SAFETY: EP0 reported RXPKTRDY and a low COUNT byte of 8. The activation
-    // contract keeps those eight bytes CPU-owned through acknowledgement.
-    core::array::from_fn(|i| unsafe { (&raw mut CONTROL.data).cast::<u8>().add(i).read_volatile() })
+pub(super) fn setup(buffers: &mut Buffers) -> ([u8; 8], bool) {
+    match buffers {
+        Buffers::Direct => {
+            sync_rx();
+            // SAFETY: Direct requires eight initialized CPU-owned bytes until
+            // this copy completes, independently of the sampled ready flag.
+            (
+                core::array::from_fn(|i| unsafe {
+                    (&raw mut CONTROL.data).cast::<u8>().add(i).read_volatile()
+                }),
+                true,
+            )
+        }
+        #[cfg(feature = "usb-midi-copy")]
+        Buffers::Copied(engine) => {
+            let (packet, valid) = engine.packet(Endpoint::Control, 8);
+            (core::array::from_fn(|i| packet[i]), valid)
+        }
+    }
 }
 
-pub(super) fn control_in(bytes: &[u8], last: bool) -> Result<()> {
-    // SAFETY: the previous IN transfer is idle. Activation requires USB0 to
-    // respect CPU ownership of this shared EP0 RX/TX storage while filling it.
-    unsafe { publish((&raw mut CONTROL).cast(), EP0_ADR, EP0_CNT, bytes) };
+pub(super) fn control_in(buffers: &mut Buffers, bytes: &[u8], last: bool) -> Result<()> {
+    publish(buffers, Endpoint::Control, bytes);
     wr(CSR0, if last { 0x0a } else { 0x02 })
 }
 
-pub(super) fn receive(events: &mut super::PacketBuffer) -> Result<usize> {
+pub(super) fn receive(buffers: &mut Buffers, events: &mut super::PacketBuffer) -> Result<usize> {
     wr(INDEX, 1)?;
     let csr = rd(RXCSR)?;
     if csr & 1 == 0 {
@@ -300,15 +382,33 @@ pub(super) fn receive(events: &mut super::PacketBuffer) -> Result<usize> {
     }
     let count = rx_count()?;
     check_packet_count("EP1 byte count", count);
-    let n = usize::from(count).min(MAX_PACKET) / 4;
-    sync_rx();
-    for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
-        // SAFETY: the count check bounds the copy to one MIDI packet. The
-        // activation contract keeps this ready prefix stable until acknowledgement.
-        *b = unsafe { RxBuffer::Normal.ptr().add(i).read_volatile() };
-    }
+    let count = usize::from(count);
+    let n = count / 4;
+    let delivered = match buffers {
+        Buffers::Direct => {
+            sync_rx();
+            for (i, b) in events[..n].as_flattened_mut().iter_mut().enumerate() {
+                // SAFETY: count bounds this prefix. Direct requires it to
+                // remain CPU-owned through the acknowledgement.
+                *b = unsafe { RxBuffer::Normal.ptr().add(i).read_volatile() };
+            }
+            n
+        }
+        #[cfg(feature = "usb-midi-copy")]
+        Buffers::Copied(engine) => {
+            let (frame, valid) = engine.packet(Endpoint::Out, count);
+            if valid && count.is_multiple_of(4) {
+                events[..n]
+                    .as_flattened_mut()
+                    .copy_from_slice(&frame[..count]);
+                n
+            } else {
+                0
+            }
+        }
+    };
     acknowledge_rx(csr)?;
-    Ok(n)
+    Ok(delivered)
 }
 
 /// Check a newly signaled normal endpoint even if the application never reads MIDI.
@@ -369,7 +469,7 @@ pub(super) fn discard_rx() -> Result<()> {
     wr(RXCSR, 0x10) // FlushFIFO; keep the host's data toggle.
 }
 
-pub(super) fn send(events: &[super::EventPacket]) -> Result<usize> {
+pub(super) fn send(buffers: &mut Buffers, events: &[super::EventPacket]) -> Result<usize> {
     let n = events.len().min(super::MAX_EVENTS);
     if n == 0 {
         return Ok(0);
@@ -379,33 +479,38 @@ pub(super) fn send(events: &[super::EventPacket]) -> Result<usize> {
     if csr & 1 != 0 {
         return Ok(0);
     }
-    // SAFETY: USB0 owns TX and TXPKTRDY is clear until the send below.
-    unsafe {
-        publish(
-            (&raw mut TX).cast(),
-            EP1_TX,
-            EP1_CNT,
-            events[..n].as_flattened(),
-        )
-    };
+    publish(buffers, Endpoint::In, events[..n].as_flattened());
     wr(TXCSR, csr | 1)?;
     Ok(n)
 }
 
-/// # Safety
-/// `buffer` must point to at least `MAX_PACKET` writable bytes in aligned static
-/// SRAM. The caller must exclusively own the idle endpoint and its buffer until
-/// the handoff. Both registers must belong to that endpoint.
-unsafe fn publish(buffer: *mut u8, address_reg: usize, count_reg: usize, bytes: &[u8]) {
+fn publish(buffers: &mut Buffers, endpoint: Endpoint, bytes: &[u8]) {
     assert!(bytes.len() <= MAX_PACKET);
-    for (i, &byte) in bytes.iter().enumerate() {
-        // SAFETY: i < bytes.len() <= MAX_PACKET; the caller owns the destination.
-        unsafe { buffer.add(i).write_volatile(byte) };
+    let (address, count) = match endpoint {
+        Endpoint::Control => (EP0_ADR, EP0_CNT),
+        Endpoint::In => (EP1_TX, EP1_CNT),
+        Endpoint::Out => unreachable!("receive-only endpoint"),
+    };
+    match buffers {
+        Buffers::Direct => {
+            let buffer = endpoint.address();
+            for (i, &byte) in bytes.iter().enumerate() {
+                // SAFETY: Direct requires exclusive CPU ownership over this
+                // idle endpoint while filling. Both allocations fit MAX_PACKET.
+                unsafe { buffer.add(i).write_volatile(byte) };
+            }
+            sync_tx();
+            write(address, bus_address(buffer));
+        }
+        #[cfg(feature = "usb-midi-copy")]
+        Buffers::Copied(engine) => {
+            // The address installed at attach/configure stays fixed even when
+            // a replacement SETUP overlaps the bus-to-bus payload copy.
+            engine.publish(endpoint, bytes);
+        }
     }
-    sync_tx();
-    write(address_reg, bus_address(buffer));
     write(
-        count_reg,
+        count,
         u32::try_from(bytes.len()).expect("one USB packet fits"),
     );
 }
@@ -426,6 +531,17 @@ mod tests {
         manufacturer: "fm1-rust",
         product: "test",
     };
+
+    #[cfg(feature = "usb-midi-copy")]
+    #[test]
+    fn selected_mode_survives_reacquisition_and_rejects_an_incompatible_owner() {
+        for (first, other) in [(1, 2), (2, 1)] {
+            let mode = core::sync::atomic::AtomicU8::new(0);
+            assert!(select_mode(&mode, first));
+            assert!(!select_mode(&mode, other));
+            assert!(select_mode(&mode, first));
+        }
+    }
 
     #[test]
     fn checked_start_detaches_and_releases_the_port_on_error_or_panic() {

@@ -30,6 +30,7 @@ cpu1-probe = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
 usb-dma-probe = []
+usb-midi-copy = []
 usb-dma-stress = ["usb-dma-probe"]
 usb-window-probe = ["usb-dma-probe"]
 
