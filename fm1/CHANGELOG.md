@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `audio::Stream::try_write_with_interval` to estimate how many DAC halves
+  elapsed before a refill and report ambiguous counts explicitly.
 - Add `Cpu0<T>` for passing an owned BSP peripheral between tasks on CPU0.
   Access, extraction and drop check which core is executing.
 - Add the opt-in `cpu1-probe` boot example and linker support for a fixed

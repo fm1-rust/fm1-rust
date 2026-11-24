@@ -27,6 +27,12 @@ output applies a linear MASTER ramp and clips the mix once to the DAC range.
 After `Refill::Written`, `Output::block` exposes that same mix for a meter,
 oscilloscope or recording. A late render can cause the DAC to repeat old audio.
 
+For a sequencer that prepares numbered blocks, use `Output::render_with_interval`.
+After the first timed refill, `RefillInterval::Elapsed(n)` includes the current
+half. Skip `n.get() - 1` expired blocks before selecting PCM for this one.
+If the count is `Uncertain`, discard stale work and resynchronize the sequencer.
+Publish any edit receipt or MIDI batch for the chosen block after `Refill::Written`.
+
 ```rust
 use fm1_audio::{I24, MasterLevel, OUTPUT_FRAMES, Output, Refill, mix_stereo};
 
