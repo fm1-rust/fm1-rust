@@ -24,12 +24,22 @@ mod app {
     }
 
     #[shared]
+    #[cfg(not(coerced_field))]
     #[cfg_attr(packed_shared, repr(C, packed))]
     struct Shared {
         first: Inner,
         pad: u8,
         #[cfg(not(deref_shared))]
         second: u32,
+    }
+
+    // The macro saw a u32. The compiled field has the same name and can
+    // deref to u32, but its borrow guard cannot cross an interrupt boundary.
+    #[cfg(coerced_field)]
+    struct Shared {
+        first: Inner,
+        pad: u8,
+        second: core::cell::RefMut<'static, u32>,
     }
 
     // With the direct field removed, ordinary field access finds first.second.
@@ -53,12 +63,17 @@ mod app {
 
     #[init]
     fn init() -> (Shared, TaskInits) {
+        #[cfg(coerced_field)]
+        static CELL: rticx_pi32v2::asynchronous::ConstStaticCell<core::cell::RefCell<u32>> =
+            rticx_pi32v2::asynchronous::ConstStaticCell::new(core::cell::RefCell::new(2));
         (
             Shared {
                 first: Inner { second: 1 },
                 pad: 0,
-                #[cfg(not(deref_shared))]
+                #[cfg(not(any(deref_shared, coerced_field)))]
                 second: 2,
+                #[cfg(coerced_field)]
+                second: CELL.take().borrow_mut(),
             },
             TaskInits { tick: Tick(0) },
         )

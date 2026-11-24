@@ -36,7 +36,7 @@ if [[ $package == fm1-rticx ]]; then
     layout=(cargo rustc --color never --locked -p rticx-pi32v2 --example shared-layout --profile firmware
         --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
         -Zbuild-std-features=compiler-builtins-mem -- --check-cfg 'cfg(packed_shared)' --check-cfg 'cfg(deref_shared)'
-        --check-cfg 'cfg(capture_task)')
+        --check-cfg 'cfg(capture_task)' --check-cfg 'cfg(coerced_field)')
     "${layout[@]}"
     log=$(mktemp)
     trap 'rm -f "$log"' EXIT
@@ -51,6 +51,12 @@ if [[ $package == fm1-rticx ]]; then
         exit 1
     fi
     grep -F 'error[E0026]' "$log" || { cat "$log" >&2; exit 1; }
+
+    if "${layout[@]}" --cfg coerced_field >"$log" 2>&1; then
+        echo "shared field coerced to the proxy type" >&2
+        exit 1
+    fi
+    grep -F 'error[E0308]' "$log" || { cat "$log" >&2; exit 1; }
 
     if "${layout[@]}" --cfg capture_task >"$log" 2>&1; then
         echo "application trait captured a static interrupt task" >&2

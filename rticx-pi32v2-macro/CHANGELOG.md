@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Check `Send` against the compiled shared field and require its type to match
+  the lock proxy. A conditional declaration could hide a non-`Send` field
+  behind a dereference coercion.
 - Bind interrupt and idle dispatch to the generated task traits. A safe application
   could shadow `RticTask` and retain a mutable task reference across interrupts.
 - Require a direct struct field for each shared resource lock. A field removed
