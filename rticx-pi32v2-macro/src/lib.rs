@@ -345,10 +345,13 @@ impl CorePassBackend for Cpu0 {
                 __rticx_backend::export::acknowledge(__rticx_backend::Interrupt::#irq);
             )
         });
-        // Always call the trait, whose receiver cannot escape this invocation.
+        // The app can shadow the glob re-export. Only the defining trait limits
+        // the task borrow to this invocation.
         Some(quote! {
             #ack
-            RticTask::exec(unsafe { __rticx_backend::export::TaskStorage::assume_init_mut(&mut #storage) });
+            self::rticx_traits::RticTask::exec(unsafe {
+                __rticx_backend::export::TaskStorage::assume_init_mut(&mut #storage)
+            });
         })
     }
 
