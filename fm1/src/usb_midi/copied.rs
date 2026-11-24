@@ -201,10 +201,11 @@ impl Engine {
     // to prove ownership. Try once more if the trailer did not match.
     pub(super) fn packet(&mut self, ep: Endpoint, count: usize) -> ([u8; BLOCK], bool) {
         debug_assert!(count <= hw::MAX_PACKET);
-        let mut data = self.load(Area::Endpoint(ep));
-        if !valid_crc(&data, count) {
-            data = self.load(Area::Endpoint(ep));
+        let data = self.load(Area::Endpoint(ep));
+        if valid_crc(&data, count) {
+            return (data, true);
         }
+        let data = self.load(Area::Endpoint(ep));
         let valid = valid_crc(&data, count);
         (data, valid)
     }

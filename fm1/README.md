@@ -63,6 +63,13 @@ establish receive bounds and CPU ownership for both EP0 and EP1, including
 after reset or host replacement.
 [Measurements and bench qualification](../docs/usb-dma/README.md#qualifying-normal-midi-on-the-fm-1)
 
+On a qualified FM-1, the `usb-midi-copy` feature also provides
+`unsafe { port.into_midi_with_dma_copy(identity) }`. USB0 keeps its endpoint
+addresses, and the WL82 copy engine moves packets to and from private staging.
+The board integration supplies the USB write bound and exclusive use of a copy
+engine whose completion retires its memory accesses. See the
+[hardware measurements and activation contract](https://github.com/fm1-rust/fm1-rust/blob/741339e6a254c68831ab417e4031595b611fd28a/docs/usb-dma/copied-midi.md).
+
 With `async-usb`, bind
 `fm1::usb_midi::on_usb0_interrupt` to CPU0's USB0 controller interrupt (IRQ 9)
 and call `device.wait_for_activity(&mut delay).await` in the owning task.

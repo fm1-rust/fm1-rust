@@ -153,6 +153,10 @@ impl UsbPort {
     /// payloads in both directions. Replacements may tear a packet.
     ///
     /// # Safety
+    /// This interface assumes a genuine FM-1 running trusted board firmware.
+    /// Board identity can be taken on trust. The following DMA properties
+    /// must hold on the actual silicon and in the running firmware.
+    ///
     /// From before startup through reset, suspend, reconnect, detach, and any
     /// outstanding activity after drop or forget, USB0 must restrict accesses
     /// to its programmed permanent endpoint areas. This build reserves 2048

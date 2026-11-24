@@ -14,8 +14,9 @@ physical receiver kept its bulk configuration, including a zero high RXCSR.
 Selecting the diagnostic isochronous alternate gave the Mac permission to
 schedule an oversized DATA packet to that receiver. The normal MIDI
 descriptor advertises 64-byte bulk packets. Ordinary CoreMIDI traffic was
-tested separately. The board identification supplied by the operator was
-`black FM-1`; the exact silicon stepping is unknown.
+tested separately. The original captures identify the unit as `black FM-1`. A later
+[copied-MIDI identity run](copied-midi.md#board-identity-from-the-copied-midi-probe)
+reported WL82 `CHIP_ID = 0x00006f01` and loader tag `fm1`.
 
 ## Measurements
 
