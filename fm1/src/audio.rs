@@ -5,7 +5,10 @@
 //! Stereo I²S output on PC0, PC1, PC2 and PC6. The DMA cycles through
 //! two SRAM halves. The default 256-frame half lasts about 5.8 ms.
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, num::NonZeroU32};
+
+mod timing;
+use timing::Observation;
 
 use crate::{
     Token,
@@ -112,7 +115,7 @@ impl AudioPort {
     /// Returns the same clock and busy errors as [`Self::start`].
     pub fn start_with_frames<const N: usize>(&mut self) -> Result<Stream<'_, N>, StartError> {
         self.start_dma::<N>()?;
-        Ok(Stream { _port: PhantomData })
+        Ok(Stream::new())
     }
 
     /// Consume the port and start with `N` stereo frames per half (`1..=BLOCK_FRAMES`).
@@ -123,7 +126,7 @@ impl AudioPort {
         mut self,
     ) -> Result<Stream<'static, N>, StartError> {
         self.start_dma::<N>()?;
-        Ok(Stream { _port: PhantomData })
+        Ok(Stream::new())
     }
 
     #[allow(clippy::cast_possible_truncation, reason = "N is at most 256 frames.")]
@@ -176,6 +179,20 @@ impl AudioPort {
 #[derive(Debug)]
 pub struct Stream<'a, const N: usize = BLOCK_FRAMES> {
     _port: PhantomData<&'a mut AudioPort>,
+    previous: Option<Observation>,
+}
+
+/// Advance of the DAC at the start of a refill, including coalesced half-buffer events.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefillInterval {
+    /// This is the first timed refill since startup or the last untimed refill.
+    First,
+    /// Estimated DMA half boundaries crossed since the previous timed refill, including
+    /// the current release. One is normal.
+    Elapsed(NonZeroU32),
+    /// Several counts fit the observations, or the timer and active half disagree.
+    /// This observation still provides the baseline for the following refill.
+    Uncertain,
 }
 
 /// Result of servicing a DMA half-buffer event.
@@ -190,6 +207,13 @@ pub enum Refill {
 }
 
 impl<const N: usize> Stream<'_, N> {
+    fn new() -> Self {
+        Self {
+            _port: PhantomData,
+            previous: None,
+        }
+    }
+
     /// Try to submit one pre-rendered block.
     pub fn try_write(&mut self, input: &Block<N>) -> Refill {
         self.try_write_with(|| input)
@@ -199,11 +223,47 @@ impl<const N: usize> Stream<'_, N> {
     /// Reserve the last eighth of the period for copying. If preparation uses
     /// that margin or spans a boundary, discard the block. A boundary during
     /// the copy can produce a partial block. Both cases report [`Refill::Late`].
+    pub fn try_write_with<'b>(&mut self, prepare: impl FnOnce() -> &'b Block<N>) -> Refill {
+        self.service(|stream, _, _| {
+            stream.previous = None;
+            prepare()
+        })
+    }
+
+    /// Prepare a released half with its elapsed DAC interval, available before choosing the PCM.
+    /// The first timed refill establishes a baseline. A late refill also advances the baseline.
+    /// `WouldBlock` leaves it unchanged and skips the callback.
+    ///
+    /// ALNK0 latches releases and exposes the active half. The estimate combines that parity
+    /// with the configured frame rate and TIMER4 timestamps bracketing each half observation.
+    /// The time between observations must be shorter than one TIMER4 wrap (about 179 seconds).
+    /// A longer pause can look like a short interval. After resuming, service one untimed
+    /// refill to establish a fresh baseline on the next timed call.
+    /// If the interval is uncertain, the application can discard stale work and resynchronize.
+    /// Only the returned [`Refill`] reports whether this particular write succeeded.
+    pub fn try_write_with_interval<'b>(
+        &mut self,
+        prepare: impl FnOnce(RefillInterval) -> &'b Block<N>,
+    ) -> Refill {
+        self.service(|stream, before, active| {
+            let now = Observation::new(before, cycles(), active);
+            let interval = stream
+                .previous
+                .replace(now)
+                .map_or(RefillInterval::First, |prev| {
+                    now.interval_since(prev, Self::PERIOD)
+                });
+            prepare(interval)
+        })
+    }
+
     #[allow(
         clippy::cast_possible_truncation,
-        reason = "Starting a stream bounds N to 1..=256."
+        reason = "Stream construction bounds N to 1..=256."
     )]
-    pub fn try_write_with<'b>(&mut self, prepare: impl FnOnce() -> &'b Block<N>) -> Refill {
+    const PERIOD: u32 = FRAME_RATE.1 * N as u32;
+
+    fn service<'b>(&mut self, prepare: impl FnOnce(&mut Self, u32, u16) -> &'b Block<N>) -> Refill {
         let status = pending() >> 4;
         if status == 0 {
             return Refill::WouldBlock;
@@ -216,12 +276,10 @@ impl<const N: usize> Stream<'_, N> {
         if status & 8 == 0 {
             return Refill::WouldBlock;
         }
-        let (prepare_limit, period) = const {
-            let period = FRAME_RATE.1 * N as u32;
-            (period - period / 8, period)
-        };
+        let period = Self::PERIOD;
+        let prepare_limit = const { Self::PERIOD - Self::PERIOD / 8 };
         let moved = || read16(CON0) >> 15 != active || pending() & 0x80 != 0;
-        let input = prepare();
+        let input = prepare(self, start, active);
         if moved() || cycles().wrapping_sub(start) >= prepare_limit {
             return Refill::Late;
         }
@@ -340,5 +398,46 @@ mod tests {
         });
         assert_eq!(late, Refill::Late);
         assert_eq!(read_frame(144), [0; 2]);
+        drop(stream);
+
+        check_timed_refills(audio.start().expect("restart with the default half"));
+    }
+
+    // Keep the test's exclusive ownership of the driver's static DMA array.
+    fn check_timed_refills(mut stream: Stream<'_>) {
+        let block = [[0; 2]; BLOCK_FRAMES];
+        let written = |stream: &mut Stream<'_>, expected| {
+            assert_eq!(
+                stream.try_write_with_interval(|interval| {
+                    assert_eq!(interval, expected);
+                    &block
+                }),
+                Refill::Written
+            );
+        };
+        registers::write(STATUS, 0x80);
+        assert_eq!(
+            stream.try_write_with_interval(|interval| {
+                assert_eq!(interval, RefillInterval::First);
+                // A new release while preparing belongs to the next attempt.
+                registers::write(STATUS, 0x80);
+                &block
+            }),
+            Refill::Late
+        );
+        write16(CON0, read16(CON0) | (1 << 15));
+        written(&mut stream, RefillInterval::Elapsed(NonZeroU32::MIN));
+        assert_eq!(stream.try_write(&block), Refill::WouldBlock);
+        assert_eq!(
+            stream.try_write_with_interval(|_| unreachable!()),
+            Refill::WouldBlock
+        );
+        registers::write(STATUS, 0x80);
+        write16(CON0, read16(CON0) & !(1 << 15));
+        written(&mut stream, RefillInterval::Elapsed(NonZeroU32::MIN));
+        registers::write(STATUS, 0x80);
+        assert_eq!(stream.try_write(&block), Refill::Written);
+        registers::write(STATUS, 0x80);
+        written(&mut stream, RefillInterval::First);
     }
 }

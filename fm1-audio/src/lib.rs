@@ -45,12 +45,32 @@ impl Output {
     pub fn render(&mut self, master: MasterLevel, render: impl FnOnce(&mut OutputBlock)) -> Refill {
         let block = &mut self.block;
         let previous = self.gain;
-        let result = self.stream.try_write_with(|| {
-            block.fill([0; 2]);
-            render(block);
-            apply_gain(block, previous, master);
-            &*block
+        let result = self
+            .stream
+            .try_write_with(|| prepare_block(block, previous, master, render));
+        self.finish(master, result)
+    }
+
+    /// Render a ready half with its DAC interval. The interval is available before selecting
+    /// the samples so a sequencer can skip expired work. The callback receives the same
+    /// cleared block and MASTER handling as [`Self::render`].
+    ///
+    /// [`Stream::try_write_with_interval`] describes the clock assumptions and when the
+    /// count is uncertain. A serviced call to [`Self::render`] resets the timing baseline.
+    pub fn render_with_interval(
+        &mut self,
+        master: MasterLevel,
+        render: impl FnOnce(&mut OutputBlock, RefillInterval),
+    ) -> Refill {
+        let block = &mut self.block;
+        let previous = self.gain;
+        let result = self.stream.try_write_with_interval(|interval| {
+            prepare_block(block, previous, master, |block| render(block, interval))
         });
+        self.finish(master, result)
+    }
+
+    fn finish(&mut self, master: MasterLevel, result: Refill) -> Refill {
         if result == Refill::Written {
             self.gain = master;
         }
@@ -63,6 +83,18 @@ impl Output {
     pub fn block(&self) -> &OutputBlock {
         &self.block
     }
+}
+
+fn prepare_block(
+    block: &mut OutputBlock,
+    from: MasterLevel,
+    to: MasterLevel,
+    render: impl FnOnce(&mut OutputBlock),
+) -> &OutputBlock {
+    block.fill([0; 2]);
+    render(block);
+    apply_gain(block, from, to);
+    block
 }
 
 /// Add separate left and right signed 24-bit input planes to an interleaved mix.

@@ -48,6 +48,9 @@ smaller DMA half at startup. Submit a prepared block with `try_write`, or use
 `try_write_with` to render when the next half becomes available. A long blocking
 LCD transfer can miss the refill deadline and cause old samples to repeat.
 `Refill::Late` reports a missed deadline during preparation or copying.
+Use `try_write_with_interval` when the application also needs to know how
+many DAC halves elapsed between refills. The callback can use that count
+to skip expired audio before it prepares the released half.
 
 Supply your application's USB vendor ID, product ID and descriptor strings
 to either safe constructor. On the current AC791N BSP, `try_into_midi` returns
