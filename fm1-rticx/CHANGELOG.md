@@ -10,14 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add the `rticx-timing` diagnostic for measuring interrupt and async-task
-  timing on the board, with reports available over USB.
+  timing on the board. It reports over USB and requires a bench setup that
+  satisfies the BSP's receive DMA contract.
 - Add `rticx-cpu1-audio`, which runs a fixed audio worker on CPU1 while
   CPU0 owns RTICX, the audio interrupt, the display and the USB log.
 
 ### Changed
 
-- The `rticx-piano` example uses checked USB-MIDI startup and plays locally
-  when the BSP reports DMA protection unavailable.
+- `rticx-piano` uses `UsbPort::try_into_midi` at startup. On AC791N the
+  keyboard plays locally when the BSP returns `UsbError::DmaProtectionUnavailable`.
 - [BREAKING] `Clock` and `DeadlineClock` own their pending timer registrations.
   This fixes a use-after-free during expiry and wakes the most recent waker
   after a repoll. Use `rtic_time::Timebase` in generic clock bounds. Each clock
