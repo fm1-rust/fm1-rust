@@ -1,7 +1,7 @@
 [package]
 name = "fm1"
 description = "Board support for the M-VAVE FM-1 using embedded-hal"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/fm1-rust/fm1-rust"
