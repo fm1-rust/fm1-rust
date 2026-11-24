@@ -129,6 +129,11 @@ leaves the monitor disabled.
 
 ## Qualifying normal MIDI on the FM-1
 
+The black FM-1 split a tagged SETUP across two addresses during all three
+in-flight switch challenges. For WaveGraph, the optional copied MIDI path
+keeps USB0 on permanent addresses and keeps Rust off the endpoint payloads.
+It has its own unsafe activation contract. [Physical capture and copied MIDI implementation](copied-midi.md)
+
 On an explicitly qualified bench, board setup can call
 `unsafe { port.assume_midi_dma() }`. This consumes
 the raw port without touching USB0. Application code that receives the
