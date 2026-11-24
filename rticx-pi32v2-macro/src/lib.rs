@@ -320,7 +320,10 @@ impl CorePassBackend for Cpu0 {
             return lock;
         };
         let ty = &shared.strct.ident;
+        // A struct pattern requires a declared field. Field access alone can invoke
+        // DerefMut if cfg removed the field after the app macro saw it.
         lock.block.stmts.push(parse_quote!({
+            const _: fn(&#ty) = |#ty { #member: _, .. }| ();
             const MASK: __rticx_backend::export::SourceMask = __rticx_source_mask(CEILING);
             static BORROW: __rticx_backend::export::BorrowFlag =
                 __rticx_backend::export::BorrowFlag::FREE;

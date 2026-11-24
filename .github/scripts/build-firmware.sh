@@ -35,7 +35,7 @@ if [[ $package == fm1-rticx ]]; then
     # Use the same macro, controller and target ABI as the firmware examples.
     layout=(cargo rustc --color never --locked -p rticx-pi32v2 --example shared-layout --profile firmware
         --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
-        -Zbuild-std-features=compiler-builtins-mem -- --check-cfg 'cfg(packed_shared)')
+        -Zbuild-std-features=compiler-builtins-mem -- --check-cfg 'cfg(packed_shared)' --check-cfg 'cfg(deref_shared)')
     "${layout[@]}"
     log=$(mktemp)
     trap 'rm -f "$log"' EXIT
@@ -45,6 +45,11 @@ if [[ $package == fm1-rticx ]]; then
     fi
     cat "$log"
     grep -Fq 'error[E0793]' "$log"
+    if "${layout[@]}" --cfg deref_shared >"$log" 2>&1; then
+        echo "shared field reached through DerefMut compiled successfully" >&2
+        exit 1
+    fi
+    grep -F 'error[E0026]' "$log" || { cat "$log" >&2; exit 1; }
 
     handoffs=(cargo rustc --color never --locked -p rticx-pi32v2 --example interrupt-handoffs
         --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
