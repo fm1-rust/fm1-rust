@@ -71,6 +71,28 @@ was built from WaveGraph `6fc0cc1` with the copied MIDI BSP patch on
 `9b9af57`. The hardware obligations for unsafe activation are described
 below.
 
+## Board identity from the copied-MIDI probe
+
+On November 24, 2026 the operator ran the ID1 firmware on the black FM-1.
+The Mac received the following reply to `fm1 log` after copied-MIDI startup.
+
+```text
+Using 1209:0001 on bus 00, address 1
+CHIP_ID 00006F01
+Loader tag: fm1
+```
+
+ID1 read the full 32-bit WL82 `JL_INTEST->CHIP_ID` register at
+`0x00010200`. It also read the installed bootloader's `AC79BLID` signature
+and eight-byte, NUL-padded board tag at `0x01c02040`. The firmware allowed
+a PLAY tap to start copied MIDI on an exact `fm1` loader tag and reported
+the silicon ID. This run exercised enumeration, the EP1 OUT SysEx request
+and the EP1 IN response on the unit reporting `0x00006f01`. The maximum
+USB0 write extent and the timing of the copy engine's last SRAM access
+relative to DONE remain unmeasured by ID1.
+[WL82 register layout](https://github.com/tuya/TuyaOpen-JieLi/blob/8521d32608e3723b4016b1bf5a5e93c5de5674bc/chip/wl82/AC79_AIoT_SDK/include_lib/driver/cpu/wl82/asm/WL82.h#L374-L381) ·
+[Bootloader identity layout](https://github.com/jvitkauskas/m-bootloader/blob/eb4f2c1f83f30f99508d065cb98089e086b2440e/docs/SPEC.md#81-board-selection-and-image-identity)
+
 ## Ownership in the experimental MIDI path
 
 At startup the BSP locks these SRAM arenas into one access mode for the
