@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "fm1-controls"
-version = "0.2.0-rc.0"
+version = "0.2.0"
 dependencies = [
  "critical-section",
  "fm1",
