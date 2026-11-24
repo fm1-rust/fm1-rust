@@ -42,6 +42,55 @@ fn play(output: &mut Output, master: MasterLevel, left: &[I24; OUTPUT_FRAMES],
 }
 ```
 
+### Mixing sources
+
+Use the functions in `mix` on the block passed to `Output::render` or on an
+application-owned bus. Each call mixes up to the shorter length and returns
+the number of frames consumed. With separate planes the shortest of all three
+slices sets the count. A voice can end partway through a block.
+
+```rust
+use fm1_audio::{MasterLevel, Output, Refill, mix::{self, Gain}};
+
+fn play_voices(output: &mut Output, master: MasterLevel, kick: &[i16],
+               stereo_bus: &[[i32; 2]]) -> Refill {
+    output.render(master, |out| {
+        mix::stereo_q23(out, stereo_bus);
+        mix::mono_i16(out, kick, [Gain::UNITY, Gain::from_bits(8192)]);
+    })
+}
+```
+
+`mix::stereo_i16` accepts interleaved PCM16 with per-channel gains.
+`mix::planar_q23` accepts native `i32` planes, including the same mono slice
+for both channels. A frame is a native-endian array with left first, contiguous
+channels and the alignment of one channel. PCM16 scales to Q23 before adding.
+Both channels retain `i32` headroom until MASTER. Existing `I24` callers can
+continue to use `mix_stereo`.
+
+The default `dsp` feature assembles AC791N kernels on the FM-1 target with
+the BSP's `PI32V2_BIN` tools.
+They use independent 32-bit DSP lanes and repeat at most 16 frames at a time.
+The [FM-1 repeat and alignment measurements][dsp-probe] document the chip
+limits. A word-aligned stereo PCM16 source uses one packed load per frame.
+A source aligned only to a halfword uses two halfword loads.
+Other targets use the same arithmetic in Rust. For a pi32v2 emulator with
+partial DSP instruction support, set `default-features = false` on the
+`fm1-audio` dependency throughout the build to use that implementation.
+Build `fm1/scripts/build-example.sh mix-bench` to reproduce the readings below.
+On one FM-1, all six output blocks matched the scalar Rust reference. Each
+column reports the best of 16 runs on 128 frames, in 24 MHz TIMER4 ticks
+(24 ticks = 1 µs). The timed region covers adding one source to the mix.
+
+| Source | Scalar Rust (ticks) | Mixer (ticks) | Speedup |
+| --- | ---: | ---: | ---: |
+| Mono PCM16 with left/right gains | 978 | 152 | 6.43× |
+| Stereo PCM16, word-aligned | 1017 | 153 | 6.65× |
+| Stereo PCM16, two bytes past a word boundary | 1022 | 178 | 5.74× |
+| Interleaved stereo Q23 | 393 | 130 | 3.02× |
+| Planar stereo Q23 | 410 | 126 | 3.25× |
+| Planar `I24` via `mix_stereo` | 412 | 334 | 1.23× |
+
 To measure an interrupt, read `fm1::time::cycles()` at entry and call
 `Stats::record` after servicing any output taps. This tracks the longest
 service time, the longest interval between serviced entries and observed
@@ -62,6 +111,7 @@ This crate enables the BSP’s MPL-2.0 audio driver. See the
 Unless you explicitly state otherwise, you license contributions you
 intentionally submit to this crate under the [MIT License][mit].
 
+[dsp-probe]: https://github.com/jvitkauskas/pi32v2-isa/tree/058b89bb835d12b194a9f13f51ec153c1d6cc24b/hw/fm1-2026-11-15-excprobe
 [crate-badge]: https://img.shields.io/crates/v/fm1-audio?logo=rust
 [crate]: https://crates.io/crates/fm1-audio
 [docs-badge]: https://docs.rs/fm1-audio/badge.svg

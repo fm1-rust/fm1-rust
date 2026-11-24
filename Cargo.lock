@@ -492,6 +492,7 @@ name = "fm1-audio"
 version = "0.2.0"
 dependencies = [
  "fm1",
+ "fm1-graphics",
  "wavegraph-sample",
 ]
 

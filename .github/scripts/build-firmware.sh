@@ -29,6 +29,9 @@ if [[ $package == fm1 ]]; then
 fi
 
 if [[ $package == fm1-rticx ]]; then
+    # Exercise the native mixer from a downstream firmware binary.
+    ./fm1/scripts/build-example.sh mix-bench
+    python3 tools/audio-mix/check_kernels.py "${FM1_OUT:-target/firmware}/mix-bench.elf"
     for profile in midi bulk iso stress; do
         ./fm1/scripts/build-example.sh "rticx-dma-$profile"
     done
