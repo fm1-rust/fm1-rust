@@ -255,25 +255,33 @@ impl Spi1 {
         Ok(())
     }
 
-    // Prepare one strip, replay it, and leave its final DMA in flight.
+    fn repeat_rgb565(&mut self, pixel: [u8; 2], count: usize) -> Result<(), Error> {
+        for len in self.solid_transfers(pixel, count)? {
+            self.wait_dma()?;
+            self.start_dma(len, false);
+        }
+        Ok(())
+    }
+
+    // Stage the color once. The iterator holds only byte counts, so the staging
+    // buffer stays exclusively with the transport between DMA submissions.
     #[allow(
         clippy::arithmetic_side_effects,
-        reason = "A strip holds at most CHUNK / 2 pixels, and each count is bounded by remaining."
+        reason = "The pixel counts converted to byte lengths are bounded by CHUNK / 2."
     )]
-    fn repeat_rgb565(&mut self, pixel: [u8; 2], mut remaining: usize) -> Result<(), Error> {
+    fn solid_transfers(
+        &mut self,
+        pixel: [u8; 2],
+        count: usize,
+    ) -> Result<impl Iterator<Item = usize> + use<>, Error> {
+        const PIXELS: usize = CHUNK / 2;
         self.wait_dma()?;
-        let strip = remaining.min(CHUNK / 2);
-        self.staging()[..strip * 2]
+        self.staging()[..count.min(PIXELS) * 2]
             .as_chunks_mut::<2>()
             .0
             .fill(pixel);
-        while remaining != 0 {
-            self.wait_dma()?;
-            let count = remaining.min(strip);
-            self.start_dma(count * 2, false);
-            remaining -= count;
-        }
-        Ok(())
+        let tail = (count % PIXELS) * 2;
+        Ok(core::iter::repeat_n(CHUNK, count / PIXELS).chain((tail != 0).then_some(tail)))
     }
 
     fn staging(&mut self) -> &mut [u8; CHUNK] {

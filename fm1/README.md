@@ -123,6 +123,12 @@ leaves the last strip in flight. Prepare the next rectangle while it sends,
 then call `flush().await?` after the final rectangle. The timer wakes the task
 if SPI1 stalls for 50 ms. See the [RTICX waveform example][waveform-example].
 
+For a solid color, call `writer.fill_rect(x, y, width, height, rgb565).await?`.
+SPI1 replays one strip from the BSP's SRAM across a single panel window.
+The future completes after the last pixels are sent. Cancelling can leave a
+partial rectangle on screen. A subsequent fill or write waits for the pending
+strip before using the buffer again.
+
 ## Drawing with embedded-graphics
 
 Enable the optional `embedded-graphics` feature on `fm1` or `fm1-rticx`.

@@ -43,6 +43,67 @@ fn complete_dma() {
 }
 
 #[test]
+fn cancelled_fill_keeps_its_strip_until_dma_finishes() {
+    let _display = DISPLAY.lock().expect("exclusive display");
+    let mut lcd = DisplayPort(Token::new()).init().expect("working SPI");
+    let alarm = Alarm::default();
+    let mut delay = &alarm;
+    let mut writer = lcd.as_async(&mut delay).expect("idle LCD");
+    let wakes = Arc::new(Wakes::default());
+    let waker = Waker::from(wakes.clone());
+    let mut cx = Context::from_waker(&waker);
+    CHIP.with_borrow_mut(|chip| {
+        chip.hold_irq_dma = true;
+        chip.transfers.clear();
+    });
+    assert_eq!(
+        pin!(writer.fill_rect(240, 240, 0, 0, 0)).poll(&mut cx),
+        Poll::Ready(Ok(()))
+    );
+    assert_eq!(
+        pin!(writer.fill_rect(239, 0, 2, 1, 0)).poll(&mut cx),
+        Poll::Ready(Err(Error::InvalidRegion))
+    );
+    CHIP.with_borrow(|chip| assert!(chip.transfers.is_empty()));
+    {
+        let mut fill = pin!(writer.fill_rect(0, 0, 240, 16, 0xabcd));
+        assert!(fill.as_mut().poll(&mut cx).is_pending());
+    }
+    let mut next = pin!(writer.fill_rect(0, 0, 239, 9, 0x1234));
+    assert!(next.as_mut().poll(&mut cx).is_pending());
+    for _ in 0..2 {
+        complete_dma();
+        assert!(next.as_mut().poll(&mut cx).is_pending());
+    }
+    complete_dma();
+    assert_eq!(next.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
+    assert_eq!(wakes.0.load(Relaxed), 3);
+    CHIP.with_borrow(|chip| {
+        let windows = chip
+            .transfers
+            .iter()
+            .filter(|(data, v)| !data && v.as_slice() == [0x2c])
+            .count();
+        assert_eq!(windows, 2); // One RAMWR for each fill, including the cancelled one.
+        let strips: Vec<_> = chip
+            .transfers
+            .iter()
+            .filter(|(data, v)| *data && v.len() > 4)
+            .collect();
+        assert_eq!(strips.len(), 3);
+        for ((_, bytes), (len, color)) in strips.into_iter().zip([
+            (3840, [0xab, 0xcd]),
+            (3840, [0x12, 0x34]),
+            (239 * 9 * 2 - 3840, [0x12, 0x34]),
+        ]) {
+            assert_eq!(bytes.len(), len);
+            assert!(bytes.as_chunks::<2>().0.iter().all(|pixel| *pixel == color));
+        }
+        assert!(chip.dma.is_none());
+    });
+}
+
+#[test]
 fn interrupt_releases_each_strip_and_early_completion_is_latched() {
     let _display = DISPLAY.lock().expect("exclusive display");
     let mut lcd = DisplayPort(Token::new()).init().expect("working SPI");
