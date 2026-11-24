@@ -51,6 +51,14 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo did not set OUT_DIR")?);
     archive(&bin, &out, "libfm1_rt.a", &["crt0.S", "shim.c"])?;
+    if env::var_os("CARGO_FEATURE_USB_WINDOW_PROBE").is_some() {
+        archive(
+            &bin,
+            &out,
+            "libfm1_window.a",
+            &["usb_window.c", "usb_window_entry.S"],
+        )?;
+    }
     if env::var_os("CARGO_FEATURE_CPU1_PROBE").is_some() {
         // Only the CPU1 examples explicitly link this archive, even with --all-features.
         archive(

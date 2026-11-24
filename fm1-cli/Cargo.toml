@@ -15,7 +15,10 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 fm1-usb = { workspace = true, features = ["dma-probe"] }
+getrandom = "0.4"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 
 [lints]
 workspace = true

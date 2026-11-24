@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `fm1 dma-window` to capture, recover and replay the EP0/EP1 write-range experiments, including WND1 archives and WND3 destination checks in SRAM.
+  Export one or more completed runs as a single JSON file with `--pack`, and pass the file to `--replay` for offline verification.
+
 - Add the `fm1` host command. Use `fm1 log` for a firmware log snapshot or
   diagnostic trial history, and `fm1 timing` for the board's timing report.
 - Add `fm1 dma-probe` and `fm1 dma-stress` to run EP1 OUT trials and save

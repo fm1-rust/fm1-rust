@@ -36,6 +36,11 @@ pub(super) enum Reply {
         flags: u8,
         requested: u16,
     },
+    #[cfg(feature = "usb-window-probe")]
+    WindowTrial {
+        case: u8,
+        token: u16,
+    },
     Halt {
         input: bool,
         halted: bool,

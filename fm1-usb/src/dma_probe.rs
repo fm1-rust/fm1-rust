@@ -7,6 +7,7 @@ mod history;
     reason = "libusb exposes isochronous transfers through its C API."
 )]
 mod iso;
+pub mod window;
 pub use history::read_log;
 
 use crate::{Device, USB_ID, only};

@@ -3,6 +3,7 @@
 
 mod dma_probe;
 mod dma_stress;
+mod dma_window;
 
 use clap::{Parser, Subcommand};
 use core::time::Duration;
@@ -33,6 +34,8 @@ enum Command {
     Log,
     /// Read the 25-page rticx-timing report after the LCD shows DONE.
     Timing,
+    /// Measure the DMA write boundary on EP0 SETUP and EP1 bulk OUT.
+    DmaWindow(dma_window::Options),
     /// Exercise the 2 KiB EP1 OUT boundary and verify endpoint recovery on RXS1.
     DmaStress {
         /// Board identification to save with the snapshots.
@@ -69,13 +72,7 @@ fn parse_timeout(s: &str) -> Result<Duration, &'static str> {
         .ok_or("expected a positive, finite duration")
 }
 
-fn run(args: Args) -> io::Result<()> {
-    if let Command::DmaStress {
-        replay: Some(dir), ..
-    } = &args.command
-    {
-        return dma_stress::replay(dir);
-    }
+fn find_device() -> io::Result<Device> {
     let device = Device::find()?;
     let info = device.info();
     eprintln!(
@@ -85,9 +82,27 @@ fn run(args: Args) -> io::Result<()> {
         info.bus_id(),
         info.device_address()
     );
-    let log_ports = || device.log_ports(args.port.as_deref(), args.timeout);
+    Ok(device)
+}
+
+fn run(args: Args) -> io::Result<ExitCode> {
     let text = match args.command {
+        Command::DmaWindow(opts) => {
+            return dma_window::run(&opts, args.timeout).map(|passed| {
+                if passed {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::from(2)
+                }
+            });
+        }
+        Command::DmaStress {
+            replay: Some(dir), ..
+        } => return dma_stress::replay(&dir).map(|()| ExitCode::SUCCESS),
         Command::Log => {
+            let device = find_device()?;
+            let info = device.info();
+            let log_ports = || device.log_ports(args.port.as_deref(), args.timeout);
             // Probe history is read only over EP0, even while EP1 is armed.
             let vendor = matches!(
                 info.product_string(),
@@ -116,7 +131,8 @@ fn run(args: Args) -> io::Result<()> {
                 }
             }
         }
-        Command::Timing => log_ports()?
+        Command::Timing => find_device()?
+            .log_ports(args.port.as_deref(), args.timeout)?
             .0
             .connect(|_, _| {})?
             .read_timing(args.timeout)?,
@@ -132,27 +148,30 @@ fn run(args: Args) -> io::Result<()> {
             let dir = out
                 .as_deref()
                 .unwrap_or_else(|| std::path::Path::new("dma-stress-results"));
-            return dma_stress::run(&device, board, dir, args.timeout, reconnect);
+            return dma_stress::run(&find_device()?, board, dir, args.timeout, reconnect)
+                .map(|()| ExitCode::SUCCESS);
         }
         Command::DmaProbe {
             board_revision,
             out,
         } => {
             return dma_probe::run(
-                &device,
+                &find_device()?,
                 &board_revision,
                 out,
                 args.port.as_deref(),
                 args.timeout,
-            );
+            )
+            .map(|()| ExitCode::SUCCESS);
         }
     };
-    io::stdout().lock().write_all(text.as_bytes())
+    io::stdout().lock().write_all(text.as_bytes())?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn main() -> ExitCode {
     match run(Args::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("fm1: {e}");
             ExitCode::FAILURE

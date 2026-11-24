@@ -23,6 +23,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo check --workspace --locked
+      - name: Replay the black FM-1 USB window captures
+        run: |
+          cargo build --locked -p fm1-cli
+          archive=docs/usb-dma/black-fm1/window-runs.json
+          jq -e '[.runs[] | [.name, (.report.trials | length)]] ==
+            [["window-r1",4],["window-r2",4],["window-r3",16],["window-r4",24]]' "$archive"
+          status=0
+          target/debug/fm1 dma-window --replay "$archive" || status=$?
+          # R1–R3 include setup failures. R4 includes eight crossings. Invalid evidence exits 1.
+          test "$status" -eq 2
 
   clippy:
     runs-on: ubuntu-latest

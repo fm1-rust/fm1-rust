@@ -30,6 +30,23 @@ use `fm1 log --port 'FM-1 MIDI Piano' --timeout 2.5`.
 On Debian or Ubuntu, install `pkg-config` and `libasound2-dev` before building.
 macOS uses the system CoreMIDI framework.
 
+## USB peripheral write-range test
+
+Flash the `usb-window` image and close M-Flasher. R4 shows `WND3 R4` on the LCD. The board resets between shots. The runner works with R3 and R4 and can also replay earlier WND1 captures.
+
+```sh
+fm1 dma-window --board "black FM-1" --out usb-window-r4-results
+```
+
+The full schedule has 24 EP0 SETUP and EP1 bulk OUT trials across two sentinel fills. The host retrieves the frozen SRAM and registers after each reconnect. A failed control skips its dependent shots. `--endpoint ep1` or `--endpoint ep0` selects 12 trials. Use `fm1 dma-window --recover DIR` to retrieve a pending snapshot and `fm1 dma-window --replay DIR` to verify the saved evidence offline. Exit 2 can indicate a crossing, an inconclusive case or an incomplete run. [Probe protocol and board evidence](../docs/usb-dma/window.md)
+
+Export one or more completed capture directories to a single JSON file with `--pack`. The JSON goes to standard output and verification messages go to standard error. Replay accepts the file directly, without a board.
+
+```sh
+fm1 dma-window --pack usb-window-r4-results > window-r4.json
+fm1 dma-window --replay docs/usb-dma/black-fm1/window-runs.json
+```
+
 ## EP1 OUT DMA diagnostic
 
 The three diagnostic images use the USB task, USB0 interrupt, 10 ms fallback
