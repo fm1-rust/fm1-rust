@@ -6,7 +6,9 @@
 ENTRY(__fm1_image_entry)
 EXTERN(_start)
 MEMORY {
-  flash (rx) : ORIGIN = 0x02000120, LENGTH = 0x8EEE0
+  /* fm1-assets.ld opts into the larger combined application and assets area. */
+  flash (rx) : ORIGIN = 0x02000120,
+               LENGTH = DEFINED(__fm1_assets_xip_end) ? __fm1_assets_xip_end - 0x02000120 : 0x8EEE0
   ram (rwx) : ORIGIN = 0x01C40000, LENGTH = 0x3C000
 }
 SECTIONS {

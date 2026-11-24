@@ -34,6 +34,9 @@ on screen, press **FX** to halve the output level and watch the trace shrink.
 | [`rticx-pi32v2`](rticx-pi32v2/) | RTICX runtime for AC791N CPU0 | [![crates.io][pi32v2-version]][pi32v2-crate] | [![docs.rs][pi32v2-docs-badge]][pi32v2-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
 | [`rticx-pi32v2-macro`](rticx-pi32v2-macro/) | Application macros for the pi32v2 runtime and FM-1 board crate | [![crates.io][macro-version]][macro-crate] | [![docs.rs][macro-docs-badge]][macro-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
 
+[`fm1-assets`](fm1-assets/) adds an opt-in flash layout, a firmware packager
+and allocation-free playback of losslessly packed mono PCM16 clips.
+
 ## Examples
 
 The BSP builds on Julius Vitkauskas’s [`fm1-blink-rust` proof of concept][blink-origin].
