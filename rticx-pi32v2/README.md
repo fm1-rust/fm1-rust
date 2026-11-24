@@ -4,20 +4,30 @@
 [![docs.rs][docs-badge]][docs]
 [![Build status][ci-badge]][ci]
 
-A single-core [RTICX](https://github.com/rticx-rs/rticx) distribution for the
-JieLi AC791N interrupt controller. FM-1 applications can use the
-[fm1-rticx board crate][board]. The distribution can also be used
-directly with `#[rticx_pi32v2::app(device = fm1, dispatchers = [SOFT0])]`.
+This [RTICX](https://github.com/rticx-rs/rticx) distribution runs interrupt
+handlers and async tasks on CPU0 of the JieLi AC791N. On the FM-1, preliminary
+multicore support lets a dedicated DSP worker run on CPU1 alongside those tasks.
+
+Use the [fm1-rticx board crate][board] for FM-1 applications or invoke
+`#[rticx_pi32v2::app(device = fm1, dispatchers = [SOFT0])]` directly.
+
+## CPU1 audio worker
+
+The [FM-1 audio-block probe][cpu1-probe] and [WaveGraph][wavegraph-worker]
+use board-specific startup code to launch their workers. CPU1 renders audio
+blocks and hands them back through a shared SRAM mailbox. CPU0's ALNK0
+interrupt handler uses completed blocks to refill the audio DMA buffer.
+
+RTICX task attributes accept only `core = 0`. Shared-resource locks and async
+channels are local to CPU0 because the runtime implements critical sections
+by masking interrupts on that core.
 
 ## Interrupts and priorities
 
-CPU0 owns the RTICX interrupt sources, task state and resource ceilings.
-The opt-in [audio-block probe](../fm1-rticx/README.md#persistent-cpu1-audio-probe)
-runs a fixed DSP worker on CPU1 alongside the CPU0 executor. RTICX priorities
-1 through 8 map to hardware priorities 0 through 7. Priority zero runs in
-the idle context. The application supplies its startup code, CPU0 stacks
-and compiler-rt builtins through the BSP. `PI32V2_BIN` selects the same
-assembler as the firmware build.
+RTICX priorities 1 through 8 map to CPU0 hardware priorities 0 through 7.
+Priority zero runs in the idle context. The application supplies its startup
+code, CPU0 stacks and compiler-rt builtins through the BSP. `PI32V2_BIN`
+selects the same assembler as the firmware build.
 
 Hardware tasks can bind USB0 (controller IRQ 9), ALNK0, SPI1, UART1, SARADC,
 SPI2 and TIMER5. The same `Interrupt` variant selects the installed vector and
@@ -96,6 +106,8 @@ intentionally submit to this crate under the [MIT License][mit].
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/rticx-pi32v2.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/rticx-pi32v2.yml
 [board]: https://docs.rs/fm1-rticx/
+[cpu1-probe]: https://github.com/fm1-rust/fm1-rust/blob/c4717283bff5f1fabfaf7887fc62e90aba24c882/fm1-rticx/README.md#persistent-cpu1-audio-probe
+[wavegraph-worker]: https://github.com/fm1-rust/wavegraph/blob/0e3e6adc225ce6337518053fa8ceeff0ed344525/wavegraph-fm1/README.md#the-cpu1-render-worker
 [mit]: https://github.com/fm1-rust/fm1-rust/blob/main/rticx-pi32v2/LICENSE
 [nesting]: https://github.com/jvitkauskas/pi32v2-isa/tree/701a76faf103d1889d9bdf67987b872899c27257/hw/fm1-2026-10-24-app3
 [abi]: https://github.com/jvitkauskas/pi32v2-isa/blob/701a76faf103d1889d9bdf67987b872899c27257/docs/ABI.md
