@@ -1,6 +1,6 @@
 [package]
 name = "fm1-audio"
-version = "0.2.0-rc.1"
+version = "0.2.0"
 edition = "2024"
 description = "Allocation-free stereo output and mixing for the M-VAVE FM-1"
 license = "MIT"
