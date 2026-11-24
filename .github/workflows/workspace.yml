@@ -88,7 +88,7 @@ jobs:
           cargo install --locked --git https://github.com/obi1kenobi/cargo-semver-checks \
             --rev "$SEMVER_CHECKS_REV" cargo-semver-checks
       # Exclude crates without a semver baseline.
-      - run: cargo semver-checks --workspace --exclude fm1-rticx --exclude fm1-audio --exclude fm1-controls --exclude fm1-graphics --exclude fm1-usb --exclude fm1-cli --all-features
+      - run: cargo semver-checks --workspace --exclude fm1-assets --exclude fm1-rticx --exclude fm1-audio --exclude fm1-controls --exclude fm1-graphics --exclude fm1-usb --exclude fm1-cli --all-features
 
   typos:
     runs-on: ubuntu-latest

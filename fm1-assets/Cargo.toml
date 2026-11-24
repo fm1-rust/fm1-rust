@@ -1,0 +1,24 @@
+[package]
+name = "fm1-assets"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Read-only flash assets and lossless PCM playback for the M-VAVE FM-1"
+license = "MIT"
+repository = "https://github.com/fm1-rust/fm1-rust"
+categories = ["embedded", "multimedia::audio", "no-std"]
+
+[features]
+# Encoding runs in the application's host build script.
+encode = []
+flac = ["dep:nanoaudio-core", "dep:nanoaudio-flac"]
+
+[dependencies]
+nanoaudio-core = { version = "0.1.1", optional = true, default-features = false }
+nanoaudio-flac = { version = "0.1.2", optional = true, default-features = false }
+
+[dev-dependencies]
+wavegraph-sample = { version = "0.1", default-features = false }
+
+[lints]
+workspace = true
