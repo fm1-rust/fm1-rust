@@ -10,10 +10,16 @@ categories = ["embedded", "graphics", "no-std"]
 
 [dependencies]
 embedded-graphics-core = "0.4"
+embedded-graphics = { version = "0.8.2", optional = true }
 fm1.workspace = true
 
 [features]
+bsp-display = ["embedded-graphics", "fm1/embedded-graphics"]
+embedded-graphics = ["dep:embedded-graphics"]
 async-display = ["fm1/async-display"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.2.0 (Unreleased)
 
+### Added
+
+- Optional `embedded-graphics` integration with `Drawable` support for `TextGrid`.
+  Enable `bsp-display` to also expose the BSP framebuffer and ST7789 draw target.
+
 ### Changed
 
 - Use the v0.2 BSP display driver for `TextGrid` and `Waveform`.

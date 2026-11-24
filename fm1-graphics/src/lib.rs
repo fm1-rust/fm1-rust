@@ -5,7 +5,11 @@
 mod text;
 mod waveform;
 
+#[cfg(feature = "embedded-graphics")]
+pub use embedded_graphics;
 pub use embedded_graphics_core::pixelcolor::Rgb565;
+#[cfg(feature = "bsp-display")]
+pub use fm1::display::graphics::{Framebuffer, MipidsiDisplay};
 pub use text::TextGrid;
 pub use waveform::{Waveform, WaveformStyle};
 
