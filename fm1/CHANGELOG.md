@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `AsyncDisplay::fill_rect` for interrupt-driven RGB565 fills using one
+  panel window and the BSP's existing SRAM strip.
 - Add `audio::Stream::try_write_with_interval` to estimate how many DAC halves
   elapsed before a refill and report ambiguous counts explicitly.
 - Add `Cpu0<T>` for passing an owned BSP peripheral between tasks on CPU0.

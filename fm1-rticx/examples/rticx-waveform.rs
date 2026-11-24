@@ -388,7 +388,11 @@ mod app {
             let text = TEXT.init_with(TextGrid::new);
             let mut footer = TimingFooter::default();
             let mut scope = Waveform::<WIDTH, HEIGHT>::new(8, 48).expect("scope fits the LCD");
-            lcd.fill_rect(0, 0, SIZE, SIZE, 0).expect("LCD clear");
+            lcd.as_async(&mut self.delay)
+                .expect("LCD")
+                .fill_rect(0, 0, SIZE, SIZE, 0)
+                .await
+                .expect("LCD clear");
             let mut timing_page = false;
             let mut painted_trace = None;
             let mut last_paint = None;

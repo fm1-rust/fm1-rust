@@ -50,6 +50,38 @@ impl Display {
 }
 
 impl<D: DelayNs> AsyncDisplay<'_, D> {
+    /// Fill a rectangle with one RGB565 color, yielding while SPI1 sends each
+    /// strip. Completion includes the final transfer. Cancelling may leave a
+    /// partial fill on screen. The display retains ownership of the pending DMA.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Display::fill_rect`].
+    pub async fn fill_rect(
+        &mut self,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        rgb565: u16,
+    ) -> Result<(), Error> {
+        let bytes = self.lcd.region_bytes(x, y, width, height)?;
+        if bytes == 0 {
+            return Ok(());
+        }
+        self.flush().await?;
+        self.lcd.window(x, y, width, height)?;
+        for len in self
+            .lcd
+            .spi
+            .solid_transfers(rgb565.to_be_bytes(), bytes / 2)?
+        {
+            self.wait_for_dma().await;
+            self.lcd.spi.wait_dma()?;
+            self.lcd.spi.start_dma(len, true);
+        }
+        self.flush().await
+    }
+
     /// Copy a rectangle into the DMA strip, yielding before each reuse. The last
     /// transfer stays in flight so the caller can prepare the next rectangle.
     /// If cancelled, a prefix of the rectangle may already have been submitted.
