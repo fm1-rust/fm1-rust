@@ -1,6 +1,9 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![cfg_attr(not(fm1_dsp), forbid(unsafe_code))]
+#![cfg_attr(fm1_dsp, deny(unsafe_code))]
 #![doc = include_str!("../README.md")]
+
+pub mod mix;
 
 pub use fm1::audio::*;
 pub use fm1::panel::MasterLevel;
@@ -101,9 +104,28 @@ fn prepare_block(
 /// Accumulation saturates at i32 limits. [`Output`] applies the 24-bit clip after MASTER.
 pub fn mix_stereo<const N: usize>(out: &mut Block<N>, left: &[I24; N], right: &[I24; N]) {
     for ((frame, l), r) in out.iter_mut().zip(left).zip(right) {
-        frame[0] = frame[0].saturating_add(l.inner());
-        frame[1] = frame[1].saturating_add(r.inner());
+        frame[0] = add_sample(frame[0], l.inner());
+        frame[1] = add_sample(frame[1], r.inner());
     }
+}
+
+// The target LLVM expands i32::saturating_add into several compares and branches.
+// Signed addition overflows exactly when the sum differs in sign from both operands.
+#[cfg(any(fm1_dsp, test))]
+#[inline]
+fn add_sample(a: i32, b: i32) -> i32 {
+    let sum = a.wrapping_add(b);
+    if ((a ^ sum) & (b ^ sum)) < 0 {
+        i32::MAX ^ (a >> 31)
+    } else {
+        sum
+    }
+}
+
+#[cfg(not(any(fm1_dsp, test)))]
+#[inline]
+fn add_sample(a: i32, b: i32) -> i32 {
+    a.saturating_add(b)
 }
 
 #[allow(
