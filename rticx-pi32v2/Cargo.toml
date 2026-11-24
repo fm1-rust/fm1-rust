@@ -29,6 +29,11 @@ name = "interrupt-vectors"
 path = "tests/ui/interrupt_vectors.rs"
 crate-type = ["rlib"]
 
+[[example]]
+name = "generated-names"
+path = "tests/ui/generated_names.rs"
+crate-type = ["rlib"]
+
 [dependencies]
 critical-section = "1"
 heapless = "0.9"

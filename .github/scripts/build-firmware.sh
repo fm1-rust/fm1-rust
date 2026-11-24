@@ -91,6 +91,20 @@ if [[ $package == fm1-rticx ]]; then
     fi
     grep -F 'no `TIMER2` in `Interrupt`' "$log" || { cat "$log" >&2; exit 1; }
 
+    names=(cargo rustc --color never --locked -p rticx-pi32v2 --example generated-names
+        --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
+        -Zbuild-std-features=compiler-builtins-mem --)
+    cases=(duplicate_entry duplicate_wake duplicate_storage duplicate_installer)
+    for flag in "${cases[@]}"; do names+=(--check-cfg "cfg($flag)"); done
+    "${names[@]}"
+    for flag in "${cases[@]}"; do
+        if "${names[@]}" --cfg "$flag" >"$log" 2>&1; then
+            echo "ambiguous RTICX item compiled: $flag" >&2
+            exit 1
+        fi
+        grep -F 'error: ambiguous generated RTICX item' "$log" || { cat "$log" >&2; exit 1; }
+    done
+
     dispatch=(cargo rustc --color never --locked -p rticx-pi32v2 --example dispatcher-access
         --profile firmware --target "$PI32V2_TARGET" -Zjson-target-spec -Zbuild-std=core,compiler_builtins
         -Zbuild-std-features=compiler-builtins-mem --)

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject ambiguous generated item names before rewriting startup, task storage
+  and async dispatch, including collisions hidden by `cfg`.
 - Check `Send` against the compiled shared field and require its type to match
   the lock proxy. A conditional declaration could hide a non-`Send` field
   behind a dereference coercion.
@@ -32,12 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve interrupt names as runtime enum variants for both vector installation
   and ceiling masks. Application conversions and trait constants could
   previously select the wrong vector.
-
-### Known issues
-
-- A declaration inside the application module with the same name as generated
-  startup, wake or storage code can interfere with these checks, even under
-  `#[cfg(any())]`. Avoid declaring such items alongside the generated ones.
 
 ## 0.1.1 (2026-11-21)
 ### Added
