@@ -8,6 +8,7 @@ unset FM1_DMA_PROFILE
 case "$example" in
     blink|display) set -- ;;
     flash-store) set -- --features flash-storage,embedded-graphics ;;
+    flash-store-cpu1) set -- --features flash-storage,embedded-graphics,cpu1-probe ;;
     cpu1-probe) set -- --features cpu1-probe ;;
     graphics) set -- --features embedded-graphics ;;
     tone) set -- --features audio ;;
@@ -33,7 +34,7 @@ case "$example" in
         package=fm1-rticx
         set -- --features audio,async-usb,usb-log,usb-dma-probe ;;
     rticx-timing) package=fm1-rticx; set -- --features audio,async-usb,usb-log ;;
-    *) echo "usage: $0 [blink|cpu1-probe|display|graphics|flash-store|tone|mix-bench|usb-window|usb-log|rticx-blink|rticx-controls|rticx-cpu1-audio[-portable]|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|cpu1-probe|display|graphics|flash-store[-cpu1]|tone|mix-bench|usb-window|usb-log|rticx-blink|rticx-controls|rticx-cpu1-audio[-portable]|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"
@@ -52,15 +53,16 @@ test -f "$packager" || { echo "Cannot find $packager" >&2; exit 1; }
 export PI32V2_BIN RUSTC_BOOTSTRAP=1
 export CARGO_TARGET_PI32V2_NONE_LINKER="$PI32V2_BIN/ld.lld"
 export RUSTFLAGS="-C link-arg=-Tfm1.ld"
-if [ "$example" = flash-store ]; then
-    RUSTFLAGS="$RUSTFLAGS -C link-arg=-Tfm1-storage.x -C link-arg=--emit-relocs"
+case "$example" in
+    flash-store*) RUSTFLAGS="$RUSTFLAGS -C link-arg=-Tfm1-storage.x -C link-arg=--emit-relocs" ;;
+esac
+if [ "$example" = flash-store-cpu1 ]; then
+    RUSTFLAGS="$RUSTFLAGS -C llvm-args=-pi32v2-large-program=true"
 fi
 cargo build --locked -p "$package" --manifest-path "$root/../Cargo.toml" --profile firmware --example "$example" \
     --target "$root/targets/pi32v2-none.json" --target-dir "$target" \
     -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec "$@"
 elf="$target/pi32v2-none/firmware/examples/$example"
-if [ "$example" = flash-store ]; then
-    python3 "$root/tests/storage_image.py" "$elf"
-fi
+case "$example" in flash-store*) python3 "$root/tests/storage_image.py" "$elf" ;; esac
 python3 "$packager" "$out/$image.fwsc" --from-elf "$elf"
 cp "$elf" "$out/$image.elf"

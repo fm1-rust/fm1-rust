@@ -16,6 +16,7 @@ for example in "$package"/examples/*.rs; do
 done
 
 if [[ $package == fm1 ]]; then
+    python3 fm1/tests/storage_park.py
     # Cargo features unify. Enabling the probe dependency must leave an
     # ordinary image's reset path and SRAM layout intact.
     probe_check=$(mktemp -d)

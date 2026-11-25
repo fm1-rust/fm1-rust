@@ -40,6 +40,10 @@ name = "flash-store"
 required-features = ["flash-storage", "embedded-graphics"]
 
 [[example]]
+name = "flash-store-cpu1"
+required-features = ["flash-storage", "embedded-graphics", "cpu1-probe"]
+
+[[example]]
 name = "usb-window"
 required-features = ["usb-window-probe", "embedded-graphics"]
 

@@ -1,6 +1,7 @@
 /* CPU0 side of the opt-in AC791N probes. No CPU1 pointer crosses into Rust.
    Register layout: AC79 SDK wl82/csfr.h. Sequence: pi32v2-isa docs/CPU1.md. */
 #include <stdint.h>
+#include "cpu1_state.h"
 
 typedef uint32_t u32;
 #define REG(addr) (*(volatile u32 *)(uintptr_t)(addr))
@@ -67,16 +68,17 @@ void fm1_cpu1_hold(void) {
 
 /* Only the persistent probe retains the exception vector, until final hold.
    CPU0 is the sole owner of this state. A nonzero expected word denotes live. */
-static u32 live_reply, saved_vector, initial_causes;
+static u32 saved_vector, initial_causes;
 
 u32 fm1_cpu1_probe_healthy(void) {
-    return live_reply && fm1_cpu1_reply() == live_reply && !(DBG_MSG & ~initial_causes);
+    u32 reply = atomic_load_explicit(&fm1_cpu1_live_reply, memory_order_relaxed);
+    return reply && fm1_cpu1_reply() == reply && !(DBG_MSG & ~initial_causes);
 }
 
 void fm1_cpu1_probe_stop(void) {
     u32 icfg;
     __asm__ volatile("%0 = icfg\n\tcli\n\tcsync" : "=r"(icfg) :: "memory");
-    if (live_reply) {
+    if (atomic_load_explicit(&fm1_cpu1_live_reply, memory_order_relaxed)) {
         fm1_cpu1_hold();
         u32 access = DBG_WR_EN & 1u;
         debug_access(1);
@@ -88,7 +90,7 @@ void fm1_cpu1_probe_stop(void) {
         C0_WR_LIMIT = protection;
         sync();
         debug_access(access);
-        live_reply = 0;
+        atomic_store_explicit(&fm1_cpu1_live_reply, 0, memory_order_release);
     }
     __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
 }
@@ -150,7 +152,7 @@ u32 fm1_cpu1_probe_run(u32 persistent) {
     u32 faults = DBG_MSG & ~previous_causes;
     int keep = persistent && !faults && reply == expected && context_ok();
     if (keep) {
-        live_reply = expected;
+        atomic_store_explicit(&fm1_cpu1_live_reply, expected, memory_order_release);
         saved_vector = vector;
         initial_causes = previous_causes;
     } else {

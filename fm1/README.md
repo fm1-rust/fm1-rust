@@ -135,11 +135,42 @@ The native driver supports the P25Q80 and UC25HQ80 on the stock 1 MiB FM-1.
 It does all data reads through raw SPI0 and stages each program page in SRAM,
 so the source slice may live in flash. It masks both CPU0 interrupt enables,
 checks the peer's RUN/HOLD state for each transaction, and runs the command
-and BUSY polling from SRAM. If it loses SPI completion or cannot establish
+and flash BUSY polling from SRAM. If it loses SPI completion or cannot establish
 that a write finished, it resets from SRAM. The board integration owns the
 remaining DMA and exception exclusion contract on `StoragePort::open`.
-A running CPU1 audio worker yields `Error::Busy`. Use storage while playback
-is stopped. An erase holds off CPU0 interrupt handlers for the duration.
+On a dual-core image, call `fm1::storage::cpu1_checkpoint()` in the CPU1
+worker before polling for a new job, including while it waits for CPU0
+initialization. An in-flight job can publish its result first. CPU0 waits up
+to 5 ms for CPU1 to enter the BSP's SRAM loop and mask its interrupts. A
+timeout returns `Error::Busy` with XIP enabled. A held peer needs no handshake.
+The checked BSP bootstrap retains its live reply until it has verified a hardware
+hold. While that reply is present, every flash transfer requires a checkpoint,
+regardless of how the CPU1 control register reads.
+CPU0 releases a parked peer after restoring the controller and pins on each
+raw transfer. A complete save can contain several transfers. Stop playback
+before saving since a sector erase delays CPU0 interrupt service.
+
+The two cores each write one aligned word in shared on-chip SRAM. CPU0
+withdraws its request on timeout. CPU1 withdraws its acknowledgment and
+rechecks the request in SRAM before restoring interrupts or returning to
+its caller. This closes the race between a late acknowledgment and an
+immediate retry. Entry requires an exact request word. Release requires an
+exact zero, several bit changes away from that request. The handoff relies
+on atomic SRAM word accesses and the
+pi32v2 synchronization instructions. Felucca documents its corresponding
+[CPU1 idle protocol](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/docs/FLASH.md#cpu1-and-ram-only-execution).
+
+Build `fm1/scripts/build-example.sh flash-store-cpu1` to exercise both
+paths on the board. CPU0 first gives the worker `0x00200000`, a value some
+FM-1s have read from a zero word on CPU1. The worker acknowledges that it is
+still withholding checkpoints. **Busy check passed** and **SRAM park verified**
+exercise the production gate with flash still mapped, before and after CPU0
+sends the exact enable command. SAVE writes a variation of the original demo
+patch in slot 0, reads it back, and dispatches a fresh job. **Saved - CPU1
+resumed** means that job completed. The diagnostic accepts an empty slot or
+an existing demo patch and never calls `reclaim`. All results appear on the LCD.
+`B`, `N` and `P` are hexadecimal boot, refusal and cooperative results.
+Expect `B=01 N=13 P=11`. A skipped phase shows `--`.
 
 Build `fm1/scripts/build-example.sh flash-store` for an on-device check.
 On first boot after installation the example erases unrecognized sectors in

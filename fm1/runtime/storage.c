@@ -1,6 +1,7 @@
 /* AC791N raw SPI NOR, on CPU0. Only functions in RAM run between disabling
  * and restoring SFC. See the Flash storage section of the BSP README. */
 #include <stdint.h>
+#include "cpu1_state.h"
 
 _Static_assert(sizeof(unsigned) == 4 && sizeof(uintptr_t) == 4, "pi32v2 storage ABI");
 
@@ -20,11 +21,66 @@ _Static_assert(sizeof(unsigned) == 4 && sizeof(uintptr_t) == 4, "pi32v2 storage 
 #define INLINE static inline __attribute__((always_inline))
 
 enum { OK, BUSY, UNSUPPORTED, IO, RANGE };
-enum { PROBE, READ, PROGRAM, ERASE };
+enum { PROBE, READ, PROGRAM, ERASE, CHECK_PEER };
+/* Private dry-run ABI. These values are distinct from all storage statuses. */
+enum { PEER_INACTIVE = 16, PEER_PARKED, PEER_STALE_ACK, PEER_NO_ACK };
+enum { IDLE = 0, REQUEST = 0x5041524b, ACK = 0x41434b31 };
 enum { PAGE = 256, SECTOR = 4096, STORE_BYTES = 4 * SECTOR };
 extern const unsigned char __fm1_storage_start[]; /* absolute linker symbol */
 
 INLINE void sync_bus(void) { __asm__ volatile("csync" ::: "memory"); }
+
+/* Only CPU0 writes request. Only CPU1, with interrupts masked and executing
+ * in SRAM, writes ack. Startup zeroes both before releasing a managed peer. */
+static _Alignas(32) _Atomic unsigned park_request;
+static _Alignas(32) _Atomic unsigned park_ack;
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2, "flash rendezvous needs native word atomics");
+
+INLINE void publish(_Atomic unsigned *word, unsigned value) {
+    atomic_store_explicit(word, value, memory_order_seq_cst);
+    /* The pi32v2 backend lowers the fence to csync. Order the store before
+     * the following load even when the cores immediately retry a timeout. */
+    atomic_thread_fence(memory_order_seq_cst);
+}
+
+INLINE unsigned sample(const _Atomic unsigned *word) {
+    return atomic_load_explicit(word, memory_order_seq_cst);
+}
+
+static RAM void park_cpu1(void) {
+    unsigned icfg;
+    __asm__ volatile("%0 = icfg" : "=r"(icfg) :: "memory");
+    __asm__ volatile("icfg = %0\n\tssync\n\tcsync" :: "r"(icfg & ~0x300u) : "memory");
+    do {
+        publish(&park_ack, ACK);
+        /* Only an exact IDLE releases CPU1. A single bad bit in REQUEST
+         * cannot look like permission to fetch from XIP. */
+        while (sample(&park_request) != IDLE) {}
+        publish(&park_ack, IDLE);
+        /* CPU0 can time out and retry while we are withdrawing the old
+         * acknowledgment. Check again in SRAM before returning to XIP. */
+    } while (sample(&park_request) != IDLE);
+    __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
+}
+
+void fm1_storage_cpu1_checkpoint(void) {
+    /* Idle-loop fast path. This first load only hints whether to enter SRAM. */
+    if (atomic_load_explicit(&park_request, memory_order_relaxed) != REQUEST) return;
+    unsigned core, sp;
+    __asm__ volatile("%0 = cnum\n\t%1 = sp" : "=r"(core), "=r"(sp) :: "memory");
+    if (core != 1 || sp < 0x01c00000u || sp >= 0x01c80000u ||
+        (uintptr_t)park_cpu1 < 0x01c00000u || (uintptr_t)park_cpu1 >= 0x01c80000u) return;
+    void (*volatile in_ram)(void) = park_cpu1;
+    in_ram();
+}
+
+INLINE int wait_ack(unsigned expected, uint32_t start) {
+    /* Five milliseconds at 24 MHz for the entire rendezvous. The iteration
+     * limit also bounds refusal if TIMER4 is stopped. XIP is still enabled. */
+    for (unsigned n = 0; n < 100000u && TICKS - start < 120000u; ++n)
+        if (sample(&park_ack) == expected) return 1;
+    return 0;
+}
 
 static RAM void select_chip(unsigned selected) {
     if (selected) PD_OUT &= ~1u;
@@ -74,7 +130,26 @@ static RAM int transfer(unsigned op, unsigned address, uint8_t *page, unsigned l
     uint32_t masked = icfg & ~0x300u;
     __asm__ volatile("icfg = %0\n\tcsync" :: "r"(masked) : "memory");
     int result = BUSY;
-    if (core || (CPU1 & 0x0au) == 8u) goto unmask;
+    unsigned requested = 0;
+    if (core) goto unmask;
+    int peer = PEER_INACTIVE;
+    /* Even a held-looking controller sample cannot waive a live managed
+     * worker's acknowledgment. The boot reply outlives a health-check failure. */
+    if (sample(&fm1_cpu1_live_reply) || (CPU1 & 0x0au) == 8u) {
+        uint32_t start = TICKS;
+        peer = PEER_STALE_ACK;
+        if (wait_ack(IDLE, start)) {
+            publish(&park_request, REQUEST);
+            requested = 1;
+            peer = wait_ack(ACK, start) ? PEER_PARKED : PEER_NO_ACK;
+        }
+    }
+    if (op == CHECK_PEER) {
+        result = peer;
+        goto unmask; /* Exercise the real gate without touching SFC, pins or NOR. */
+    }
+    if (peer != PEER_INACTIVE && peer != PEER_PARKED) goto unmask;
+    if (requested) __asm__ volatile("ssync\n\tcsync" ::: "memory");
     unsigned sfc = SFC;
     unsigned mode = (sfc >> 8) & 15u;
     /* Accept the stock single/dual/quad output-read modes, excluding
@@ -143,6 +218,12 @@ static RAM int transfer(unsigned op, unsigned address, uint8_t *page, unsigned l
     PD_DIR = (PD_DIR & ~1u) | (pd_dir & 1u);
     sync_bus();
 unmask:
+    if (requested) {
+        /* On every returning path SFC is live. Drain its restoration before
+         * allowing the peer to restore interrupts or fetch from flash. */
+        __asm__ volatile("ssync\n\tcsync" ::: "memory");
+        publish(&park_request, IDLE);
+    }
     __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
     return result;
 }
@@ -168,6 +249,11 @@ static int run(unsigned op, unsigned off, const uint8_t *src, uint8_t *dst, unsi
         for (unsigned i = 0; i < n; ++i) dst[i] = page[i];
     return result;
 }
+
+/* For the board diagnostic. Same range checks, IRQ mask and rendezvous as
+ * probe. Let the linker discard this entry in applications that never call it. */
+__attribute__((section(".text.fm1_storage_check_peer")))
+unsigned fm1_storage_check_peer(void) { return (unsigned)run(CHECK_PEER, 0, 0, 0, 0); }
 
 int fm1_storage_probe(void) {
     int rc = run(PROBE, 0, 0, 0, 0);
