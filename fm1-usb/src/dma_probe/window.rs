@@ -1,5 +1,5 @@
 //! Transport for the one-shot AC791N write-range experiment.
-use super::{DATA_TIMEOUT, PAGE, invalid, open_handle};
+use super::{DATA_TIMEOUT, PAGE, control_timeout, invalid, open_handle};
 use crate::Device;
 use core::{num::NonZeroU16, time::Duration};
 use rusb::{Context, DeviceHandle, TransferType};
@@ -36,8 +36,10 @@ impl WindowProbe {
     /// Verify the window probe identity before any acquisition command. Readback needs no interface claim.
     ///
     /// # Errors
-    /// Returns a USB error or a description of the incorrect image or descriptor.
+    /// Returns an error for an invalid timeout, failed USB operation, or incorrect
+    /// image or descriptor.
     pub fn open(device: &Device, timeout: Duration) -> io::Result<Self> {
+        let timeout = control_timeout(timeout)?;
         let handle = open_handle(device)?;
         let dev = handle.device();
         let descriptor = dev.device_descriptor().map_err(io::Error::other)?;
