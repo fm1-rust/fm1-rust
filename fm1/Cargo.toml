@@ -27,12 +27,17 @@ async-display = ["dep:critical-section", "dep:embedded-hal-async"]
 async-usb = ["dep:critical-section", "dep:embedded-hal-async"]
 audio = []
 cpu1-probe = []
+flash-storage = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
 usb-dma-probe = []
 usb-midi-copy = []
 usb-dma-stress = ["usb-dma-probe"]
 usb-window-probe = ["usb-dma-probe"]
+
+[[example]]
+name = "flash-store"
+required-features = ["flash-storage", "embedded-graphics"]
 
 [[example]]
 name = "usb-window"

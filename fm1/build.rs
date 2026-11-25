@@ -51,6 +51,11 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo did not set OUT_DIR")?);
     archive(&bin, &out, "libfm1_rt.a", &["crt0.S", "shim.c"])?;
+    if env::var_os("CARGO_FEATURE_FLASH_STORAGE").is_some() {
+        archive(&bin, &out, "libfm1_storage.a", &["storage.c"])?;
+        fs::copy("runtime/fm1-storage.x", out.join("fm1-storage.x"))?;
+        println!("cargo::rustc-link-lib=static=fm1_storage");
+    }
     if env::var_os("CARGO_FEATURE_USB_WINDOW_PROBE").is_some() {
         archive(
             &bin,

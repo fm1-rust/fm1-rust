@@ -18,7 +18,11 @@ SECTIONS {
   .text : { *(.text*) *(.rodata*) . = ALIGN(4); } > flash
   .data : ALIGN(4) {
     __data_start = .;
-    *(.cpu1.text*) *(.data*)
+    *(.cpu1.text*)
+    __fm1_storage_ram_start = .;
+    *(.fm1_storage_ram)
+    __fm1_storage_ram_end = .;
+    *(.data*)
     . = ALIGN(4);
     __data_end = .;
   } > ram AT> flash
