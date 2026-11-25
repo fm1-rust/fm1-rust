@@ -32,7 +32,7 @@ fm1 = { version = "0.2", path = "fm1" }
 fm1-audio = { version = "0.2.1", path = "fm1-audio", default-features = false }
 fm1-controls = { version = "0.2", path = "fm1-controls" }
 fm1-graphics = { version = "0.2", path = "fm1-graphics" }
-fm1-usb = { version = "0.2.0-rc.0", path = "fm1-usb" }
+fm1-usb = { version = "0.2", path = "fm1-usb" }
 rticx-pi32v2 = { version = "0.2", path = "rticx-pi32v2" }
 rticx-pi32v2-macro = { version = "0.2", path = "rticx-pi32v2-macro" }
 
