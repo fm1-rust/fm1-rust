@@ -1,5 +1,7 @@
 # FM-1 Rust
 
+[![Workspace build status][workspace-build]][workspace-ci]
+
 The [`fm1` crate](fm1/) is a bare-metal Rust board support package for the
 M-VAVE FM-1 synthesizer. It runs on CPU0 of the JieLi AC791N, uses
 `embedded-hal` 1.0 and needs no allocator.
@@ -25,17 +27,15 @@ on screen, press **FX** to halve the output level and watch the trace shrink.
 | Crate | Description | crates.io | Documentation | Build status |
 | --- | --- | --- | --- | --- |
 | [`fm1`](fm1/) | Board support and peripheral drivers | [![crates.io][fm1-version]][fm1-crate] | [![docs.rs][fm1-docs-badge]][fm1-docs] | [![Build status][fm1-build]][fm1-ci] |
+| [`fm1-assets`](fm1-assets/) | Flash layout, firmware packaging and allocation-free packed PCM16 playback | [![crates.io][fm1-assets-version]][fm1-assets-crate] | [![docs.rs][fm1-assets-docs-badge]][fm1-assets-docs] | [![Build status][fm1-assets-build]][fm1-assets-ci] |
 | [`fm1-audio`](fm1-audio/) | Stereo output, master gain and interrupt timing | [![crates.io][fm1-audio-version]][fm1-audio-crate] | [![docs.rs][fm1-audio-docs-badge]][fm1-audio-docs] | [![Build status][fm1-audio-build]][fm1-audio-ci] |
-| [`fm1-cli`](fm1-cli/) | The `fm1` command for USB logs and timing reports | [![crates.io][fm1-cli-version]][fm1-cli-crate] | [Usage guide](fm1-cli/README.md) | [![Build status][fm1-cli-build]][fm1-cli-ci] |
+| [`fm1-cli`](fm1-cli/) | The `fm1` command for USB logs and timing reports | [![crates.io][fm1-cli-version]][fm1-cli-crate] | [![docs.rs][fm1-cli-docs-badge]][fm1-cli-docs] | [![Build status][fm1-cli-build]][fm1-cli-ci] |
 | [`fm1-controls`](fm1-controls/) | Front-panel input and async scan delivery | [![crates.io][fm1-controls-version]][fm1-controls-crate] | [![docs.rs][fm1-controls-docs-badge]][fm1-controls-docs] | [![Build status][fm1-controls-build]][fm1-controls-ci] |
 | [`fm1-graphics`](fm1-graphics/) | Text grids and waveform plots over the BSP display | [![crates.io][fm1-graphics-version]][fm1-graphics-crate] | [![docs.rs][fm1-graphics-docs-badge]][fm1-graphics-docs] | [![Build status][fm1-graphics-build]][fm1-graphics-ci] |
 | [`fm1-rticx`](fm1-rticx/) | RTICX tasks and clocks for the FM-1 | [![crates.io][fm1-rticx-version]][fm1-rticx-crate] | [![docs.rs][fm1-rticx-docs-badge]][fm1-rticx-docs] | [![Build status][fm1-rticx-build]][fm1-rticx-ci] |
 | [`fm1-usb`](fm1-usb/) | Host USB discovery, bidirectional MIDI and log snapshots | [![crates.io][fm1-usb-version]][fm1-usb-crate] | [![docs.rs][fm1-usb-docs-badge]][fm1-usb-docs] | [![Build status][fm1-usb-build]][fm1-usb-ci] |
 | [`rticx-pi32v2`](rticx-pi32v2/) | RTICX runtime for AC791N CPU0 | [![crates.io][pi32v2-version]][pi32v2-crate] | [![docs.rs][pi32v2-docs-badge]][pi32v2-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
 | [`rticx-pi32v2-macro`](rticx-pi32v2-macro/) | Application macros for the pi32v2 runtime and FM-1 board crate | [![crates.io][macro-version]][macro-crate] | [![docs.rs][macro-docs-badge]][macro-docs] | [![Build status][pi32v2-build]][pi32v2-ci] |
-
-[`fm1-assets`](fm1-assets/) adds an opt-in flash layout, a firmware packager
-and allocation-free playback of losslessly packed mono PCM16 clips.
 
 ## Examples
 
@@ -74,12 +74,20 @@ The `fm1` BSP incorporates MPL-2.0 code from Felucca’s C headers and USB drive
 and from the `fm1-base` piano touch library. See the [BSP license section](fm1/README.md#license)
 for the upstream sources and credits.
 
+[workspace-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/workspace.yml/badge.svg?branch=main&event=push
+[workspace-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/workspace.yml
 [fm1-version]: https://img.shields.io/crates/v/fm1?logo=rust
 [fm1-crate]: https://crates.io/crates/fm1
 [fm1-docs-badge]: https://docs.rs/fm1/badge.svg
 [fm1-docs]: https://docs.rs/fm1/
 [fm1-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml/badge.svg?branch=main&event=push
 [fm1-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1.yml
+[fm1-assets-version]: https://img.shields.io/crates/v/fm1-assets?logo=rust
+[fm1-assets-crate]: https://crates.io/crates/fm1-assets
+[fm1-assets-docs-badge]: https://docs.rs/fm1-assets/badge.svg
+[fm1-assets-docs]: https://docs.rs/fm1-assets/
+[fm1-assets-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-assets.yml/badge.svg?branch=main&event=push
+[fm1-assets-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-assets.yml
 [fm1-audio-version]: https://img.shields.io/crates/v/fm1-audio?logo=rust
 [fm1-audio-crate]: https://crates.io/crates/fm1-audio
 [fm1-audio-docs-badge]: https://docs.rs/fm1-audio/badge.svg
@@ -120,6 +128,8 @@ for the upstream sources and credits.
 
 [fm1-cli-version]: https://img.shields.io/crates/v/fm1-cli?logo=rust
 [fm1-cli-crate]: https://crates.io/crates/fm1-cli
+[fm1-cli-docs-badge]: https://docs.rs/fm1-cli/badge.svg
+[fm1-cli-docs]: https://docs.rs/crate/fm1-cli/latest
 [fm1-cli-build]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml/badge.svg?branch=main&event=push
 [fm1-cli-ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml
 

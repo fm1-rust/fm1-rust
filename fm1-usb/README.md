@@ -64,7 +64,12 @@ records. [EP0 and EP1 experiment](https://github.com/fm1-rust/fm1-rust/blob/main
 
 ## License
 
-Licensed under the [MIT License](https://github.com/fm1-rust/fm1-rust/blob/main/fm1-usb/LICENSE).
+Licensed under the [MIT License][mit].
+
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
 
 [crate-badge]: https://img.shields.io/crates/v/fm1-usb?logo=rust
 [crate]: https://crates.io/crates/fm1-usb
@@ -72,3 +77,4 @@ Licensed under the [MIT License](https://github.com/fm1-rust/fm1-rust/blob/main/
 [docs]: https://docs.rs/fm1-usb/
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-usb.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-usb.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-usb/LICENSE

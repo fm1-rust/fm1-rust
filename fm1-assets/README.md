@@ -1,5 +1,9 @@
 # fm1-assets
 
+[![crates.io][crate-badge]][crate]
+[![docs.rs][docs-badge]][docs]
+[![Build status][ci-badge]][ci]
+
 Embed read-only assets in FM-1 execute-in-place flash and stream lossless mono
 PCM16 without a heap or a decoded block buffer. The target library has no
 dependencies on the BSP or WaveGraph.
@@ -95,3 +99,20 @@ precision, select `FlacDecoder::<i32, 128, 1>` and use an i32 scratch slice.
 For a complete in-memory stream call `finish()` on the decoder to signal that
 no more compressed bytes will arrive. Use the stream's declared sample count
 when checking playback or an asset import for truncation.
+
+## License
+
+Licensed under the [MIT License][mit].
+
+### Contribution
+
+Unless you explicitly state otherwise, you license contributions you
+intentionally submit to this crate under the [MIT License][mit].
+
+[crate-badge]: https://img.shields.io/crates/v/fm1-assets?logo=rust
+[crate]: https://crates.io/crates/fm1-assets
+[docs-badge]: https://docs.rs/fm1-assets/badge.svg
+[docs]: https://docs.rs/fm1-assets/
+[ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-assets.yml/badge.svg?branch=main&event=push
+[ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-assets.yml
+[mit]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-assets/LICENSE
