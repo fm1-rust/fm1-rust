@@ -1,6 +1,6 @@
 [package]
 name = "fm1-assets"
-version = "0.2.0-rc.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Read-only flash assets and lossless PCM playback for the M-VAVE FM-1"
