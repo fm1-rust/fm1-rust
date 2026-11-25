@@ -275,12 +275,17 @@ USB frame scheduling and host-side latency are outside the `MAX US` measurement.
 
 Build with `./fm1/scripts/build-example.sh rticx-cpu1-audio` and install
 `target/firmware/rticx-cpu1-audio.fwsc` on the FM-1. Use the same qualified
-board and ordinary USB-MIDI host setup as the USB log example. A quiet
-tone and alternating blue LCD fills run for about 1.5 seconds. Steady green
-PLAY and a green screen labeled `AUDIO PASS` mean the audio test passed. An
+board and ordinary USB-MIDI host setup as the USB log example. CPU1 plays a
+quiet square wave in both channels. CPU0 adds an octave above it in the left
+channel. The tones and alternating blue LCD fills run for about 1.5 seconds.
+Steady green PLAY and a green screen labeled `AUDIO MIX PASS` mean the test passed. An
 audio failure leaves PLAY amber and the screen red with the failure code.
 The result and peak timings stay on the LCD while the USB readout continues
 to update. Hold PLAY for two seconds to return to download mode.
+
+The board build enables the native `fm1-audio/dsp` kernel. Use
+`./fm1/scripts/build-example.sh rticx-cpu1-audio-portable` for the same
+probe with scalar arithmetic. `fm1-emu` 0.5.1 stops at the native packed multiply.
 
 ```sh
 fm1 log
@@ -327,7 +332,20 @@ C1 PASS 1FF 11 <commit> <gap> <worker>
 | `gap` | Maximum interval between serviced audio interrupt entries. |
 | `worker` | Longest CPU1 render for a validated, played block. Excludes the deliberately stalled job. |
 
-On a physical FM-1 connected to macOS, the LCD showed `AUDIO PASS`,
+On a physical FM-1 the native mixer build displayed `AUDIO MIX PASS` with
+511 accepted blocks. USB was online with one reset, zero retries and no
+recorded timeout or stall. The host received this reply from `fm1 log`.
+
+```text
+C1 PASS 1FF 11 000005E5 00011002 00000166
+```
+
+CPU0's peak from ALNK0 interrupt entry through DMA submission was 1,509 ticks
+(62.875 µs), including the worker copy, local mix and sample validation.
+The longest interrupt gap was 69,634 ticks (2,901.417 µs), two ticks above
+one period. CPU1's longest accepted render was 358 ticks (14.917 µs).
+
+In the original CPU1-only tone test on a physical FM-1 connected to macOS, the LCD showed `AUDIO PASS`,
 `USB ONLINE` and `RESETS 13`. The host received the following `fm1 log` reply.
 
 ```text
@@ -353,14 +371,42 @@ gesture remains available.
 
 CPU1 polls one sequence-tagged SRAM slot. It owns the samples until it has
 published all 128 words, their checksum and its render time. CPU0 copies a
-completed block, verifies every sample against its job and frame, then submits
-the next job. At job 64 CPU1 pauses after 64 stores. Only a successful
+completed block into its own stereo buffer. `mix::mono_i16` adds the local
+voice in place. CPU0 checks both output channels against the expected mix
+and the worker checksum before handing the buffer to ALNK0. At job 64 CPU1
+pauses after 64 stores. Only a successful
 silent refill releases it. The next normal job must pass the same checks.
 CPU0 holds the peer on completion, failure and the download path. Boot and
 handoff rely on aligned SRAM words, `csync` and the hardware hold. A pass
 measures this exchange on the tested unit. Application linker scripts with
 larger CPU0 stack reservations should check `__fm1_statics_end`, which
 includes the CPU1 stacks and mailbox after `.bss`.
+
+### Mixing a completed block for ALNK0
+
+When an instrument already has exclusive ownership of a rendered Q23 block on
+CPU0, the interrupt can add local voices in place. `Stream::try_write_with`
+checks for a released half before calling the mixer, then clips and copies the
+result to DMA storage. The returned reference points to ordinary application
+memory. This path uses the levels supplied by the instrument. Use
+`Output::render` for a cleared mix buffer, smoothed MASTER and a post-gain tap.
+
+```rust
+use fm1_audio::{mix, OutputBlock, Refill, Stream, OUTPUT_FRAMES};
+
+fn submit(stream: &mut Stream<'_, OUTPUT_FRAMES>, completed: &mut OutputBlock,
+          local: &[i16], gains: [mix::Gain; 2]) -> Refill {
+    stream.try_write_with(|| {
+        mix::mono_i16(completed, local, gains);
+        &*completed
+    })
+}
+```
+
+`WouldBlock` leaves the completed block untouched. On `Written` and `Late`,
+the callback has already mixed the local voice. A late copy can be partial.
+Only `Written` acknowledges playback submission. A retry needs either the
+already-mixed PCM or a fresh base block before applying that voice again.
 
 ### Async patterns for audio and graphics
 
@@ -373,8 +419,11 @@ resource locks and releases them before touching SPI1 or awaiting its timer.
 It fills the screen during the audio test, then repaints changed status cells.
 For an async SPI transfer, keep its buffer and future in the CPU0 display task
 through completion.
-The [waveform example](examples/rticx-waveform.rs) shows CPU0 channels and
-async display transfers.
+The [waveform example](examples/rticx-waveform.rs) also uses a lower-priority
+CPU0 async task to prepare the next oscillator block. It awaits a request,
+renders synchronously into an owned spare buffer, and publishes the prediction.
+ALNK0 checks the block number, phase and voice settings once. It renders its
+own fallback when they differ or the prediction is missing.
 
 For a synth, send bounded control messages to the DSP and return owned PCM
 blocks tagged with a sequence and the settings revision. The ALNK0 interrupt

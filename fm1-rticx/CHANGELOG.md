@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add the `rticx-timing` diagnostic for measuring interrupt and async-task
   timing on the board. It reports over USB and requires a bench setup that
   satisfies the BSP's receive DMA contract.
-- Add `rticx-cpu1-audio`, which runs a fixed audio worker on CPU1 while
-  CPU0 owns RTICX, the audio interrupt, the display and the USB log.
+- Add `rticx-cpu1-audio`, which runs a fixed audio worker on CPU1. CPU0
+  mixes a local PCM16 voice into each completed block with `fm1-audio` 0.2.1
+  and submits the checked stereo mix from the ALNK0 interrupt.
 
 ### Changed
 
