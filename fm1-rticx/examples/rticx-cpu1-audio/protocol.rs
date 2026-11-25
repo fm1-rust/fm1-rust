@@ -1,5 +1,5 @@
 //! CPU0's one-slot protocol. Only a completed job can return the slot.
-use fm1_audio::{OUTPUT_FRAMES, OutputBlock};
+use fm1_audio::{OUTPUT_FRAMES, OutputBlock, mix};
 
 pub(super) const JOBS: u32 = 512;
 pub(super) const DELAYED: u32 = 64;
@@ -16,11 +16,28 @@ pub(super) extern "C" fn fm1_cpu1_pcm_sample(job: u32, frame: u32) -> u32 {
     square | ((job.wrapping_mul(73) ^ frame.wrapping_mul(17)) & 0x3ff)
 }
 
-pub(super) fn valid(job: u32, block: &OutputBlock, claimed: u32) -> bool {
+// A quiet PCM16 square one octave above CPU1's tone. On the right CPU1 plays alone.
+static OVERTONE: [i16; OUTPUT_FRAMES] = {
+    let mut samples = [64; OUTPUT_FRAMES];
+    let mut i = 0;
+    while i < samples.len() {
+        if i & 32 != 0 {
+            samples[i] = -64;
+        }
+        i += 1;
+    }
+    samples
+};
+
+pub(super) fn mix_and_check(job: u32, block: &mut OutputBlock, claimed: u32) -> bool {
+    mix::mono_i16(block, &OVERTONE, [mix::Gain::UNITY, mix::Gain::ZERO]);
+
+    // Check both the actual mixed samples and the digest published by CPU1.
     let mut digest = job;
-    for (i, &[left, right]) in (0_u32..).zip(block) {
-        let word = u32::from_ne_bytes(left.to_ne_bytes());
-        if left != right || word != fm1_cpu1_pcm_sample(job, i) {
+    for (i, (&[left, right], &tone)) in (0_u32..).zip(block.iter().zip(&OVERTONE)) {
+        let word = right.cast_unsigned();
+        if word != fm1_cpu1_pcm_sample(job, i) || left != right.saturating_add(i32::from(tone) << 8)
+        {
             return false;
         }
         digest = digest.rotate_left(5).wrapping_add(word);
@@ -142,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_every_sample_and_the_claimed_digest() {
+    fn verify_the_worker_digest_and_the_panned_mix() {
         let mut block = [[0; 2]; OUTPUT_FRAMES];
         let job = 19;
         let mut digest = job;
@@ -151,11 +168,21 @@ mod tests {
             *pair = [i32::from_ne_bytes(sample.to_ne_bytes()); 2];
             digest = digest.rotate_left(5).wrapping_add(sample);
         }
-        assert!(valid(job, &block, digest));
-        assert!(!valid(job + 1, &block, digest));
-        assert!(!valid(job, &block, digest ^ 1));
+        let mut mixed = block;
+        assert!(mix_and_check(job, &mut mixed, digest));
+        for (i, (out, input)) in mixed.iter().zip(&block).enumerate() {
+            let overtone = if i & 32 == 0 { 16_384 } else { -16_384 };
+            assert_eq!(*out, [input[0] + overtone, input[1]]);
+        }
+        for (sequence, claimed) in [(job + 1, digest), (job, digest ^ 1)] {
+            let mut copy = block;
+            assert!(!mix_and_check(sequence, &mut copy, claimed));
+        }
+        let mut bad_left = block;
+        bad_left[63][0] ^= 1;
+        assert!(!mix_and_check(job, &mut bad_left, digest));
         block[127][1] ^= 1;
-        assert!(!valid(job, &block, digest));
+        assert!(!mix_and_check(job, &mut block, digest));
     }
 
     #[test]

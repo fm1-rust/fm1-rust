@@ -36,8 +36,8 @@ impl Dashboard {
             };
             lcd.fill_rect(0, 0, SIZE, SIZE, raw)?;
             self.grid = TextGrid::with_background(background);
-            self.grid.text(1, 1, "AUDIO", palette::WHITE);
-            self.grid.text(8, 1, report.status, palette::WHITE);
+            self.grid.text(1, 1, "AUDIO MIX", palette::WHITE);
+            self.grid.text(11, 1, report.status, palette::WHITE);
             self.field(3, "BLOCKS", report.accepted);
             let ticks_per_us = Timers::CRYSTAL_HZ / 1_000_000;
             self.field(4, "COMMIT US", report.commit.div_ceil(ticks_per_us));

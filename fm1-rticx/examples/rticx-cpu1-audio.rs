@@ -1,4 +1,4 @@
-//! CPU1 renders numbered PCM blocks. CPU0 owns ALNK0, the display and USB log.
+//! CPU1 renders numbered PCM blocks. CPU0 mixes a local voice and feeds ALNK0.
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 #![allow(
@@ -67,9 +67,9 @@ mod app {
     use super::{
         dashboard::Dashboard,
         native,
-        protocol::{Action, DELAYED, JOBS, Pipeline, Report, valid},
+        protocol::{Action, DELAYED, JOBS, Pipeline, Report, mix_and_check},
     };
-    use fm1_audio::{MasterLevel, Output, Refill, Stats};
+    use fm1_audio::{OUTPUT_FRAMES, OutputBlock, Refill, Stats, Stream};
     use fm1_rticx::{
         bsp::{
             Board, Cpu0,
@@ -121,7 +121,7 @@ mod app {
         if report.status == "RUN" {
             native::fm1_cpu1_audio_submit(1, 0);
         }
-        let output = Output::start(board.audio).ok();
+        let output = board.audio.into_stream_with_frames().ok().map(Cpu0::from);
         if output.is_none() && report.status == "RUN" {
             report.status = "DAC";
         }
@@ -135,6 +135,7 @@ mod app {
                 tick: Tick(timer),
                 audio: Audio {
                     output,
+                    block: [[0; 2]; OUTPUT_FRAMES],
                     pipe: Pipeline::default(),
                     stats: Stats::default(),
                 },
@@ -167,24 +168,27 @@ mod app {
 
     #[task(binds = ALNK0, priority = 4, shared = [report, painted])]
     struct Audio {
-        output: Option<Output>,
+        output: Option<Cpu0<Stream<'static, OUTPUT_FRAMES>>>,
+        block: OutputBlock,
         pipe: Pipeline,
         stats: Stats,
     }
     impl RticTask for Audio {
         fn exec(&mut self) {
+            static SILENCE: OutputBlock = [[0; 2]; OUTPUT_FRAMES];
             let start = cycles();
             let mut report = self.shared().report.lock(|r| *r);
             let Some(output) = &mut self.output else {
                 return;
             };
             if report.status != "RUN" {
-                output.render(MasterLevel::MIN, |_| {});
+                output.try_write(&SILENCE);
                 return;
             }
             let job = self.pipe.job();
             let mut action = Ok(Action::Silence);
-            let result = output.render(MasterLevel::MAX, |block| {
+            let block = &mut self.block;
+            let result = output.try_write_with(|| {
                 action = if native::fm1_cpu1_probe_healthy() == 0 {
                     Err("CPU1")
                 } else {
@@ -193,11 +197,12 @@ mod app {
                 };
                 if action == Ok(Action::Play) {
                     let checksum = native::copy(block);
-                    if !valid(job, block, checksum) {
-                        block.fill([0; 2]);
-                        action = Err("DATA");
+                    if mix_and_check(job, block, checksum) {
+                        return &*block;
                     }
+                    action = Err("DATA");
                 }
+                &SILENCE
             });
             let committed = cycles();
             if result == Refill::WouldBlock {

@@ -29,7 +29,7 @@ version = "0.2.0-rc.0"
 
 [workspace.dependencies]
 fm1 = { version = "0.2", path = "fm1" }
-fm1-audio = { version = "0.2", path = "fm1-audio" }
+fm1-audio = { version = "0.2.1", path = "fm1-audio", default-features = false }
 fm1-controls = { version = "0.2", path = "fm1-controls" }
 fm1-graphics = { version = "0.2", path = "fm1-graphics" }
 fm1-usb = { version = "0.2.0-rc.0", path = "fm1-usb" }
