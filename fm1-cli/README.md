@@ -1,7 +1,7 @@
 # fm1-cli
 
 [![crates.io][crate-badge]][crate]
-[![docs.rs][docs-badge]][docs]
+[![CLI guide on docs.rs][docs-badge]][docs]
 [![Build status][ci-badge]][ci]
 
 Read the M-VAVE FM-1's USB log or the hardware timing diagnostic from a host
@@ -167,7 +167,7 @@ intentionally submit to this crate under the [MIT License][mit].
 
 [crate-badge]: https://img.shields.io/crates/v/fm1-cli?logo=rust
 [crate]: https://crates.io/crates/fm1-cli
-[docs-badge]: https://docs.rs/fm1-cli/badge.svg
+[docs-badge]: https://img.shields.io/badge/docs.rs-CLI%20guide-blue
 [docs]: https://docs.rs/crate/fm1-cli/latest
 [ci-badge]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml/badge.svg?branch=main&event=push
 [ci]: https://github.com/fm1-rust/fm1-rust/actions/workflows/fm1-cli.yml
