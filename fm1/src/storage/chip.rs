@@ -2,10 +2,18 @@ use super::{Error, Nor, StoragePort};
 
 #[cfg(fm1)]
 unsafe extern "C" {
+    // The native entry checks the calling core, owns its SRAM handshake
+    // words and restores the caller's interrupt mask before returning.
+    safe fn fm1_storage_cpu1_checkpoint();
     fn fm1_storage_probe() -> i32;
     fn fm1_storage_read(off: usize, dst: *mut u8, len: usize) -> i32;
     fn fm1_storage_program(off: usize, src: *const u8, len: usize) -> i32;
     fn fm1_storage_erase(off: usize) -> i32;
+}
+
+pub(super) fn cpu1_checkpoint() {
+    #[cfg(fm1)]
+    fm1_storage_cpu1_checkpoint();
 }
 
 #[cfg(fm1)]

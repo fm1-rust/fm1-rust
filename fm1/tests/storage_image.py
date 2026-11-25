@@ -15,6 +15,14 @@ start = symbols["__fm1_storage_ram_start"]
 end = symbols["__fm1_storage_ram_end"]
 assert 0x01c40000 <= symbols["__data_start"] <= start < end <= symbols["__data_end"] <= 0x01c7c000
 assert start <= symbols["transfer"] < end
+assert start <= symbols["park_cpu1"] < end
+gate = {symbols["park_request"], symbols["park_ack"]}
+assert len(gate) == 2
+assert 0x01c40000 <= symbols["__bss_start"] < symbols["__bss_end"] <= 0x01c7c000
+assert all(symbols["__bss_start"] <= addr <= symbols["__bss_end"] - 4
+           and addr % 32 == 0 for addr in gate)
+peer_state = symbols["fm1_cpu1_live_reply"]
+assert symbols["__bss_start"] <= peer_state <= symbols["__bss_end"] - 4 and peer_state % 4 == 0
 assert symbols["__fm1_storage_start"] == 0xd8000
 assert any(kind == 1 and flags & 1 and va <= start and end <= va + size
            and 0x02000000 <= pa and pa + size <= 0x020d4000
@@ -28,4 +36,9 @@ for section in relocations:
     for place, info, addend in struct.iter_unpack("<IIi", section["data"]):
         if start <= place < end:
             name, value, *_ = image["symbols"][info >> 8]
-            assert start <= value + addend < end, f"flash-off relocation at {place:#x} to {name}"
+            dest = value + addend
+            # Relocation 5 loads a 32-bit address into a register. A direct
+            # branch or call must still land in the copied executable range.
+            assert start <= dest < end or (info & 255 == 5 and (dest in gate or dest == peer_state)), (
+                f"flash-off relocation at {place:#x} to {name}"
+            )

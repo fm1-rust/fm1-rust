@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application records. The `flash-store` example initializes its reserved
   sectors with a default synth patch and MIDI phrase and restores saved
   variations on later boots.
+- Add `storage::cpu1_checkpoint` so a running worker can cooperate with
+  CPU0 flash operations between jobs. The `flash-store-cpu1` example
+  checks timeout, patch readback and worker resumption.
 
 ## 0.2.0 (2026-11-24)
 

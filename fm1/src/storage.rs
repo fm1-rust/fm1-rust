@@ -23,7 +23,7 @@ pub const MAX_LEN: usize = SECTOR - 2 * PAGE;
 /// A storage operation failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
-    /// The peer is running, or the flash controller could not be acquired.
+    /// CPU1 did not reach a checkpoint in time, or the flash controller was busy.
     Busy,
     /// The platform, flash part, or XIP mapping is unsupported.
     Unsupported,
@@ -44,6 +44,17 @@ pub enum Error {
 pub struct StoragePort(Token);
 
 static CLAIMED: AtomicBool = AtomicBool::new(false);
+
+/// Let CPU0 use flash while this worker is between jobs.
+///
+/// Call in CPU1's idle/dispatch loop, after publishing a completed job and
+/// before taking the next. Also poll while waiting for CPU0 to finish setup
+/// if it needs to open storage then. On CPU0 or a host this does nothing.
+/// On CPU1 it may block with interrupts masked until one raw flash transfer
+/// completes. A sector erase can exceed an audio deadline.
+pub fn cpu1_checkpoint() {
+    chip::cpu1_checkpoint();
+}
 
 impl Board {
     /// Acquire the idle SPI NOR port before moving board fields into tasks.
@@ -66,11 +77,17 @@ impl StoragePort {
     /// # Safety
     /// The firmware integration must reserve the four sectors mapped by
     /// `fm1-storage.x` exclusively for this store and copy the BSP's RAM
-    /// routines at startup. During this call and every operation on the
+    /// routines at startup. Initialize the BSP's shared RAM before releasing
+    /// a managed CPU1. During this call and every operation on the
     /// returned store, independently configured DMA, debug agents and
     /// unmaskable handlers must neither fetch from XIP nor use SPI0 or its
-    /// pins. The normal BSP display and audio DMA buffers are in SRAM.
-    /// The driver masks CPU0 interrupts and checks CPU1 on each transfer.
+    /// pins. No independent agent may start, reset or redirect CPU1 during
+    /// a transfer. The normal BSP display and audio DMA buffers are in SRAM.
+    /// The driver masks CPU0 interrupts and requires a held/inactive peer or
+    /// an acknowledgment from CPU1 inside the BSP's SRAM parking loop. A peer
+    /// booted by the BSP requires this acknowledgment until its verified hold.
+    /// With a custom bootstrap, the hardware must report RUN set and HOLD
+    /// clear whenever the live peer could fetch from XIP during the operation.
     /// No condition extends past a completed call if the store is never
     /// used again. Dropping or forgetting the handle performs no I/O.
     ///

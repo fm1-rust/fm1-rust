@@ -2,7 +2,10 @@
 /* SPDX-License-Identifier: MIT-0 */
 /* The patched Rust compiler lacks pi32v2 inline assembly and an interrupt ABI.
    Provide the native TIMER5 entry and CPU instructions for the BSP. */
+#include "cpu1_state.h"
+
 typedef unsigned u32;
+_Atomic unsigned fm1_cpu1_live_reply;
 
 void rust_timer5_tick(void);
 
