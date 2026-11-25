@@ -1,6 +1,6 @@
 //! Read the board's retained diagnostic records over EP0. Reading this log
 //! neither claims an interface nor sends traffic to the measured endpoint.
-use super::{Status, invalid};
+use super::{Status, control_timeout, invalid};
 use crate::Device;
 use core::time::Duration;
 use std::io::{self, Write};
@@ -15,8 +15,10 @@ use nusb::{
 /// request. All records and the index use read-only control transfers.
 ///
 /// # Errors
-/// Returns an error for a short page, a log overwritten during reading, or a USB error.
+/// Returns an error for an invalid timeout, a short page, a log overwritten
+/// during reading, or a USB error.
 pub fn read_log(device: &Device, timeout: Duration) -> io::Result<Option<String>> {
+    let timeout = control_timeout(timeout)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let handle = device.info().open().wait().map_err(io::Error::other)?;

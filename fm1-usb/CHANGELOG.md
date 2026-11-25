@@ -19,3 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test traffic.
 - Report the protocol identifier and returned length when a diagnostic
   handshake is truncated or comes from older firmware.
+
+### Fixed
+
+- Round raw USB probe timeouts up to whole milliseconds. A 500 µs request
+  now uses a 1 ms timeout. Zero and durations above `u32::MAX` milliseconds
+  return `InvalidInput` before opening the device.

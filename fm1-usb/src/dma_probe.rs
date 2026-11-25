@@ -1,5 +1,8 @@
 //! Raw host transport for the RXD3 and RXS1 diagnostics. MIDI devices keep
 //! their class driver. Raw transfers claim only the vendor diagnostic interface.
+//!
+//! Caller-supplied control transfer timeouts are rounded up to whole milliseconds.
+//! Zero and durations above `u32::MAX` milliseconds return [`io::ErrorKind::InvalidInput`].
 extern crate alloc;
 mod history;
 #[allow(
@@ -128,6 +131,17 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+fn control_timeout(timeout: Duration) -> io::Result<Duration> {
+    // rusb narrows whole milliseconds to u32. Zero tells libusb to wait forever.
+    match u32::try_from(timeout.as_nanos().div_ceil(1_000_000)) {
+        Ok(ms @ 1..) => Ok(Duration::from_millis(u64::from(ms))),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "USB control timeout must be positive and at most 4294967295 ms",
+        )),
+    }
+}
+
 fn parse_hello(reply: &[u8]) -> io::Result<Profile> {
     let len = reply.len();
     let (magic, fields) = reply.split_first_chunk::<4>().ok_or_else(|| {
@@ -179,8 +193,10 @@ impl DmaProbe {
     /// The supported RXD3 and RXS1 handshakes each require a complete 12-byte reply.
     ///
     /// # Errors
-    /// Returns an error on device change, failed control request or protocol mismatch.
+    /// Returns an error for an invalid timeout, device change, failed control request
+    /// or protocol mismatch.
     pub fn open(device: &Device, timeout: Duration) -> io::Result<Self> {
+        let timeout = control_timeout(timeout)?;
         let handle = open_handle(device)?;
         let mut hello = [0; HELLO_LEN];
         let len = handle
@@ -386,6 +402,32 @@ impl DmaProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_timeouts_round_up_within_the_libusb_range() {
+        let max = Duration::from_millis(u64::from(u32::MAX));
+        for (input, expected) in [
+            (Duration::from_nanos(1), Duration::from_millis(1)),
+            (Duration::from_micros(500), Duration::from_millis(1)),
+            (Duration::from_millis(1), Duration::from_millis(1)),
+            (Duration::from_micros(1001), Duration::from_millis(2)),
+            (max - Duration::from_nanos(1), max),
+            (max, max),
+        ] {
+            assert_eq!(control_timeout(input).expect("valid timeout"), expected);
+        }
+        for input in [
+            Duration::ZERO,
+            max + Duration::from_nanos(1),
+            max + Duration::from_millis(1),
+            Duration::MAX,
+        ] {
+            assert_eq!(
+                control_timeout(input).expect_err("invalid timeout").kind(),
+                io::ErrorKind::InvalidInput,
+            );
+        }
+    }
 
     #[test]
     fn handshake_uses_the_returned_bytes_and_protocol() {
