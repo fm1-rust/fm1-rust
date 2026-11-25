@@ -12,6 +12,8 @@ pub use cpu0::Cpu0;
 pub mod display;
 pub mod panel;
 mod registers;
+#[cfg(feature = "flash-storage")]
+pub mod storage;
 #[cfg(test)]
 mod test_board;
 pub mod time;

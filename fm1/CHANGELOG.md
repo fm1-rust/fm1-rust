@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Add opt-in `flash-storage` support for saving and restoring two small
+  application records. The `flash-store` example initializes its reserved
+  sectors with a default synth patch and MIDI phrase and restores saved
+  variations on later boots.
+
 ## 0.2.0 (2026-11-24)
 
 ### Added

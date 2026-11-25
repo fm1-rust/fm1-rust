@@ -57,6 +57,8 @@ peripherals!(
     QualifiedMidiPort,
     UsbPort
 );
+#[cfg(feature = "flash-storage")]
+impl Peripheral for crate::storage::StoragePort {}
 #[cfg(feature = "audio")]
 impl Peripheral for crate::audio::AudioPort {}
 #[cfg(feature = "audio")]

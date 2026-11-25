@@ -16,7 +16,7 @@ from package import load_regions
 tools = Path(os.environ["PI32V2_BIN"])
 
 
-def link(directory, text, initialized, assets, script="fm1-assets.ld", should_fit=True):
+def link(directory, text, initialized, assets, script="fm1-assets.ld", should_fit=True, storage=False):
     directory = Path(directory)
     assembly = directory / "test.s"
     obj = directory / "test.o"
@@ -36,11 +36,13 @@ def link(directory, text, initialized, assets, script="fm1-assets.ld", should_fi
     subprocess.run([tools / "clang", "--target=pi32v2", "-c", assembly, "-o", obj],
                    check=True)
     result = subprocess.run([tools / "ld.lld", "-L", crate, "-L", crate.parent / "fm1/runtime",
-                             "-T", script, obj, "-o", image], capture_output=True, text=True)
+                             "-T", script, *(["-T", "fm1-storage.x"] if storage else []), obj, "-o", image], capture_output=True, text=True)
     if should_fit:
         assert result.returncode == 0, result.stderr
         return load_regions(image)
     assert result.returncode != 0 and any(s in result.stderr for s in ("overflow", "exceed")), result.stderr
+    if storage:
+        assert "storage boundary" in result.stderr, result.stderr
 
 
 with TemporaryDirectory() as directory:
@@ -59,3 +61,10 @@ with TemporaryDirectory() as directory:
     last = 0xdc000 - address
     link(directory, 0x90000, 4, last)
     link(directory, 0x90000, 4, last + 1, should_fit=False)
+
+    # Storage builds reserve physical 0xD8000. Include alignment and RAM load
+    # bytes in the limit. Plain asset builds above keep their full budget.
+    last = 0xd4000 - address
+    link(directory, 0x90000, 4, last, storage=True)
+    link(directory, 0x90000, 4, last + 1, storage=True, should_fit=False)
+    link(directory, 0xc8000, 0xd000, 1, storage=True, should_fit=False)

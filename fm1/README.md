@@ -39,6 +39,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
+| `board.take_storage()` | With `flash-storage`, save and restore two independent byte records of up to 3,584 bytes each. |
 | `board.take_usb()` | Acquire the idle port. Use `try_into_midi(identity)` when USB is optional or `into_midi(identity)` when startup failure should panic. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
 
@@ -84,6 +85,86 @@ The task can also wake on locally produced output. The driver checks the two
 trailing SRAM guards during service and every 100 ms while waiting for an IRQ.
 An intact guard keeps that wait pending. A changed guard or an observed
 oversized normal packet count detaches USB0 and invokes the panic handler.
+
+### Flash storage
+
+Enable `fm1/flash-storage` and add `-C link-arg=-Tfm1-storage.x` alongside
+`-Tfm1.ld` or `-Tfm1-assets.ld`. The linker reserves physical
+`0xD8000..0xDC000` for two A/B slot pairs. Code, initialized RAM and factory
+assets must end by `0xD8000`. The reservation adds no bytes to the install
+image. The driver also checks the installed app-area extent and the bootloader's
+XIP base before opening the store. A firmware upgrade that keeps this layout
+and the same application ID can restore the previous records.
+
+```rust,no_run
+# #[cfg(feature = "flash-storage")]
+# fn example(board: &fm1::Board) -> Result<(), fm1::storage::Error> {
+let mut port = board.take_storage().ok_or(fm1::storage::Error::Busy)?;
+// SAFETY: this single-core BSP image links fm1-storage.x and the standard CRT.
+// Its only DMA clients are the BSP's SRAM-backed audio and display drivers.
+// It installs no unmaskable handlers or other clients of SPI0.
+let mut store = unsafe { port.open(*b"SYN1") }?;
+let patch = [1, 2, 12, 48]; // application format v1, waveform, attack, release
+store.save(0, &patch)?;
+store.save(1, &[0x90, 60, 100, 0x80, 60, 0])?;
+let mut restored = [0; 32];
+assert_eq!(store.load(0, &mut restored)?, Some(patch.len()));
+assert_eq!(&restored[..patch.len()], &patch);
+# Ok(()) }
+```
+
+Use a stable four-byte owner ID and encode the application's own version.
+`load` returns `None` for two blank sectors and `Some(0)` for a saved empty
+record. Each 4 KiB sector has an owner tag in its first page, up to fourteen
+256-byte payload pages, and a final commit page. A save verifies the payload
+before writing the commit. CRC-32/ISO-HDLC covers the payload, the 12-byte
+owner tag and the first 12 bytes of the commit, in that order. A load
+validates both banks and checks the actual bytes copied to the caller. An unchanged save
+performs zero writes. Each slot commits independently. This format is intended
+for explicit user saves and has two-sector wear distribution per slot.
+
+Other firmwares may already use these addresses, including for samples.
+Ordinary saves require blank or recognized sectors. A usable copy can still
+be read if the other sector is foreign. `reclaim(slot)` explicitly erases
+unrecognized sectors in that pair and preserves valid copies for this owner.
+A power cut during erase or the ownership tag can also require reclamation
+before the next save. With a previously committed record, loading it needs
+no cleanup.
+
+The native driver supports the P25Q80 and UC25HQ80 on the stock 1 MiB FM-1.
+It does all data reads through raw SPI0 and stages each program page in SRAM,
+so the source slice may live in flash. It masks both CPU0 interrupt enables,
+checks the peer's RUN/HOLD state for each transaction, and runs the command
+and BUSY polling from SRAM. If it loses SPI completion or cannot establish
+that a write finished, it resets from SRAM. The board integration owns the
+remaining DMA and exception exclusion contract on `StoragePort::open`.
+A running CPU1 audio worker yields `Error::Busy`. Use storage while playback
+is stopped. An erase holds off CPU0 interrupt handlers for the duration.
+
+Build `fm1/scripts/build-example.sh flash-store` for an on-device check.
+On first boot after installation the example erases unrecognized sectors in
+physical `0xD8000..0xDC000` (16 KiB). This can erase data left by other
+firmware. It seeds each slot that lacks a valid demo record with Variation A.
+Existing valid demo saves survive a reboot or reflash of this example. Once
+both slots are initialized, a normal boot performs no erase or program.
+The defaults live in the application image, so provisioning needs no padding
+or writes to the flash between the application and its records.
+
+From Variation A, press SAVE once and wait for **Saved and verified**.
+Power-cycle to see Variation B restored for both the patch and the MIDI
+phrase. PLAY enters download mode. The storage driver has been exercised
+in emulation. Physical reboot retention and erase latency still need
+measurement on an FM-1.
+
+Design references include the [M-VAVE SDK flash contract][mvave-flash], its
+[staged project records][mvave-project], the [Felucca BSP flash driver][felucca-flash],
+[fm1-base storage][fm1-base-storage] and [Embassy's RP flash exclusion][embassy-flash].
+
+[mvave-flash]: https://github.com/m-vave/fm1_open/blob/4c7496daac04a95ff10d1afdcc8f9ead2dbabc41/sdk/include/fm1.h#L141-L167
+[mvave-project]: https://github.com/m-vave/fm1_open/blob/4c7496daac04a95ff10d1afdcc8f9ead2dbabc41/app/project.c
+[felucca-flash]: https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/chip/fm1_flash.h
+[fm1-base-storage]: https://github.com/charlesvestal/fm1-base/blob/8820d6f4909e6fcd1f5d068f32598af077c27cf4/device/storage.c
+[embassy-flash]: https://docs.rs/crate/embassy-rp/0.10.0/source/src/flash.rs
 
 ### USB debug log
 
