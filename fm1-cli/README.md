@@ -4,14 +4,16 @@
 [![Build status][ci-badge]][ci]
 
 Read the M-VAVE FM-1's USB log or the hardware timing diagnostic from a host
-terminal. From the workspace root, install the `fm1` command with a standard
-Rust toolchain.
+terminal. Install the `fm1` command from crates.io with a standard Rust toolchain.
 
 ```sh
-cargo install --locked --path fm1-cli
+cargo install --locked fm1-cli
 fm1 log
 fm1 timing
 ```
+
+To build from a checkout, run `cargo install --locked --path fm1-cli` from
+the workspace root.
 
 `log` prints the USB-MIDI log, or the on-board trial history on a DMA
 diagnostic image. With `rticx-timing` loaded, wait for

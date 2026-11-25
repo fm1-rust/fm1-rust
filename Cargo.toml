@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.0-rc.0"
+version = "0.2.0"
 
 [workspace.dependencies]
 fm1 = { version = "0.2", path = "fm1" }
