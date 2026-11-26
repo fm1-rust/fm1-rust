@@ -53,6 +53,7 @@ peripherals!(
     Play,
     TouchControls,
     crate::power::Power,
+    crate::trs_midi::TrsMidiRx,
     Timers,
     MidiDevice,
     QualifiedMidiPort,
@@ -60,6 +61,8 @@ peripherals!(
 );
 #[cfg(feature = "flash-storage")]
 impl Peripheral for crate::storage::StoragePort {}
+#[cfg(feature = "midly")]
+impl Peripheral for crate::trs_midi::MidlyRx {}
 #[cfg(feature = "audio")]
 impl Peripheral for crate::audio::AudioPort {}
 #[cfg(feature = "audio")]

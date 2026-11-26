@@ -4,6 +4,9 @@
 pub use embedded_hal;
 #[cfg(any(feature = "async-display", feature = "async-usb"))]
 pub use embedded_hal_async;
+pub use embedded_hal_nb;
+#[cfg(feature = "embedded-io")]
+pub use embedded_io;
 
 #[cfg(feature = "audio")]
 pub mod audio;
@@ -18,6 +21,7 @@ pub mod storage;
 #[cfg(test)]
 mod test_board;
 pub mod time;
+pub mod trs_midi;
 pub mod usb_midi;
 use core::marker::PhantomData;
 #[cfg(fm1)]
@@ -168,6 +172,7 @@ pub fn enter_download_mode() -> ! {
         // SAFETY: this path never returns to the caller. Mask CPU0 interrupts
         // before updating the bootloader mailbox and requesting a reset.
         unsafe { fm1_cli() };
+        trs_midi::stop();
         write(time::T5_CON, 0x4000);
         #[allow(
             clippy::arithmetic_side_effects,

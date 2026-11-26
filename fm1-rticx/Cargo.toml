@@ -29,10 +29,15 @@ async-usb = ["fm1/async-usb"]
 audio = ["fm1/audio"]
 cpu1-probe = ["fm1/cpu1-probe"]
 embedded-graphics = ["fm1/embedded-graphics"]
+midly = ["fm1/midly"]
 rtt = ["dep:rtt-target"]
 usb-log = ["fm1/usb-log"]
 usb-dma-probe = ["fm1/usb-dma-probe"]
 usb-dma-stress = ["usb-dma-probe", "fm1/usb-dma-stress"]
+
+[[example]]
+name = "rticx-trs-midi"
+required-features = ["midly"]
 
 [[example]]
 name = "rticx-cpu1-audio"

@@ -40,6 +40,7 @@ entry path.
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
 | `board.take_power()` | Read the P33 external 5 V detector and internal charger flags. For battery level, enable PB1 sampling on either panel scanner. |
+| `board.take_trs_midi()` | Receive raw MIDI bytes from the TRS input. Optional features provide a `midly` event adapter and blocking `embedded-io` reads. |
 | `board.take_storage()` | With `flash-storage`, save and restore two independent byte records of up to 3,584 bytes each. |
 | `board.take_usb()` | Acquire the idle port. Use `try_into_midi(identity)` when USB is optional or `into_midi(identity)` when startup failure should panic. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
@@ -86,6 +87,39 @@ The task can also wake on locally produced output. The driver checks the two
 trailing SRAM guards during service and every 100 ms while waiting for an IRQ.
 An intact guard keeps that wait pending. A changed guard or an observed
 oversized normal packet count detaches USB0 and invokes the panic handler.
+
+### TRS MIDI input
+
+Claim `board.take_trs_midi()` before moving board fields into tasks. UART1
+receives on PH8 at 31,250 baud. `try_read(&mut bytes)` returns up to 32 bytes
+in wire order. For a nonempty buffer, `Ok(0)` means no bytes are ready. The raw
+interface preserves every byte, including running status, real-time and SysEx
+bytes. It also implements `embedded_hal_nb::serial::Read<u8>`. With the
+`embedded-io` feature, `rx.blocking()` implements `Read` and `ReadReady`.
+
+Service the receiver every few milliseconds. UART1 writes into 256 bytes of
+private SRAM. The BSP latches the count when eight bytes have arrived or the
+line has been quiet for 1.25 ms. Up to seven in-flight bytes are reserved.
+It rechecks the backlog after copying so a preempted reader can detect a lap
+before returning data. If the count is ambiguous or unread bytes exceed that
+budget, `RxError::Overrun` discards the backlog and restarts reception.
+Consumers can then release any notes held by this input and reset their parser.
+
+Enable `fm1/midly` for `rx.into_midly()`. Its `read_events` method feeds
+borrowed `midly::live::LiveEvent` values to a callback. The parser retains
+running status across reads and clears it on overrun. It uses a 16-byte
+SysEx payload buffer. Applications handling larger dumps can stream the
+bytes through the raw interface. Channel assignments and Note On velocity
+zero handling belong to the application.
+
+Build `./fm1/scripts/build-example.sh rticx-trs-midi` for the LCD diagnostic.
+Connect a MIDI source to the physical input, play a note, and release it.
+**NOTE OFF** should advance even if the sender sends no subsequent notes.
+The display also counts control changes, timing clocks and overruns.
+The FM-1's PLAY button returns to download mode.
+
+[Felucca UART1 setup](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/chip/fm1_uart.h) ·
+[FM-1 receive count observation](https://github.com/zvenson/dxsloop/blob/8c1035b79d860edcb6f23556910206332669dac8/firmware/src/midi_uart.c#L10-L16)
 
 ### Battery and charging
 
