@@ -1,7 +1,10 @@
 //! Host fixture for the chip entry points and registers touched by board startup.
 //! Tests drive interrupt deliveries and SPI completions explicitly.
 extern crate std;
-use self::std::{collections::BTreeMap, vec::Vec};
+use self::std::{
+    collections::{BTreeMap, VecDeque},
+    vec::Vec,
+};
 use super::*;
 use core::cell::RefCell;
 use embedded_hal::digital::{InputPin, OutputPin, StatefulOutputPin};
@@ -12,6 +15,9 @@ struct Chip {
     regs: BTreeMap<usize, u32>,
     ticks: u32,
     usb_reply: Option<u8>,
+    p33_output: Vec<u8>,
+    p33_input: VecDeque<u8>,
+    p33_stall_at: Option<usize>,
     spi_done: bool,
     dma_stuck: bool,
     preempt_until_after_spi_timeout: bool,
@@ -89,6 +95,18 @@ pub(crate) fn read(addr: usize) -> u32 {
 }
 pub(crate) fn write(addr: usize, mut value: u32) {
     CHIP.with_borrow_mut(|chip| {
+        if addr == 0x13e08 && value & 0x10 != 0 {
+            assert_eq!(value & 0x101, 1, "P33 selected outside the RTC domain");
+            let byte = chip.regs[&0x13e0c].to_le_bytes()[0];
+            chip.p33_output.push(byte);
+            value &= !0x10;
+            if chip.p33_stall_at == Some(chip.p33_output.len()) {
+                value |= 2;
+            }
+            if let Some(reply) = chip.p33_input.pop_front() {
+                chip.regs.insert(0x13e0c, u32::from(reply));
+            }
+        }
         if addr == PA + OUT {
             let last = chip.regs.get(&addr).copied().unwrap_or_default();
             let rising = value & !last;
@@ -123,6 +141,71 @@ pub(crate) fn write(addr: usize, mut value: u32) {
         }
         chip.regs.insert(addr, value);
     })
+}
+
+#[test]
+fn p33_reads_only_status_registers_and_releases_the_bridge_after_timeout() {
+    use crate::power::Error;
+    const CON: usize = 0x13e08;
+    const IDLE: u32 = 0x108; // An unrelated control bit and the original RTC bank.
+    let board = Board::init();
+    let mut power = board.take_power().expect("exclusive P33 owner");
+    assert!(board.take_power().is_none());
+    write(CON, IDLE);
+
+    for bits in 0..8u8 {
+        let (supply, enabled, full) = (bits & 4 != 0, bits & 2 != 0, bits & 1 != 0);
+        CHIP.with_borrow_mut(|chip| {
+            chip.p33_output.clear();
+            chip.p33_input.extend([
+                0,
+                0,
+                0xdf | (u8::from(supply) << 5),
+                0,
+                0,
+                0xfe | u8::from(enabled),
+                0,
+                0,
+                0xfe | u8::from(full),
+            ]);
+        });
+        let status = power.supply_status().expect("P33 read");
+        assert_eq!(
+            (
+                status.external_power,
+                status.charger_enabled,
+                status.charge_full
+            ),
+            (supply, enabled, full)
+        );
+        assert_eq!(status.is_charging(), supply && enabled && !full);
+        CHIP.with_borrow(|chip| {
+            assert_eq!(
+                chip.p33_output,
+                [0x80, 0xa1, 0x5e, 0x80, 0x1a, 0x5e, 0x80, 0x19, 0x5e]
+            )
+        });
+        assert_eq!(read(CON), IDLE);
+    }
+    for byte in 1..=9 {
+        CHIP.with_borrow_mut(|chip| {
+            chip.p33_output.clear();
+            chip.p33_stall_at = Some(byte);
+        });
+        assert_eq!(power.supply_status(), Err(Error::Timeout));
+        CHIP.with_borrow(|chip| assert_eq!(chip.p33_output.len(), byte));
+        assert_eq!(read(CON), IDLE);
+    }
+    for occupied in [IDLE | 1, IDLE | 2] {
+        write(CON, occupied);
+        assert_eq!(power.supply_status(), Err(Error::Busy));
+        assert_eq!(read(CON), occupied);
+    }
+    write(CON, IDLE);
+    CHIP.with_borrow_mut(|chip| chip.p33_stall_at = None);
+    assert!(power.supply_status().is_ok());
+    drop(power);
+    assert!(board.take_power().is_some());
 }
 #[unsafe(no_mangle)]
 extern "C" fn fm1_set_icfg(value: u32) {

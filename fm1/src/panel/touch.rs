@@ -4,7 +4,7 @@
 // FM-1 row drive, LED probe and strike curves follow felucca-bsp and fm1-base's touch.c.
 use super::{
     Controls, Leds, MasterLevel, PianoKey, Scan,
-    controls::{adc_result, start_adc, stop_adc},
+    controls::{BATTERY_CHANNEL, COLUMN_TIMING, adc_result, start_adc, stop_adc},
 };
 use crate::registers::{DIR, HD, HD0, OUT, PA, PU, clear, level, set};
 
@@ -64,6 +64,14 @@ impl TouchControls {
     /// Recommended column scan frequency, shared with the digital scanner.
     pub const SCAN_HZ: u32 = Controls::SCAN_HZ;
 
+    /// Sample the battery divider during a lamp-only column interval. Key
+    /// expression, MASTER conversions and the lamp pattern keep their cadence.
+    /// Read the latest attempt through [`Scan::battery_raw`] and the warning
+    /// through [`Scan::battery_low`].
+    pub fn enable_battery(&mut self) {
+        self.panel.enable_battery();
+    }
+
     pub(super) fn new(panel: Controls) -> Self {
         stop_adc(); // Take over the MASTER conversion started by Controls.
         let mut this = Self {
@@ -98,6 +106,7 @@ impl TouchControls {
         let rows = self.panel.advance();
         match self.slot {
             Slot::Master => self.master = sample.map(|v| MasterLevel::from_adc(u32::from(v))),
+            Slot::Battery => self.panel.battery.record(sample),
             Slot::Key { key, driven } => {
                 let (column, row) = key.position();
                 let mask = 1 << row;
@@ -145,6 +154,7 @@ impl TouchControls {
         let column = usize::from(self.panel.column);
         self.slot = match self.phase {
             1 if column == 0 => Slot::Master, // PA8 here is OCT−.
+            3 if column == 0 && self.panel.battery_due() => Slot::Battery,
             0..=2 => {
                 let row = [1, 2, 0][usize::from(self.phase)]; // PA7, PA8, then PA6 via PA10
                 PianoKey::BY_ROW[row][column].map_or(Slot::Lamps, |key| Slot::Key {
@@ -182,6 +192,7 @@ impl Drop for TouchControls {
 enum Slot {
     Lamps,
     Master,
+    Battery,
     Key { key: PianoKey, driven: bool },
 }
 
@@ -194,6 +205,7 @@ impl Slot {
         let channel = match self {
             Self::Lamps => return,
             Self::Master => 4,
+            Self::Battery => BATTERY_CHANNEL,
             Self::Key { key, driven } => {
                 let (_, row) = key.position();
                 let probe = !key.supports_pressure();
@@ -216,7 +228,7 @@ impl Slot {
                 }
             }
         };
-        start_adc(channel, (2 << 12) | 7); // Felucca's 100 µs acquisition slot.
+        start_adc(channel, COLUMN_TIMING);
     }
 
     fn finish(self) -> Option<u16> {

@@ -230,6 +230,10 @@ pub struct Controls {
     inputs: Inputs,
     master: Option<MasterLevel>,
     conversion_started: u32,
+    // None keeps PB1 and the original MASTER schedule untouched.
+    battery_started: Option<u32>,
+    pub(super) battery: Battery,
+    battery_pending: bool,
 }
 
 impl Controls {
@@ -248,16 +252,53 @@ impl Controls {
             inputs: Inputs::default(),
             master: None,
             conversion_started: cycles(),
+            battery_started: None,
+            battery: Battery::default(),
+            battery_pending: false,
         }
     }
 
     /// Recommended column scan frequency. Eleven calls make one complete sweep.
     pub const SCAN_HZ: u32 = 10_000;
 
+    /// Sample the battery divider about ten times per second for
+    /// [`Scan::battery_raw`] and [`Scan::battery_low`]. PB1 stays a high-impedance
+    /// analog input. Calling this again preserves the current sampling interval.
+    pub fn enable_battery(&mut self) {
+        if self.battery_started.is_none() {
+            // Holding PB1 low can reset the board. Never drive it or enable a pull.
+            const PIN: u32 = 1 << 1;
+            set(PB + DIR, PIN);
+            clear(PB + PD, PIN);
+            clear(PB + PU, PIN);
+            clear(PB + DIE, PIN);
+            self.battery_started = Some(cycles().wrapping_sub(BATTERY_INTERVAL));
+        }
+    }
+
+    pub(super) fn battery_due(&mut self) -> bool {
+        let Some(started) = &mut self.battery_started else {
+            return false;
+        };
+        let now = cycles();
+        if now.wrapping_sub(*started) < BATTERY_INTERVAL {
+            return false;
+        }
+        *started = now;
+        true
+    }
+
     /// Sample the current column and drive the next column from `leds`.
     /// Call once per 100 µs. Every eleventh call returns a coherent input snapshot.
     /// A press needs two closed sweeps and a release needs eight open sweeps.
     pub fn scan(&mut self, leds: &Leds) -> Option<Scan> {
+        if self.battery_pending {
+            self.battery.record(adc_result());
+            stop_adc();
+            start_adc(4, (15 << 12) | 6);
+            self.conversion_started = cycles();
+            self.battery_pending = false;
+        }
         self.advance();
         self.light(leds.columns[usize::from(self.column)]);
         if self.column != 0 {
@@ -299,6 +340,8 @@ impl Controls {
     ) -> Scan {
         let mut scan = self.inputs.sample(&self.raw, piano);
         scan.master = master;
+        scan.battery_raw = self.battery.raw;
+        scan.battery_low = self.battery.low;
         scan.master_changed = master != self.master;
         self.master = master;
         scan
@@ -315,8 +358,14 @@ impl Controls {
             return self.master;
         };
         stop_adc();
-        start_adc(4, (15 << 12) | 6);
-        self.conversion_started = now;
+        if self.battery_due() {
+            // Borrow the first column interval; MASTER resumes on the next tick.
+            start_adc(BATTERY_CHANNEL, COLUMN_TIMING);
+            self.battery_pending = true;
+        } else {
+            start_adc(4, (15 << 12) | 6);
+            self.conversion_started = now;
+        }
         value
     }
 }
@@ -329,7 +378,46 @@ impl Drop for Controls {
     }
 }
 
-// One SARADC serves the key rows and MASTER (PB6, channel 4).
+// One SARADC serves the key rows, MASTER (PB6) and the battery divider (PB1).
+pub(super) const BATTERY_CHANNEL: u32 = 3;
+pub(super) const COLUMN_TIMING: u32 = (2 << 12) | 7;
+const BATTERY_INTERVAL: u32 = crate::time::Timers::CRYSTAL_HZ / 10;
+
+#[derive(Debug, Default)]
+pub(super) struct Battery {
+    raw: Option<u16>,
+    previous: Option<u16>,
+    low: Option<bool>,
+}
+
+impl Battery {
+    // The one-to-two-bar boundary and hysteresis come from fm1-base.
+    const TWO_BARS: u16 = 561;
+    const HYSTERESIS: u16 = 4;
+
+    // Called exactly once per attempted battery conversion, including timeouts.
+    pub(super) fn record(&mut self, sample: Option<u16>) {
+        if let (Some(a), Some(b), Some(c)) = (self.previous, self.raw, sample) {
+            let threshold = match self.low {
+                None => Self::TWO_BARS,
+                Some(false) => Self::TWO_BARS - Self::HYSTERESIS,
+                Some(true) => Self::TWO_BARS + Self::HYSTERESIS,
+            };
+            if a.max(b).max(c) < threshold {
+                self.low = Some(true);
+            } else if a.min(b).min(c) >= threshold {
+                self.low = Some(false);
+            }
+        } else if sample.is_none() && self.low == Some(false) {
+            // An unreadable ADC cannot confirm a healthy battery. A low
+            // warning persists until three new readings confirm recovery.
+            self.low = None;
+        }
+        self.previous = self.raw;
+        self.raw = sample;
+    }
+}
+
 const ADC_CON: usize = 0x13100;
 pub(super) fn adc_result() -> Option<u16> {
     (read(ADC_CON) & (1 << 7) != 0).then(|| (read(ADC_CON + 4) & 0x3ff) as u16)
@@ -491,5 +579,90 @@ mod tests {
         );
         drop(panel);
         assert_eq!(read(ADC_CON), 0);
+    }
+
+    #[test]
+    fn battery_uses_one_column_and_keeps_master_events_separate() {
+        const PIN: u32 = 1 << 1;
+        let mut controls = super::super::Play::init().into_controls();
+        for register in [PB + OUT, PB + DIE, PB + PD, PB + PU] {
+            set(register, PIN);
+        }
+        controls.enable_battery();
+        assert_ne!(read(PB + DIR) & PIN, 0);
+        assert_ne!(read(PB + OUT) & PIN, 0);
+        for register in [PB + DIE, PB + PD, PB + PU] {
+            assert_eq!(read(register) & PIN, 0);
+        }
+        let attempts = [
+            (Some(0), None),
+            (None, None),
+            (Some(629), None),
+            (Some(629), None),
+            (Some(629), Some(false)),
+            (Some(556), Some(false)),
+            (Some(556), Some(false)),
+            (Some(556), Some(true)),
+        ];
+        let mut count = 0;
+        let mut expected = (None, None);
+        let mut master_changes = 0;
+        for _ in 0..5000 {
+            let adc = read(ADC_CON);
+            let value = match (adc >> 8) & 15 {
+                BATTERY_CHANNEL => {
+                    assert_eq!(controls.column, 0);
+                    assert_eq!(adc & 0xf007, COLUMN_TIMING);
+                    expected = attempts[count];
+                    count += 1;
+                    expected.0
+                }
+                4 => Some(789),
+                _ => unreachable!("digital scanner channel"),
+            };
+            if let Some(value) = value {
+                write(ADC_CON + 4, u32::from(value));
+                set(ADC_CON, 1 << 7);
+            }
+            if let Some(scan) = controls.scan(&Leds::default()) {
+                assert_eq!((scan.battery_raw(), scan.battery_low()), expected);
+                assert_eq!(scan.master().map(MasterLevel::raw), Some(789));
+                master_changes += scan
+                    .events()
+                    .filter(|e| matches!(e, Event::MasterChanged(_)))
+                    .count();
+                if count == attempts.len() {
+                    break;
+                }
+            }
+        }
+        assert_eq!(count, attempts.len());
+        assert_eq!(master_changes, 1);
+    }
+
+    #[test]
+    fn low_battery_thresholds_hold_through_noise_and_missed_conversions() {
+        let mut battery = Battery::default();
+        let mut check = |raw, times, expected| {
+            for _ in 0..times {
+                battery.record(raw);
+            }
+            assert_eq!(battery.low, expected, "after {times} readings of {raw:?}");
+        };
+        check(Some(560), 2, None);
+        check(Some(560), 1, Some(true));
+        check(Some(564), 3, Some(true));
+        check(Some(565), 2, Some(true));
+        check(None, 1, Some(true));
+        check(Some(565), 2, Some(true));
+        check(Some(565), 1, Some(false));
+        check(Some(557), 3, Some(false));
+        check(Some(0), 1, Some(false));
+        check(Some(629), 1, Some(false));
+        check(Some(556), 2, Some(false));
+        check(None, 1, None);
+        check(Some(561), 2, None);
+        check(Some(561), 1, Some(false));
+        check(Some(0), 3, Some(true));
     }
 }

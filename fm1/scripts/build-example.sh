@@ -15,7 +15,7 @@ case "$example" in
     mix-bench) package=fm1-audio; set -- ;;
     usb-window) set -- --features usb-window-probe,embedded-graphics ;;
     usb-log) package=fm1-rticx; set -- --features usb-log,rtt ;;
-    rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
+    rticx-battery|rticx-blink|rticx-controls) package=fm1-rticx; set -- ;;
     rticx-cpu1-audio) package=fm1-rticx; set -- --features audio,cpu1-probe,async-usb,usb-log,fm1-audio/dsp ;;
     rticx-cpu1-audio-portable)
         package=fm1-rticx
@@ -34,7 +34,7 @@ case "$example" in
         package=fm1-rticx
         set -- --features audio,async-usb,usb-log,usb-dma-probe ;;
     rticx-timing) package=fm1-rticx; set -- --features audio,async-usb,usb-log ;;
-    *) echo "usage: $0 [blink|cpu1-probe|display|graphics|flash-store[-cpu1]|tone|mix-bench|usb-window|usb-log|rticx-blink|rticx-controls|rticx-cpu1-audio[-portable]|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
+    *) echo "usage: $0 [blink|cpu1-probe|display|graphics|flash-store[-cpu1]|tone|mix-bench|usb-window|usb-log|rticx-battery|rticx-blink|rticx-controls|rticx-cpu1-audio[-portable]|rticx-piano|rticx-tone|rticx-waveform|rticx-timing|rticx-dma-{midi,bulk,iso,stress}]" >&2; exit 2 ;;
 esac
 : "${RUSTC:?set RUSTC to the patched pi32v2 rustc}"
 : "${PI32V2_BIN:?set PI32V2_BIN to the pi32v2 LLVM bin directory}"

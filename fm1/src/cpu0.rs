@@ -52,6 +52,7 @@ peripherals!(
     Matrix,
     Play,
     TouchControls,
+    crate::power::Power,
     Timers,
     MidiDevice,
     QualifiedMidiPort,
