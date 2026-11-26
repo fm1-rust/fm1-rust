@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 (2026-11-26)
+
+### Added
+
+- Forward the `midly` feature to `fm1` 0.2.1 so firmware can decode events
+  from the TRS MIDI input. The `rticx-trs-midi` example displays note, control
+  change and MIDI clock counts, along with receive overruns.
+- Add the `rticx-battery` example to display the low-battery warning, raw
+  battery reading and on-chip charger status.
+
 ## 0.2.0 (2026-11-24)
 
 ### Added

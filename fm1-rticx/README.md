@@ -468,12 +468,12 @@ the current CPU0-only critical section.
 
 ## Application setup
 
-For a firmware project, add the prerelease to `Cargo.toml`.
-Enable its `audio` feature to use the ALNK0 driver.
+Add `fm1-rticx` to your firmware's `Cargo.toml`. Enable `audio` to use the
+ALNK0 driver or `midly` to decode events from the TRS MIDI input.
 
 ```toml
 [dependencies]
-fm1-rticx = "0.2.0-pre"
+fm1-rticx = "0.2.1"
 ```
 
 Annotate the application module with `#[fm1_rticx::app]`. In `#[init]`, call
@@ -571,15 +571,15 @@ intentionally submit to this crate under the [MIT License][mit].
 [controls]: https://docs.rs/fm1-controls/
 [build-and-flash]: ../fm1/README.md#build-and-flash
 [bsp-usb-log]: ../fm1/README.md#usb-debug-log
-[rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-blink.rs
+[rticx-blink-example]: https://github.com/fm1-rust/fm1-rust/blob/fm1-rticx/v0.2.1/fm1-rticx/examples/rticx-blink.rs
 [rticx-tone-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-tone.rs
 [rticx-controls-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-controls.rs
 [rticx-piano-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-piano.rs
 [rticx-waveform-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/rticx-waveform.rs
 [rticx-timing-example]: https://github.com/fm1-rust/fm1-rust/blob/main/fm1-rticx/examples/rticx-timing.rs
 [usb-log-example]: https://github.com/fm1-rust/fm1-rust/blob/862c16498a68b92a2d174140edf0e73e021aaf22/fm1-rticx/examples/usb-log.rs
-[standalone]: ../fm1/README.md#use-from-another-crate
-[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/862c16498a68b92a2d174140edf0e73e021aaf22/fm1/targets/pi32v2-none.json
+[standalone]: https://github.com/fm1-rust/fm1-rust/blob/fm1/v0.2.1/fm1/README.md#use-from-another-crate
+[target-spec]: https://raw.githubusercontent.com/fm1-rust/fm1-rust/refs/tags/fm1/v0.2.1/fm1/targets/pi32v2-none.json
 [crate-badge]: https://img.shields.io/crates/v/fm1-rticx?logo=rust
 [crate]: https://crates.io/crates/fm1-rticx
 [docs-badge]: https://docs.rs/fm1-rticx/badge.svg

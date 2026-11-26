@@ -1,6 +1,6 @@
 [package]
 name = "fm1-rticx"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "RTICX application support for the M-VAVE FM-1"
 license = "MIT"
