@@ -11,6 +11,7 @@ unsafe extern "C" {
     fn fm1_storage_erase(off: usize) -> i32;
 }
 
+#[inline(always)]
 pub(super) fn cpu1_checkpoint() {
     #[cfg(fm1)]
     fm1_storage_cpu1_checkpoint();

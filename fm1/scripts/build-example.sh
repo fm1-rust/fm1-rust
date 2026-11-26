@@ -64,5 +64,6 @@ cargo build --locked -p "$package" --manifest-path "$root/../Cargo.toml" --profi
     -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec "$@"
 elf="$target/pi32v2-none/firmware/examples/$example"
 case "$example" in flash-store*) python3 "$root/tests/storage_image.py" "$elf" ;; esac
+if [ "$example" = flash-store-cpu1 ]; then python3 "$root/tests/storage_checkpoint.py" "$elf"; fi
 python3 "$packager" "$out/$image.fwsc" --from-elf "$elf"
 cp "$elf" "$out/$image.elf"

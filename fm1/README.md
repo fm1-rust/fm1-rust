@@ -140,25 +140,32 @@ that a write finished, it resets from SRAM. The board integration owns the
 remaining DMA and exception exclusion contract on `StoragePort::open`.
 On a dual-core image, call `fm1::storage::cpu1_checkpoint()` in the CPU1
 worker before polling for a new job, including while it waits for CPU0
-initialization. An in-flight job can publish its result first. CPU0 waits up
-to 5 ms for CPU1 to enter the BSP's SRAM loop and mask its interrupts. A
-timeout returns `Error::Busy` with XIP enabled. A held peer needs no handshake.
+initialization. An in-flight job can publish its result first. CPU0 masks
+its interrupts and waits up to 5 ms per raw transfer for CPU1 to park in
+SRAM. Even `open()` or `load()` can spend this interval waiting and return
+`Error::Busy` before issuing a flash command. This exceeds the
+[2.90 ms audio refill interval](../fm1-rticx/README.md) at 128 stereo frames.
+A held peer needs no handshake.
 The checked BSP bootstrap retains its live reply until it has verified a hardware
 hold. While that reply is present, every flash transfer requires a checkpoint,
 regardless of how the CPU1 control register reads.
 CPU0 releases a parked peer after restoring the controller and pins on each
-raw transfer. A complete save can contain several transfers. Stop playback
-before saving since a sector erase delays CPU0 interrupt service.
+raw transfer. A load or save can contain several transfers, and an erase keeps
+interrupts masked while the flash is busy. Schedule storage operations when
+audio can be paused.
 
 The two cores each write one aligned word in shared on-chip SRAM. CPU0
 withdraws its request on timeout. CPU1 withdraws its acknowledgment and
 rechecks the request in SRAM before restoring interrupts or returning to
 its caller. This closes the race between a late acknowledgment and an
 immediate retry. Entry requires an exact request word. Release requires an
-exact zero, several bit changes away from that request. The handoff relies
-on atomic SRAM word accesses and the
-pi32v2 synchronization instructions. Felucca documents its corresponding
-[CPU1 idle protocol](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/docs/FLASH.md#cpu1-and-ram-only-execution).
+exact zero, several bit changes away from that request. Both cores use atomic
+SRAM word accesses and the pi32v2 synchronization instructions. An idle poll returns
+through the link register so a [CPU1 SRAM misread](https://github.com/charlesvestal/fm1-x0x/issues/10)
+cannot change its return address. Felucca's [CPU1 idle protocol](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/docs/FLASH.md#cpu1-and-ram-only-execution)
+keeps its worker in SRAM between jobs and checks an idle flag at flash entry.
+The FM-1 Rust worker can run its idle loop from XIP, so it acknowledges each
+park request from SRAM.
 
 Build `fm1/scripts/build-example.sh flash-store-cpu1` to exercise both
 paths on the board. CPU0 first gives the worker `0x00200000`, a value some
