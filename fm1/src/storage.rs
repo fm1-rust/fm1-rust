@@ -2,6 +2,9 @@
 //! Link `fm1-storage.x` alongside the application script. Each slot owns two
 //! 4 KiB sectors. Reads validate both copies and saves commit to the older
 //! copy. Run these blocking operations with transport stopped on CPU0.
+//! With a live CPU1, each raw transfer can wait up to 5 ms with CPU0
+//! interrupts masked. Even a probe or read can miss a 2.90 ms audio refill
+//! deadline and return [`Error::Busy`] before issuing a flash command.
 //!
 //! Choose a stable four-byte application identifier. Version and validate
 //! the application's byte encoding separately from this storage format.
@@ -52,6 +55,7 @@ static CLAIMED: AtomicBool = AtomicBool::new(false);
 /// if it needs to open storage then. On CPU0 or a host this does nothing.
 /// On CPU1 it may block with interrupts masked until one raw flash transfer
 /// completes. A sector erase can exceed an audio deadline.
+#[inline(always)] // Keep the worker's return address in the native checkpoint's link register.
 pub fn cpu1_checkpoint() {
     chip::cpu1_checkpoint();
 }
@@ -73,6 +77,8 @@ impl Drop for StoragePort {
 
 impl StoragePort {
     /// Identify the part and open this application's records. This only probes the chip.
+    /// Waiting for a live CPU1 can mask CPU0 interrupts for up to 5 ms before
+    /// the probe returns [`Error::Busy`] without issuing a flash command.
     ///
     /// # Safety
     /// The firmware integration must reserve the four sectors mapped by
@@ -229,6 +235,8 @@ impl Store<'_> {
 
     /// Restore the newest intact record. On a blank slot returns `Ok(None)`.
     /// A saved zero-length record returns `Ok(Some(0))`.
+    /// Each raw read can mask CPU0 interrupts for up to 5 ms waiting for CPU1.
+    /// A single load can issue several reads.
     ///
     /// # Errors
     /// Reports an occupied or corrupt slot when neither copy can be loaded.

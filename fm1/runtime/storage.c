@@ -47,7 +47,7 @@ INLINE unsigned sample(const _Atomic unsigned *word) {
     return atomic_load_explicit(word, memory_order_seq_cst);
 }
 
-static RAM void park_cpu1(void) {
+static RAM __attribute__((used)) void park_cpu1(void) {
     unsigned icfg;
     __asm__ volatile("%0 = icfg" : "=r"(icfg) :: "memory");
     __asm__ volatile("icfg = %0\n\tssync\n\tcsync" :: "r"(icfg & ~0x300u) : "memory");
@@ -63,6 +63,13 @@ static RAM void park_cpu1(void) {
     __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
 }
 
+/* A large XIP image can put park_cpu1 outside the relative branch range.
+ * Jump to its absolute address using a caller-saved register. The caller's
+ * link register (rets) then takes the parked worker straight back to its job. */
+__attribute__((naked, noinline)) static void jump_to_park_cpu1(void) {
+    __asm__("r0 = park_cpu1\n\tgoto r0");
+}
+
 void fm1_storage_cpu1_checkpoint(void) {
     /* Idle-loop fast path. This first load only hints whether to enter SRAM. */
     if (atomic_load_explicit(&park_request, memory_order_relaxed) != REQUEST) return;
@@ -70,8 +77,9 @@ void fm1_storage_cpu1_checkpoint(void) {
     __asm__ volatile("%0 = cnum\n\t%1 = sp" : "=r"(core), "=r"(sp) :: "memory");
     if (core != 1 || sp < 0x01c00000u || sp >= 0x01c80000u ||
         (uintptr_t)park_cpu1 < 0x01c00000u || (uintptr_t)park_cpu1 >= 0x01c80000u) return;
-    void (*volatile in_ram)(void) = park_cpu1;
-    in_ram();
+    /* A normal call spills rets even on idle polls. Some units misread bit 21
+     * on SRAM loads, including a return address popped from the stack. */
+    __attribute__((musttail)) return jump_to_park_cpu1();
 }
 
 INLINE int wait_ack(unsigned expected, uint32_t start) {
