@@ -5,12 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.1 (2026-11-26)
 
 ### Added
 
-- Extend `Power` with a boot reset-cause snapshot, normal reboot and an opt-in
-  hardware watchdog. The `watchdog` example exercises recovery with CPU1 stalled.
+- Add `usb-audio-capture` to stream stereo 16-bit PCM at 44.1 kHz to a USB
+  host alongside MIDI. On a qualified FM-1, `UsbPort::into_midi_with_audio_capture`
+  provides a nonblocking writer for the instrument's stereo mix.
+- Add `Board::take_trs_midi` for raw MIDI input on UART1 with explicit overrun
+  reporting. Enable `embedded-io` for blocking reads or `midly` for decoded events.
+- Add opt-in battery sampling to both panel scanners. `battery_low()` reports
+  the low-battery warning with hysteresis.
+- Add `Power` to read the 5 V detector and on-chip charger flags, inspect the
+  boot reset cause, reboot normally and control the hardware watchdog.
 - Add opt-in `flash-storage` support for saving and restoring two small
   application records. The `flash-store` example initializes its reserved
   sectors with a default synth patch and MIDI phrase and restores saved
@@ -18,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `storage::cpu1_checkpoint` so a running worker can cooperate with
   CPU0 flash operations between jobs. The `flash-store-cpu1` example
   checks timeout, patch readback and worker resumption.
+
+### Fixed
+
+- Return through the link register on an idle CPU1 flash checkpoint. This
+  avoids reloading the return address from SRAM on units prone to read errors.
 
 ## 0.2.0 (2026-11-24)
 
