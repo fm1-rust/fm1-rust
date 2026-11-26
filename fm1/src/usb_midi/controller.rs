@@ -16,6 +16,10 @@ const EP1_CNT: usize = 0x1180c;
 const EP0_ADR: usize = 0x11818;
 const EP1_TX: usize = 0x1181c;
 const EP1_RX: usize = 0x11820;
+#[cfg(feature = "usb-audio-capture")]
+const EP4_CNT: usize = 0x11834;
+#[cfg(feature = "usb-audio-capture")]
+const EP4_TX: usize = 0x11838;
 const IO: usize = 0x51000;
 const CLOCK: usize = 0x10010;
 
@@ -40,6 +44,13 @@ const TX_MAX: u8 = 16;
 const RX_MAX: u8 = 19;
 pub(super) const COUNT: u8 = 22;
 pub(super) const MAX_PACKET: usize = 64;
+#[cfg(feature = "usb-audio-capture")]
+static mut AUDIO_TX: Buffer<192> = Buffer([0; 192]);
+
+#[cfg(feature = "usb-audio-capture")]
+pub(super) fn capture_address() -> *mut u8 {
+    (&raw mut AUDIO_TX).cast()
+}
 // Capacity of each normal USB0 receive destination, independent of the MIDI
 // payload size. At RX_MAX=0xff the black FM-1 changed EP1 offsets 0..=65 for
 // a legal transfer and reached offset 1023 under the oversized-packet probe.
@@ -300,6 +311,50 @@ pub(super) fn configure(enabled: bool) -> Result<()> {
     wr(RX_ENABLE, 2)?;
     clear(CON0, 1 << 20);
     Ok(())
+}
+
+#[cfg(feature = "usb-audio-capture")]
+pub(super) fn configure_capture(active: bool, midi_configured: bool) -> Result<()> {
+    let midi_irqs = if midi_configured { 3 } else { 1 };
+    // Gate EP4 before touching its bank. Keep the separate guarded RX address
+    // installed by attach(). There is no audio OUT interface or RX interrupt.
+    set(CON0, 1 << 23);
+    wr(TX_ENABLE, midi_irqs)?;
+    wr(INDEX, 4)?;
+    wr(TXCSR, 0x48)?; // Flush the last stream's packet.
+    wr(TXCSR + 1, 0)?;
+    wr(TXCSR, 0)?;
+    if active {
+        write(EP4_TX, bus_address(capture_address()));
+        wr(TX_MAX, 0xff)?;
+        wr(TXCSR + 1, 0x40)?; // Isochronous IN.
+        wr(TX_ENABLE, midi_irqs | 0x10)?;
+        clear(CON0, 1 << 23);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "usb-audio-capture")]
+pub(super) fn service_capture(
+    stream: &mut super::capture::Stream,
+    buffers: &mut Buffers,
+    now: u32,
+) -> Result<()> {
+    wr(INDEX, 4)?;
+    if rd(TXCSR)? & 1 != 0 {
+        return Ok(());
+    }
+    let mut data = [0; super::capture::MAX_BYTES];
+    let n = stream.packet(now, &mut data);
+    let Buffers::Copied(engine) = buffers else {
+        unreachable!("capture uses copied DMA")
+    };
+    engine.publish_capture(&data);
+    sync_tx();
+    write(EP4_CNT, u32::from(n));
+    sync_tx();
+    // Set TXPKTRDY and clear a previous isochronous underrun indication.
+    wr(TXCSR, 1)
 }
 
 // Keep this transaction out of line. A powered FM-1 without a data host can

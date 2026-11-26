@@ -12,8 +12,12 @@
 mod asynchronous;
 #[cfg(feature = "async-usb")]
 pub use asynchronous::on_usb0_interrupt;
+#[cfg(feature = "usb-audio-capture")]
+mod capture;
 mod control;
 mod controller;
+#[cfg(feature = "usb-audio-capture")]
+pub use capture::{CaptureBuffer, CaptureWriter};
 #[cfg(feature = "usb-midi-copy")]
 mod copied;
 mod status;
@@ -196,6 +200,33 @@ impl UsbPort {
         unsafe { MidiDevice::detached(self, identity, controller::Buffers::Copied(engine)) }
     }
 
+    /// Start USB MIDI and a class-compliant 44.1 kHz, 16-bit stereo audio input.
+    /// Give the writer to the audio producer and service the device after each USB0
+    /// interrupt (or poll faster than once per millisecond while capturing).
+    ///
+    /// # Safety
+    /// Uphold the board and DMA contract of [`Self::into_midi_with_dma_copy`].
+    /// In addition, EP4 IN must only read its dedicated permanent 192-byte
+    /// allocation. The copy engine must also honor and retire 184-byte jobs.
+    /// These obligations cover reset, suspend, detach and bootloader handoff.
+    /// EP4 OUT is never advertised and its DMA address stays in the guarded RX arena.
+    ///
+    /// # Panics
+    /// Has the same startup and bus fault behavior as [`Self::into_midi_with_dma_copy`].
+    #[cfg(feature = "usb-audio-capture")]
+    #[must_use]
+    pub unsafe fn into_midi_with_audio_capture(
+        self,
+        identity: Identity,
+        buffer: &'static mut CaptureBuffer,
+    ) -> (MidiDevice, CaptureWriter) {
+        // SAFETY: the caller supplies the copied-MIDI contract and EP4 read bounds.
+        let mut device = unsafe { self.into_midi_with_dma_copy(identity) };
+        let (writer, stream) = buffer.split();
+        device.capture = Some(stream);
+        (device, writer)
+    }
+
     /// Qualify normal MIDI for a controlled bench setup. This only moves the
     /// owned port. The resulting [`QualifiedMidiPort`] can start USB later.
     ///
@@ -311,6 +342,8 @@ impl MidiDevice {
             status: UsbStatus::default(),
             wait: Some((cycles(), Timers::CRYSTAL_HZ / 40)),
             control: Control::new(),
+            #[cfg(feature = "usb-audio-capture")]
+            capture: None,
             interface: Interface::default(),
             address: None,
             epoch: 0,
@@ -337,6 +370,8 @@ pub struct MidiDevice {
     status: UsbStatus,
     wait: Option<(u32, u32)>,
     control: Control,
+    #[cfg(feature = "usb-audio-capture")]
+    capture: Option<capture::Stream>,
     interface: Interface,
     address: Option<u8>,
     epoch: u32,
@@ -473,6 +508,10 @@ impl MidiDevice {
     }
 
     fn bus_reset(&mut self) {
+        #[cfg(feature = "usb-audio-capture")]
+        if let Some(s) = &mut self.capture {
+            s.select(false);
+        }
         #[cfg(feature = "usb-dma-probe")]
         if let Some(p) = &mut self.probe {
             p.reset();
@@ -568,10 +607,25 @@ impl MidiDevice {
             controller::discard_rx()?;
             self.rx_pending = false;
         }
+        #[cfg(feature = "usb-audio-capture")]
+        if !self.suspended
+            && let Some(s) = &mut self.capture
+            && s.selected
+        {
+            controller::service_capture(s, &mut self.buffers, now)?;
+        }
         Ok(())
     }
 
     fn suspend(&mut self, suspended: bool) -> controller::Result<()> {
+        #[cfg(feature = "usb-audio-capture")]
+        if self.suspended != suspended
+            && let Some(s) = &mut self.capture
+            && s.selected
+        {
+            s.restart(!suspended);
+            controller::configure_capture(!suspended, self.interface.configured)?;
+        }
         if suspended && !self.suspended {
             #[cfg(feature = "usb-dma-probe")]
             if let Some(p) = &mut self.probe {
@@ -603,6 +657,13 @@ impl MidiDevice {
             {
                 return reply;
             }
+        }
+        #[cfg(feature = "usb-audio-capture")]
+        if let Some(stream) = &self.capture
+            && let Some(reply) =
+                stream.request(&mut self.control, &self.identity, self.interface, setup)
+        {
+            return reply;
         }
         self.control.request(&self.identity, self.interface, setup)
     }
@@ -679,6 +740,11 @@ impl MidiDevice {
                     enabled
                 };
                 controller::configure(enabled)?;
+                #[cfg(feature = "usb-audio-capture")]
+                if let Some(s) = &mut self.capture {
+                    s.select(false);
+                    controller::configure_capture(false, enabled)?;
+                }
                 self.interface = Interface {
                     configured,
                     ..Interface::default()
@@ -719,6 +785,13 @@ impl MidiDevice {
                 self.interface.out_halted = false;
                 wr(INDEX, 0)?;
             }
+            #[cfg(feature = "usb-audio-capture")]
+            Reply::CaptureAlternate(active) => {
+                let stream = self.capture.as_mut().expect("capture descriptor selected");
+                stream.select(active);
+                controller::configure_capture(active, self.interface.configured)?;
+                wr(INDEX, 0)?;
+            }
             Reply::Halt { input, halted } => {
                 #[cfg(feature = "usb-dma-probe")]
                 if let Some(p) = &mut self.probe {
@@ -755,6 +828,10 @@ impl MidiDevice {
 
 impl Drop for MidiDevice {
     fn drop(&mut self) {
+        #[cfg(feature = "usb-audio-capture")]
+        if let Some(s) = &mut self.capture {
+            s.select(false);
+        }
         // Disabling USB0 requests detach. The activation contract also
         // covers outstanding writes before a later owner can reuse the buffers.
         controller::detach();
