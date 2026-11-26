@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
         &bin,
         &out,
         "libfm1_rt.a",
-        &["crt0.S", "shim.c", "trs_midi.c"],
+        &["crt0.S", "shim.c", "trs_midi.c", "cpu1_hold.c"],
     )?;
     if env::var_os("CARGO_FEATURE_FLASH_STORAGE").is_some() {
         archive(&bin, &out, "libfm1_storage.a", &["storage.c"])?;

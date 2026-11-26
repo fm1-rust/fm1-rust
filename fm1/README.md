@@ -39,7 +39,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
-| `board.take_power()` | Read the P33 external 5 V detector and internal charger flags. For battery level, enable PB1 sampling on either panel scanner. |
+| `board.take_power()` | Read the 5 V detector, charger and boot reset flags. Arm or feed the watchdog and reboot the instrument. For battery level, enable PB1 sampling on either panel scanner. |
 | `board.take_trs_midi()` | Receive raw MIDI bytes from the TRS input. Optional features provide a `midly` event adapter and blocking `embedded-io` reads. |
 | `board.take_storage()` | With `flash-storage`, save and restore two independent byte records of up to 3,584 bytes each. |
 | `board.take_usb()` | Acquire the idle port. Use `try_into_midi(identity)` when USB is optional or `into_midi(identity)` when startup failure should panic. |
@@ -163,7 +163,7 @@ charger enable and charge-full flag. `status.is_charging()` reports the
 on-chip charger's indication. In one black FM-1 test the flags read clear and
 cycling USB produced no visible change. A separate board-level charger can
 operate independently of P33. A busy or timed-out P33 read returns an error.
-The driver only reads the power-management registers.
+Sampling supply status only reads the power-management registers.
 
 Build `./fm1/scripts/build-example.sh rticx-battery` for the LCD diagnostic.
 It shows **BATTERY OK** or **LOW BATTERY** above the live ADC value. Hold HOME
@@ -176,6 +176,26 @@ flags, MASTER and the lowest F key. Press PLAY to enter download mode.
 [P33 read protocol](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/chip/fm1_sys.h) ·
 [AC79 SDK charger flags](https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK/blob/d179b4484759423312073f5fbb232501aa491047/include_lib/driver/cpu/wl82/asm/p33.h#L664-L700) ·
 [fm1-base charging indication](https://github.com/charlesvestal/fm1-base/blob/8820d6f4909e6fcd1f5d068f32598af077c27cf4/device/plat_fm1.c#L64-L75)
+
+### Reset and watchdog
+
+`power.reset_cause()` returns the raw system reset flags and the P33 flags
+captured at board startup. `power_on()`, `watchdog()` and `software()` decode them. If P33
+could not be read, its flags are unavailable and the system flags are still
+reported. `power.reboot()` restarts the installed firmware. PLAY can still
+request the bootloader through `fm1::enter_download_mode()`.
+
+Call `power.arm_watchdog(WatchdogTimeout::Sec2)` to allow two seconds between
+feeds. A WaveGraph-style supervisor can feed after CPU0 receives a completed
+CPU1 render job. Allow for intentional worker parking when saving to flash.
+Dropping `Power` leaves the watchdog running. Call `disarm_watchdog()` to stop it.
+
+Build `./fm1/scripts/build-example.sh watchdog` for the two-core diagnostic.
+Press and release SAVE for a normal reboot. REC feeds for longer than one
+watchdog period, then stalls CPU1 while CPU0 continues. The next boot shows
+the reset flags. PLAY returns to download mode. The test starts only on REC.
+
+[Felucca's watchdog and reset sequence](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/chip/fm1_sys.h#L156-L223)
 
 ### Flash storage
 

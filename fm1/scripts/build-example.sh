@@ -9,6 +9,7 @@ case "$example" in
     blink|display) set -- ;;
     flash-store) set -- --features flash-storage,embedded-graphics ;;
     flash-store-cpu1) set -- --features flash-storage,embedded-graphics,cpu1-probe ;;
+    watchdog) set -- --features embedded-graphics,cpu1-probe ;;
     cpu1-probe) set -- --features cpu1-probe ;;
     graphics) set -- --features embedded-graphics ;;
     tone) set -- --features audio ;;
@@ -58,9 +59,9 @@ export RUSTFLAGS="-C link-arg=-Tfm1.ld"
 case "$example" in
     flash-store*) RUSTFLAGS="$RUSTFLAGS -C link-arg=-Tfm1-storage.x -C link-arg=--emit-relocs" ;;
 esac
-if [ "$example" = flash-store-cpu1 ]; then
-    RUSTFLAGS="$RUSTFLAGS -C llvm-args=-pi32v2-large-program=true"
-fi
+case "$example" in
+    flash-store-cpu1|watchdog) RUSTFLAGS="$RUSTFLAGS -C llvm-args=-pi32v2-large-program=true" ;;
+esac
 cargo build --locked -p "$package" --manifest-path "$root/../Cargo.toml" --profile firmware --example "$example" \
     --target "$root/targets/pi32v2-none.json" --target-dir "$target" \
     -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec "$@"
