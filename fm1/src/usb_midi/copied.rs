@@ -14,6 +14,11 @@ const ERROR: u32 = 1 << 5;
 // Payload copies always cover a full packet and its wire CRC.
 pub(super) const BLOCK: usize = 68;
 const GUARD_BYTES: usize = size_of_val(&hw::RX_GUARD);
+#[cfg(feature = "usb-audio-capture")]
+const STAGE_BYTES: usize = super::capture::MAX_BYTES;
+#[cfg(not(feature = "usb-audio-capture"))]
+const STAGE_BYTES: usize = BLOCK;
+const _: () = assert!(STAGE_BYTES >= BLOCK);
 const GUARD: [u8; BLOCK] = {
     let mut g = [0; BLOCK];
     let mut i = 0;
@@ -29,7 +34,7 @@ const GUARD: [u8; BLOCK] = {
 #[repr(C, align(32))]
 struct Aligned<T>(T);
 // USB0 is never given either private address. Both outlive a failed job.
-static mut STAGE: Aligned<[u8; BLOCK]> = Aligned([0; BLOCK]);
+static mut STAGE: Aligned<[u8; STAGE_BYTES]> = Aligned([0; STAGE_BYTES]);
 static mut TASK: Aligned<[u32; 8]> = Aligned([0; 8]);
 static POISONED: AtomicBool = AtomicBool::new(false);
 static SEEDED: AtomicBool = AtomicBool::new(false);
@@ -37,6 +42,8 @@ static SEEDED: AtomicBool = AtomicBool::new(false);
 #[derive(Clone, Copy)]
 enum Area {
     Endpoint(Endpoint),
+    #[cfg(feature = "usb-audio-capture")]
+    Capture,
     ControlGuard,
     OutGuard,
 }
@@ -44,6 +51,8 @@ impl Area {
     fn count(self) -> u32 {
         let n = match self {
             Self::Endpoint(_) => BLOCK,
+            #[cfg(feature = "usb-audio-capture")]
+            Self::Capture => super::capture::MAX_BYTES,
             Self::ControlGuard | Self::OutGuard => GUARD_BYTES,
         };
         u32::try_from(n).expect("fixed hardware bounds")
@@ -51,6 +60,8 @@ impl Area {
     fn ptr(self) -> *mut u8 {
         match self {
             Self::Endpoint(e) => e.address(),
+            #[cfg(feature = "usb-audio-capture")]
+            Self::Capture => hw::capture_address(),
             // Both arena pointers have allocation-wide provenance. The layout
             // reserves 16 accessible bytes from offset 2048 in both normal
             // and stress builds. The mode latch excludes direct users.
@@ -194,6 +205,19 @@ impl Engine {
         let mut packet = [0; BLOCK];
         packet[..bytes.len()].copy_from_slice(bytes);
         self.store(Area::Endpoint(ep), packet);
+    }
+
+    #[cfg(feature = "usb-audio-capture")]
+    pub(super) fn publish_capture(&mut self, bytes: &[u8; super::capture::MAX_BYTES]) {
+        self.idle();
+        // SAFETY: STAGE is private, aligned and sized for the entire audio
+        // packet. The preceding job has retired before the CPU writes here.
+        unsafe {
+            (&raw mut STAGE)
+                .cast::<[u8; super::capture::MAX_BYTES]>()
+                .write_volatile(*bytes)
+        };
+        self.copy(Area::Capture, true);
     }
 
     // A USB writer may overwrite a packet during the bus copy. Treat the

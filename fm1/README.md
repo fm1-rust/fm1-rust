@@ -88,6 +88,26 @@ trailing SRAM guards during service and every 100 ms while waiting for an IRQ.
 An intact guard keeps that wait pending. A changed guard or an observed
 oversized normal packet count detaches USB0 and invokes the panic handler.
 
+### Stereo USB audio capture
+
+The `usb-audio-capture` feature adds a UAC1 audio input alongside the normal
+USB MIDI bulk endpoints. On qualified hardware, pass static `CaptureBuffer`
+storage to `UsbPort::into_midi_with_audio_capture`. Use the returned MIDI
+device normally and give the `CaptureWriter` to the renderer. Its
+`write_q23` method accepts interleaved left/right frames and never waits for
+USB. The host receives signed little-endian 16-bit PCM at nominal 44.1 kHz.
+
+USB0 uses EP4 IN for one isochronous packet per millisecond. Service USB0
+interrupts promptly or poll faster than 1 kHz. The 384-frame CPU FIFO absorbs
+DAC blocks. Packet sizes follow the FM-1 clock and adjust with FIFO occupancy
+for drift between the FM-1 and host. Opening, closing or resuming the stream
+discards stale audio. Hardware DMA reads a separate permanent TX buffer.
+The constructor documents the extra EP4 and copy-engine requirements.
+
+On the tested black board revision, the `usb-audio` example plays a 441 Hz
+tone on the left and an 882 Hz tone on the right through headphones and USB.
+Select **FM-1 Stereo Test** as a recording input. Press PLAY for download mode.
+
 ### TRS MIDI input
 
 Claim `board.take_trs_midi()` before moving board fields into tasks. UART1

@@ -22,11 +22,47 @@ const CONFIG: [u8; 101] = [
     5, 0x25, 1, 1, 3,                         // Cable 0 from jack 3
 ];
 
+#[cfg(feature = "usb-audio-capture")]
+#[rustfmt::skip]
+const CAPTURE_PREFIX: &[u8] = &[
+    9, 2, 0, 0, 3, 1, 0, 0x80, 50,       // Total length filled below.
+    9, 4, 0, 0, 0, 1, 1, 0, 0,           // AudioControl IF 0.
+    10, 0x24, 1, 0, 1, 31, 0, 2, 1, 2,  // Collection: AudioStreaming, MIDIStreaming.
+    12, 0x24, 2, 1, 3, 6, 0, 2, 3, 0, 0, 0, // Stereo line source, L/R.
+    9, 0x24, 3, 2, 1, 1, 0, 1, 0,         // USB streaming terminal, from source 1.
+    9, 4, 1, 0, 0, 1, 2, 0, 0,           // AS alt 0: no bandwidth.
+    9, 4, 1, 1, 1, 1, 2, 0, 0,           // AS alt 1: capture.
+    7, 0x24, 1, 2, 1, 1, 0,              // PCM from terminal 2.
+    11, 0x24, 2, 1, 2, 2, 16, 1, 0x44, 0xac, 0, // One fixed rate, 44,100 Hz.
+    9, 5, 0x84, 5, super::capture::MAX_BYTES.to_le_bytes()[0], 0, 1, 0, 0, // Asynchronous IN, 1 ms.
+    7, 0x25, 1, 0, 0, 0, 0,               // Fixed clock, no frequency control.
+];
+
+#[cfg(feature = "usb-audio-capture")]
+pub(super) const CAPTURE_CONFIG: [u8; CAPTURE_PREFIX.len() + CONFIG.len() - 27] = {
+    // The last 74 bytes of CONFIG are the complete MIDIStreaming interface.
+    let mut bytes = [0; CAPTURE_PREFIX.len() + CONFIG.len() - 27];
+    let (audio, midi) = bytes.split_at_mut(CAPTURE_PREFIX.len());
+    audio.copy_from_slice(CAPTURE_PREFIX);
+    midi.copy_from_slice(CONFIG.split_at(27).1);
+    midi[2] = 2;
+    assert!(bytes.len() <= 255);
+    bytes[2] = bytes.len().to_le_bytes()[0];
+    bytes
+};
+
+#[cfg(feature = "usb-audio-capture")]
+const RESPONSE_BYTES: usize = CAPTURE_CONFIG.len();
+#[cfg(not(feature = "usb-audio-capture"))]
+const RESPONSE_BYTES: usize = CONFIG.len();
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Reply {
     Data(usize),
     Address(u8),
     Configure(bool),
+    #[cfg(feature = "usb-audio-capture")]
+    CaptureAlternate(bool),
     #[cfg(feature = "usb-dma-probe")]
     Alternate(u8),
     #[cfg(feature = "usb-dma-probe")]
@@ -58,7 +94,7 @@ pub(super) struct Interface {
 
 #[derive(Debug)]
 pub(super) struct Control {
-    bytes: [u8; CONFIG.len()],
+    bytes: [u8; RESPONSE_BYTES],
     offset: usize,
     end: usize,
     zlp: bool,
@@ -68,7 +104,7 @@ pub(super) struct Control {
 impl Control {
     pub(super) fn new() -> Self {
         Self {
-            bytes: [0; CONFIG.len()],
+            bytes: [0; RESPONSE_BYTES],
             offset: 0,
             end: 0,
             zlp: false,

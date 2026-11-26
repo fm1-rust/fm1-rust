@@ -34,6 +34,18 @@ const DATA: u32 = 1 << 6;
 
 static mut DMA: [Block; 2] = [[[0; 2]; BLOCK_FRAMES]; 2];
 
+// A 128-frame stereo stream needs 2 KiB for both halves. Capture firmware
+// which only instantiates this size can discard the 4 KiB general buffer at
+// link time. Other sizes still get the full allocation.
+fn dma<const N: usize>() -> *mut Block<N> {
+    #[cfg(feature = "usb-audio-capture")]
+    if N == 128 {
+        static mut SHORT: [Block<128>; 2] = [[[0; 2]; 128]; 2];
+        return (&raw mut SHORT).cast();
+    }
+    (&raw mut DMA).cast()
+}
+
 #[cfg(not(test))]
 fn read16(addr: usize) -> u16 {
     // SAFETY: the driver reads the aligned, halfword-readable ALNK0 CON0 register.
@@ -141,7 +153,7 @@ impl AudioPort {
             return Err(StartError::Clock);
         }
         // The port exclusively owns ALNK0 and its DMA storage.
-        let dma = (&raw mut DMA).cast::<i32>();
+        let dma = dma::<N>().cast::<i32>();
         for i in 0..const { N * 4 } {
             // SAFETY: DMA is stopped and this port exclusively owns the static array.
             unsafe { dma.add(i).write_volatile(0) };
@@ -287,12 +299,7 @@ impl<const N: usize> Stream<'_, N> {
         // SAFETY: the port exclusively owns the array; its two fixed-size halves are
         // in SRAM for the life of the program. DMA only reads it. CPU writes are
         // full, aligned volatile sample words, including when firmware misses a deadline.
-        let dst = unsafe {
-            (&raw mut DMA)
-                .cast::<Block<N>>()
-                .add(free)
-                .cast::<[i32; 2]>()
-        };
+        let dst = unsafe { dma::<N>().add(free).cast::<[i32; 2]>() };
         for (i, frame) in input.iter().enumerate() {
             for (ch, sample) in frame.iter().enumerate() {
                 // SAFETY: i < N and ch < 2 select an aligned sample in the chosen half.
@@ -342,20 +349,23 @@ mod tests {
         assert_eq!(stream.try_write(&block), Refill::WouldBlock);
         registers::write(STATUS, 0x80);
         assert_eq!(stream.try_write(&block), Refill::Written);
-        let read_frame = |i: usize| {
-            assert!(i < 2 * BLOCK_FRAMES);
+        fn read_frame<const N: usize>(i: usize) -> [i32; 2] {
+            assert!(i < 2 * N);
             // SAFETY: i is in the initialized array. This test owns the audio port,
             // the mock never reads SRAM, and CPU refills finish before these reads.
-            unsafe { (&raw const DMA).cast::<[i32; 2]>().add(i).read_volatile() }
-        };
+            unsafe { dma::<N>().cast::<[i32; 2]>().add(i).read_volatile() }
+        }
         for i in 0..BLOCK_FRAMES {
-            assert_eq!(read_frame(i), [0; 2]);
-            assert_eq!(read_frame(BLOCK_FRAMES + i), [-8_388_608, 8_388_607]);
+            assert_eq!(read_frame::<BLOCK_FRAMES>(i), [0; 2]);
+            assert_eq!(
+                read_frame::<BLOCK_FRAMES>(BLOCK_FRAMES + i),
+                [-8_388_608, 8_388_607]
+            );
         }
         drop(stream);
         assert_eq!(read16(CON0) & RUN, 0);
         assert_eq!(registers::read(PC + OUT) & DATA, 0);
-        // A shorter stream packs both halves into the beginning of the same SRAM.
+        // A shorter stream packs both halves consecutively into its SRAM.
         let mut short = audio.start_with_frames::<128>().expect("restart at 128");
         assert_eq!(read16(LEN), 256);
         let block = [[17, -42]; 128];
@@ -371,9 +381,9 @@ mod tests {
         assert!(!called);
         registers::write(STATUS, 0x80);
         assert_eq!(short.try_write(&block), Refill::Written);
-        assert_eq!(read_frame(127), [0; 2]);
-        assert_eq!(read_frame(128), [17, -42]);
-        assert_eq!(read_frame(255), [17, -42]);
+        assert_eq!(read_frame::<128>(127), [0; 2]);
+        assert_eq!(read_frame::<128>(128), [17, -42]);
+        assert_eq!(read_frame::<128>(255), [17, -42]);
         registers::write(STATUS, 0x80);
         let late = short.try_write_with(|| {
             // Another half finished during rendering, even if parity now looks the same.
@@ -382,10 +392,10 @@ mod tests {
         });
         assert_eq!(late, Refill::Late);
         // No stale write, and the new event is still available to the next call.
-        assert_eq!(read_frame(128), [17, -42]);
+        assert_eq!(read_frame::<128>(128), [17, -42]);
         write16(CON0, read16(CON0) | (1 << 15));
         assert_eq!(short.try_write(&block), Refill::Written);
-        assert_eq!(read_frame(0), [17, -42]);
+        assert_eq!(read_frame::<128>(0), [17, -42]);
         drop(short);
 
         let mut stream = audio.start_with_frames::<144>().expect("restart at 144");
@@ -397,7 +407,7 @@ mod tests {
             &[[1, 1]; 144]
         });
         assert_eq!(late, Refill::Late);
-        assert_eq!(read_frame(144), [0; 2]);
+        assert_eq!(read_frame::<144>(144), [0; 2]);
         drop(stream);
 
         check_timed_refills(audio.start().expect("restart with the default half"));

@@ -25,6 +25,9 @@ oxstack-gfx = { version = "0.2.1", optional = true }
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
 
+[dev-dependencies]
+static_cell = "2.1.1"
+
 [features]
 async-display = ["dep:critical-section", "dep:embedded-hal-async"]
 async-usb = ["dep:critical-section", "dep:embedded-hal-async"]
@@ -33,6 +36,7 @@ cpu1-probe = []
 flash-storage = []
 embedded-graphics = ["dep:embedded-graphics", "dep:mipidsi", "dep:oxstack-gfx"]
 usb-log = ["dep:heapless"]
+usb-audio-capture = ["usb-midi-copy"]
 usb-dma-probe = []
 usb-midi-copy = []
 usb-dma-stress = ["usb-dma-probe"]
@@ -49,6 +53,10 @@ required-features = ["flash-storage", "embedded-graphics", "cpu1-probe"]
 [[example]]
 name = "usb-window"
 required-features = ["usb-window-probe", "embedded-graphics"]
+
+[[example]]
+name = "usb-audio"
+required-features = ["audio", "usb-audio-capture"]
 
 [[example]]
 name = "cpu1-probe"
