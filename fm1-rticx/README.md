@@ -25,6 +25,7 @@ set, run the example builds from the workspace root.
 ./fm1/scripts/build-example.sh rticx-tone
 ./fm1/scripts/build-example.sh rticx-cpu1-audio
 ./fm1/scripts/build-example.sh rticx-controls
+./fm1/scripts/build-example.sh rticx-battery
 ./fm1/scripts/build-example.sh rticx-piano
 ./fm1/scripts/build-example.sh rticx-waveform
 ./fm1/scripts/build-example.sh rticx-timing

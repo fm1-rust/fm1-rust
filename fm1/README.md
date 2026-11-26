@@ -39,6 +39,7 @@ entry path.
 | `board.timers` | TIMER4 provides a 24 MHz cycle counter and `DelayNs`. TIMER5 counts 10 ms ticks. `take_alarm()` hands out the independent TIMER2 countdown once. |
 | `board.display.init()` | Initialize the 240 × 240 ST7789 LCD. `write_rect` sends big-endian RGB565 pixels by DMA. `write_rect_buffered` lets drawing overlap the last transfer, `flush` waits for it, and `fill_rect` repeats a solid color from SRAM. |
 | `board.headphones` | Read the raw PB5 jack switch with `is_inserted()` or `InputPin`. |
+| `board.take_power()` | Read the P33 external 5 V detector and internal charger flags. For battery level, enable PB1 sampling on either panel scanner. |
 | `board.take_storage()` | With `flash-storage`, save and restore two independent byte records of up to 3,584 bytes each. |
 | `board.take_usb()` | Acquire the idle port. Use `try_into_midi(identity)` when USB is optional or `into_midi(identity)` when startup failure should panic. |
 | `board.audio.start()` | With the `audio` feature, stream signed Q23 stereo samples to the DAC through ALNK0. Use `into_stream()` to move ownership into an interrupt task. Dropping the stream stops DMA. |
@@ -85,6 +86,42 @@ The task can also wake on locally produced output. The driver checks the two
 trailing SRAM guards during service and every 100 ms while waiting for an IRQ.
 An intact guard keeps that wait pending. A changed guard or an observed
 oversized normal packet count detaches USB0 and invokes the panic handler.
+
+### Battery and charging
+
+Call `enable_battery()` on `Controls` or `TouchControls`, then read
+`scan.battery_raw()` from completed sweeps. The scanner samples the battery
+divider on PB1 (SARADC channel 3) about every 100 ms. A successful sample is
+an uncalibrated count from 0 to 1023. `None` means no result yet or the latest
+conversion timed out. The touch scanner uses a lamp-only slot and the digital
+scanner borrows one column interval between MASTER conversions.
+
+Use `scan.battery_low() == Some(true)` to display **LOW BATTERY**. The warning
+starts at the last bar of the FM-1 gauge. Its nominal two-bar boundary is 561
+counts. Once a state is known, three consecutive readings below 557 assert the
+warning and three at or above 565 clear it. A missed sample breaks the run and
+leaves a confirmed warning on. A healthy reading becomes unknown after a timeout.
+The warning works with the USB stack detached and requires no P33 reads.
+
+Claim `board.take_power()` before moving the panel into its task. From a
+low-priority task, call `power.supply_status()` to read the P33 5 V detector,
+charger enable and charge-full flag. `status.is_charging()` reports the
+on-chip charger's indication. In one black FM-1 test the flags read clear and
+cycling USB produced no visible change. A separate board-level charger can
+operate independently of P33. A busy or timed-out P33 read returns an error.
+The driver only reads the power-management registers.
+
+Build `./fm1/scripts/build-example.sh rticx-battery` for the LCD diagnostic.
+It shows **BATTERY OK** or **LOW BATTERY** above the live ADC value. Hold HOME
+to preview the warning, then release it to see the live status again. A real
+warning takes priority over the preview. The other rows show the chip's power
+flags, MASTER and the lowest F key. Press PLAY to enter download mode.
+
+[FM-1 battery divider](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/boards/fm1/fm1_adc.h) ·
+[fm1-base gauge thresholds](https://github.com/charlesvestal/fm1-base/blob/8820d6f4909e6fcd1f5d068f32598af077c27cf4/device/plat_fm1.c#L45-L63) ·
+[P33 read protocol](https://github.com/hugelton/felucca-bsp/blob/fc4284018dc845895081c8f8e740cc207cf4b584/chip/fm1_sys.h) ·
+[AC79 SDK charger flags](https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK/blob/d179b4484759423312073f5fbb232501aa491047/include_lib/driver/cpu/wl82/asm/p33.h#L664-L700) ·
+[fm1-base charging indication](https://github.com/charlesvestal/fm1-base/blob/8820d6f4909e6fcd1f5d068f32598af077c27cf4/device/plat_fm1.c#L64-L75)
 
 ### Flash storage
 

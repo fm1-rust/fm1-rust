@@ -254,9 +254,31 @@ pub struct Scan {
     pub(super) changed: [u8; 11],
     pub(super) detents: [i8; 7],
     pub(super) master: Option<MasterLevel>,
+    pub(super) battery_raw: Option<u16>,
+    pub(super) battery_low: Option<bool>,
     pub(super) master_changed: bool,
 }
 impl Scan {
+    /// Latest 10-bit PB1 battery-divider sample. Returns `None` before sampling
+    /// is enabled, before the first result, or if the latest conversion missed
+    /// its slot. Zero is a valid reading. Values are uncalibrated ADC counts.
+    #[must_use]
+    pub const fn battery_raw(&self) -> Option<u16> {
+        self.battery_raw
+    }
+
+    /// Low-battery warning from the PB1 divider. Three consecutive samples
+    /// below 561 counts indicate low at startup. Once established, the warning
+    /// turns on below 557 and clears at 565 or above, each for three samples.
+    /// External power and charger flags have no part in this decision.
+    ///
+    /// Returns `None` until a state is confirmed or if sampling a healthy
+    /// battery times out. A confirmed warning survives missing samples.
+    #[must_use]
+    pub const fn battery_low(&self) -> Option<bool> {
+        self.battery_low
+    }
+
     /// Current debounced switch level. Several switches can be held together.
     #[must_use]
     pub fn is_down(&self, switch: impl Into<Switch>) -> bool {

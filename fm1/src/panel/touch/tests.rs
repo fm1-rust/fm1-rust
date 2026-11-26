@@ -63,6 +63,10 @@ fn sweep(
                         1023
                     }
                 }
+                3 => {
+                    assert_eq!((controls.phase, column), (3, 0));
+                    602
+                }
                 4 => 789,
                 _ => unreachable!("unexpected SARADC channel"),
             };
@@ -81,6 +85,7 @@ fn sweep(
 #[test]
 fn chord_edges_match_velocity_and_only_the_leaning_key_reports_pressure() {
     let mut controls = Play::init().into_touch_controls();
+    controls.enable_battery();
     let mut keys = [None; 27];
     let a = PianoKey::new(2).expect("G3");
     let b = PianoKey::new(14).expect("G4");
@@ -105,6 +110,7 @@ fn chord_edges_match_velocity_and_only_the_leaning_key_reports_pressure() {
         assert!(touch.pressure_changes().next().is_none());
         assert!(scan.is_down(Button::Home));
         assert_eq!(scan.master().map(MasterLevel::raw), Some(789));
+        assert_eq!(scan.battery_raw(), Some(602));
     }
     assert_eq!(presses, [1, 1, 1]);
     keys[2] = Some(550);
