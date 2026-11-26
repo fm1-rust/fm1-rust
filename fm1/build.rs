@@ -50,7 +50,12 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
         env::var_os("PI32V2_BIN").ok_or("set PI32V2_BIN to the pi32v2 LLVM bin directory")?,
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo did not set OUT_DIR")?);
-    archive(&bin, &out, "libfm1_rt.a", &["crt0.S", "shim.c"])?;
+    archive(
+        &bin,
+        &out,
+        "libfm1_rt.a",
+        &["crt0.S", "shim.c", "trs_midi.c"],
+    )?;
     if env::var_os("CARGO_FEATURE_FLASH_STORAGE").is_some() {
         archive(&bin, &out, "libfm1_storage.a", &["storage.c"])?;
         fs::copy("runtime/fm1-storage.x", out.join("fm1-storage.x"))?;

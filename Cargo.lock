@@ -435,6 +435,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-hal-nb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fba4268c14288c828995299e59b12babdbe170f6c6d73731af1b4648142e8605"
+dependencies = [
+ "embedded-hal",
+ "nb",
+]
+
+[[package]]
+name = "embedded-io"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
+
+[[package]]
 name = "errno"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,7 +489,10 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal",
  "embedded-hal-async",
+ "embedded-hal-nb",
+ "embedded-io",
  "heapless 0.9.4",
+ "midly",
  "mipidsi",
  "oxstack-gfx",
 ]
@@ -908,6 +927,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "midly"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "207d755f4cb882d20c4da58d707ca9130a0c9bc5061f657a4f299b8e36362b7a"
+
+[[package]]
 name = "mipidsi"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -933,6 +958,12 @@ dependencies = [
  "nanoaudio-core",
  "wide",
 ]
+
+[[package]]
+name = "nb"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
 name = "ndk-context"

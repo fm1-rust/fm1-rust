@@ -10,12 +10,15 @@ categories = ["embedded", "hardware-support", "no-std"]
 
 [dependencies]
 embedded-hal = "1"
+embedded-hal-nb = "1"
 
 # optional dependencies
 critical-section = { version = "1", optional = true }
 embedded-graphics = { version = "0.8.2", optional = true }
 embedded-hal-async = { version = "1", optional = true }
+embedded-io = { version = "0.7", optional = true }
 heapless = { version = "0.9.4", optional = true }
+midly = { version = "0.5.3", default-features = false, optional = true }
 mipidsi = { version = "0.10", optional = true }
 oxstack-gfx = { version = "0.2.1", optional = true }
 
