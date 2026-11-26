@@ -90,6 +90,8 @@ impl Board {
     }
 
     fn init() -> Self {
+        #[cfg(fm1)]
+        power::snapshot_reset_cause();
         let panel = panel::Play::init();
         let timers = time::Timers::start();
         Self {
@@ -165,26 +167,34 @@ pub fn enter_download_mode() -> ! {
     panic!("download mode requires an FM-1");
     #[cfg(fm1)]
     {
-        use registers::{csync, set, write};
-        unsafe extern "C" {
-            fn fm1_cli();
-        }
-        // SAFETY: this path never returns to the caller. Mask CPU0 interrupts
-        // before updating the bootloader mailbox and requesting a reset.
-        unsafe { fm1_cli() };
-        trs_midi::stop();
-        write(time::T5_CON, 0x4000);
+        prepare_reset();
         #[allow(
             clippy::arithmetic_side_effects,
             reason = "Four words fit in the bootloader mailbox."
         )]
         for (i, word) in b"usb_update_mode\0".as_chunks::<4>().0.iter().enumerate() {
-            write(0x01c7_fd80 + 4 * i, u32::from_le_bytes(*word));
+            registers::write(0x01c7_fd80 + 4 * i, u32::from_le_bytes(*word));
         }
-        csync();
-        set(0x10000, 0x10);
-        loop {
-            core::hint::spin_loop();
-        }
+        reset_cores();
+    }
+}
+
+#[cfg(fm1)]
+fn prepare_reset() {
+    unsafe extern "C" {
+        fn fm1_cli();
+    }
+    // SAFETY: both callers own terminal reset paths and never return.
+    unsafe { fm1_cli() };
+    trs_midi::stop();
+    registers::write(time::T5_CON, 0x4000);
+}
+
+#[cfg(fm1)]
+fn reset_cores() -> ! {
+    registers::csync();
+    registers::set(0x10000, 0x10);
+    loop {
+        core::hint::spin_loop();
     }
 }

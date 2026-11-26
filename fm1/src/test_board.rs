@@ -43,6 +43,7 @@ impl Chip {
 std::thread_local! { static CHIP: RefCell<Chip> = RefCell::default(); }
 // The registers are thread-local, but the real driver's DMA strip is shared.
 static DISPLAY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static POWER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(feature = "async-display")]
 mod async_display;
@@ -148,6 +149,7 @@ fn p33_reads_only_status_registers_and_releases_the_bridge_after_timeout() {
     use crate::power::Error;
     const CON: usize = 0x13e08;
     const IDLE: u32 = 0x108; // An unrelated control bit and the original RTC bank.
+    let _lock = POWER.lock().expect("P33 fixture");
     let board = Board::init();
     let mut power = board.take_power().expect("exclusive P33 owner");
     assert!(board.take_power().is_none());
@@ -206,6 +208,108 @@ fn p33_reads_only_status_registers_and_releases_the_bridge_after_timeout() {
     assert!(power.supply_status().is_ok());
     drop(power);
     assert!(board.take_power().is_some());
+}
+
+#[test]
+fn watchdog_commands_and_boot_reset_flags() {
+    use crate::power::{Error, WatchdogTimeout};
+    let _lock = POWER.lock().expect("P33 fixture");
+    let board = Board::init();
+    let mut power = board.take_power().expect("P33");
+    const CON: usize = 0x13e08;
+    const IDLE: u32 = 0x108;
+    write(CON, IDLE);
+    write(0x100c0, 0x8000_0000);
+    CHIP.with_borrow_mut(|chip| chip.p33_input.extend([0, 0, 0x85]));
+    power::snapshot_reset_cause();
+    let cause = power.reset_cause();
+    assert_eq!(cause.p33, Some(0x85));
+    assert_eq!(cause.system, 0x8000_0000);
+    assert_eq!(cause.power_on(), Some(true));
+    assert_eq!(cause.watchdog(), Some(true));
+    assert_eq!(cause.software(), Some(false));
+    // A later peripheral write or a new handle cannot change the boot snapshot.
+    write(0x100c0, 1 << 5);
+    drop(power);
+    power = board.take_power().expect("reclaim P33");
+    assert_eq!(power.reset_cause(), cause);
+    for (timeout, selector) in [
+        (WatchdogTimeout::Sec1, 0xa),
+        (WatchdogTimeout::Sec2, 0xb),
+        (WatchdogTimeout::Sec4, 0xc),
+        (WatchdogTimeout::Sec8, 0xd),
+        (WatchdogTimeout::Sec16, 0xe),
+        (WatchdogTimeout::Sec32, 0xf),
+    ] {
+        CHIP.with_borrow_mut(|chip| chip.p33_output.clear());
+        power.arm_watchdog(timeout).expect("arm");
+        power.feed_watchdog().expect("feed");
+        power.disarm_watchdog().expect("disarm");
+        power::request_chip_reset().expect("chip reset command");
+        CHIP.with_borrow(|chip| {
+            assert_eq!(
+                chip.p33_output,
+                [
+                    0,
+                    0x80,
+                    0,
+                    0x40,
+                    0x17,
+                    0xbf,
+                    0,
+                    0x80,
+                    selector | 0x40,
+                    0x20,
+                    0x80,
+                    0x10,
+                    0x20,
+                    0x80,
+                    0x40,
+                    0,
+                    0x80,
+                    0,
+                    0x20,
+                    0xa0,
+                    0x10,
+                ]
+            )
+        });
+        assert_eq!(read(CON), IDLE);
+    }
+    for byte in 1..=12 {
+        CHIP.with_borrow_mut(|chip| {
+            chip.p33_output.clear();
+            chip.p33_stall_at = Some(byte);
+        });
+        assert_eq!(
+            power.arm_watchdog(WatchdogTimeout::Sec1),
+            Err(Error::Timeout)
+        );
+        CHIP.with_borrow(|chip| assert_eq!(chip.p33_output.len(), byte));
+        assert_eq!(read(CON), IDLE);
+    }
+    write(CON, IDLE | 1);
+    assert_eq!(power.feed_watchdog(), Err(Error::Busy));
+    power::snapshot_reset_cause();
+    let cause = power.reset_cause();
+    assert_eq!(cause.p33, None);
+    assert_eq!(cause.power_on(), None);
+    assert_eq!(cause.watchdog(), None);
+    assert_eq!(cause.software(), Some(true));
+    write(0x100c0, 0);
+    power::snapshot_reset_cause();
+    assert_eq!(power.reset_cause().software(), None);
+    write(CON, IDLE);
+    CHIP.with_borrow_mut(|chip| {
+        chip.p33_stall_at = None;
+        chip.p33_input.extend([0, 0, 0x44]);
+    });
+    power::snapshot_reset_cause();
+    let cause = power.reset_cause();
+    assert_eq!(
+        (cause.software(), cause.watchdog()),
+        (Some(true), Some(true))
+    );
 }
 #[unsafe(no_mangle)]
 extern "C" fn fm1_set_icfg(value: u32) {

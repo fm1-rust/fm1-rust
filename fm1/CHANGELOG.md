@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Extend `Power` with a boot reset-cause snapshot, normal reboot and an opt-in
+  hardware watchdog. The `watchdog` example exercises recovery with CPU1 stalled.
 - Add opt-in `flash-storage` support for saving and restoring two small
   application records. The `flash-store` example initializes its reserved
   sectors with a default synth patch and MIDI phrase and restores saved

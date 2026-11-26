@@ -13,7 +13,6 @@ typedef uint32_t u32;
 #define DBG_WR_EN     REG(0x01eee240)
 #define DBG_MSG       REG(0x01eee244)
 #define DBG_MSG_CLR   REG(0x01eee248)
-#define DBG_EN        REG(0x01eee340)
 #define C0_WR_LIMIT   REG(0x01eee348)
 #define PC_LIMIT(i)   REG(0x01eee380 + 4u * (i)) /* high, low, high, low */
 #define C1_IRQ_CFG(i) REG(0x01eef300 + 4u * (i))
@@ -34,34 +33,9 @@ extern const unsigned char fm1_cpu1_ustack_top[], fm1_cpu1_sstack_top[];
 
 static inline void sync(void) { __asm__ volatile("csync" ::: "memory"); }
 
-/* Writing the key toggles write access. Preserve the incoming state. */
-static void debug_access(u32 enabled) {
-    if ((DBG_WR_EN & 1u) != enabled)
-        DBG_WR_EN = 0xe7;
-    sync();
-}
-
-/* Also called before .data/.bss exist. Only immediate MMIO addresses and
-   the private CPU0 stack are usable. A hold may raise a delayed bus fault. */
+/* Startup must verify the hold before reusing SRAM. */
 void fm1_cpu1_hold(void) {
-    const u32 bus_causes = 0x003f0030;
-    u32 access = DBG_WR_EN & 1u;
-    debug_access(1);
-    u32 debug = DBG_EN;
-    DBG_EN = debug & ~bus_causes;
-    sync();
-    C1_CON |= HOLD;
-    C1_CON &= ~RUN;
-    sync();
-    for (unsigned n = 0; n < 256; ++n)
-        __asm__ volatile("nop");
-    DBG_MSG_CLR = bus_causes;
-    sync();
-    DBG_EN = debug;
-    sync();
-    debug_access(access);
-    /* Fail closed before RAM initialization or return to the BSP. */
-    if ((C1_CON & (HOLD | RUN)) != HOLD)
+    if (!fm1_cpu1_try_hold())
         for (;;)
             __asm__ volatile("nop");
 }
@@ -81,7 +55,7 @@ void fm1_cpu1_probe_stop(void) {
     if (atomic_load_explicit(&fm1_cpu1_live_reply, memory_order_relaxed)) {
         fm1_cpu1_hold();
         u32 access = DBG_WR_EN & 1u;
-        debug_access(1);
+        fm1_cpu1_debug_access(1);
         u32 protection = C0_WR_LIMIT;
         C0_WR_LIMIT = protection & ~4u;
         sync();
@@ -89,7 +63,7 @@ void fm1_cpu1_probe_stop(void) {
         sync();
         C0_WR_LIMIT = protection;
         sync();
-        debug_access(access);
+        fm1_cpu1_debug_access(access);
         atomic_store_explicit(&fm1_cpu1_live_reply, 0, memory_order_release);
     }
     __asm__ volatile("icfg = %0\n\tcsync" :: "r"(icfg) : "memory");
@@ -115,7 +89,7 @@ u32 fm1_cpu1_probe_run(u32 persistent) {
     T4_CON = 0x4009; /* 24 MHz crystal */
 
     u32 access = DBG_WR_EN & 1u;
-    debug_access(1);
+    fm1_cpu1_debug_access(1);
     u32 limits[4];
     for (unsigned i = 0; i < 4; ++i)
         limits[i] = PC_LIMIT(i);
@@ -160,7 +134,7 @@ u32 fm1_cpu1_probe_run(u32 persistent) {
     }
     /* The ROM ran with access to the debug box. Reopen it before restoring
        protected state, even if the boot path changed the write-enable bit. */
-    debug_access(1);
+    fm1_cpu1_debug_access(1);
     C0_WR_LIMIT = protection & ~4u;
     sync();
     faults |= DBG_MSG & ~previous_causes;
@@ -174,7 +148,7 @@ u32 fm1_cpu1_probe_run(u32 persistent) {
     for (unsigned i = 0; i < 4; ++i)
         PC_LIMIT(i) = limits[i];
     sync();
-    debug_access(access);
+    fm1_cpu1_debug_access(access);
     T4_CON = 0x4000;
     if (faults || (keep && !fm1_cpu1_probe_healthy())) {
         fm1_cpu1_probe_stop();

@@ -70,6 +70,10 @@ required-features = ["embedded-graphics"]
 name = "tone"
 required-features = ["audio"]
 
+[[example]]
+name = "watchdog"
+required-features = ["cpu1-probe", "embedded-graphics"]
+
 [lints]
 workspace = true
 
